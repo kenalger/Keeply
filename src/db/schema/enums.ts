@@ -1,0 +1,184 @@
+/**
+ * Keeply — schema enums.
+ *
+ * SQLite has no native ENUM type. Every "enum" column is a `text` column that
+ * carries a `CHECK (col IN (...))` constraint (see each table file) and is
+ * typed on the TypeScript side with `.$type<Union>()`.
+ *
+ * The `*_VALUES` tuples below are the single source of truth: the CHECK
+ * constraints are generated from them, so the database and the type system can
+ * never drift apart.
+ *
+ * NOTE: this file must stay free of any React Native / Expo import. drizzle-kit
+ * loads the schema in plain Node when generating migrations.
+ */
+
+/** Helper: build a `('a', 'b', 'c')` SQL list from a values tuple. */
+export function sqlValueList(values: readonly string[]): string {
+  // Values are compile-time literals from this file only — never user input.
+  return `(${values.map((v) => `'${v}'`).join(', ')})`;
+}
+
+// ---------------------------------------------------------------------------
+// Currency (§30). PHP only in the MVP; the column exists so other currencies
+// can be added without a migration.
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_CURRENCY = 'PHP';
+
+// ---------------------------------------------------------------------------
+// Billing cycles (§6, §7)
+// ---------------------------------------------------------------------------
+
+export const BILLING_CYCLE_VALUES = [
+  'weekly',
+  'monthly',
+  'quarterly',
+  'yearly',
+  'custom',
+] as const;
+export type BillingCycle = (typeof BILLING_CYCLE_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// Subscriptions (§6)
+// ---------------------------------------------------------------------------
+
+export const SUBSCRIPTION_CATEGORY_VALUES = [
+  'entertainment',
+  'music',
+  'video',
+  'software',
+  'cloud',
+  'fitness',
+  'education',
+  'news',
+  'gaming',
+  'utilities',
+  'membership',
+  'other',
+] as const;
+export type SubscriptionCategory = (typeof SUBSCRIPTION_CATEGORY_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// Bills (§7)
+// ---------------------------------------------------------------------------
+
+export const BILL_CATEGORY_VALUES = [
+  'electricity',
+  'water',
+  'internet',
+  'rent',
+  'phone',
+  'insurance',
+  'credit_card',
+  'loan',
+  'subscription',
+  'other',
+] as const;
+export type BillCategory = (typeof BILL_CATEGORY_VALUES)[number];
+
+/**
+ * The only two states a bill row can BE in. `overdue` is deliberately absent.
+ *
+ * "Overdue" is not a fact about the row, it is a fact about the row and the
+ * calendar: `status = 'unpaid' AND due_date < today`. Persisting it would need
+ * a sweep on every launch, every timezone change and every clock change, and
+ * would still go stale for a user who does not open the app — while
+ * `statusForDue()` in `src/theme/format.ts` computes the truth independently.
+ * Two answers to one question is how a dashboard starts lying.
+ *
+ * Derive it instead, off the partial index `bills_status_due_date_idx`:
+ *
+ *   SELECT * FROM bills_live
+ *    WHERE status = 'unpaid' AND due_date < :today   -- :today from todayISO()
+ *
+ * `:today` is always passed in from the device's local calendar. Never use
+ * SQLite's `date('now')`: that is UTC, and it flips a day early in PH time.
+ */
+export const BILL_STATUS_VALUES = ['unpaid', 'paid'] as const;
+export type BillStatus = (typeof BILL_STATUS_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// Receipts (§9)
+// ---------------------------------------------------------------------------
+
+export const RECEIPT_CATEGORY_VALUES = [
+  'food',
+  'grocery',
+  'transportation',
+  'shopping',
+  'electronics',
+  'healthcare',
+  'entertainment',
+  'household',
+  'vehicle',
+  'other',
+] as const;
+export type ReceiptCategory = (typeof RECEIPT_CATEGORY_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// Vehicles (§11, §12)
+// ---------------------------------------------------------------------------
+
+export const VEHICLE_TYPE_VALUES = ['car', 'motorcycle', 'other'] as const;
+export type VehicleType = (typeof VEHICLE_TYPE_VALUES)[number];
+
+export const VEHICLE_EXPENSE_TYPE_VALUES = [
+  'fuel',
+  'repair',
+  'maintenance',
+  'insurance',
+  'registration',
+] as const;
+export type VehicleExpenseType = (typeof VEHICLE_EXPENSE_TYPE_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// Documents (§14)
+// ---------------------------------------------------------------------------
+
+export const DOCUMENT_TYPE_VALUES = [
+  'passport',
+  'drivers_license',
+  'government_id',
+  'insurance',
+  'vehicle_registration',
+  'certification',
+  'membership',
+  'other',
+] as const;
+export type DocumentType = (typeof DOCUMENT_TYPE_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// Notifications (§8, §15)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a notification_settings row applies to. `global` rows are the app-wide
+ * defaults; the others are per-item overrides keyed by `entity_id`.
+ */
+export const NOTIFICATION_ENTITY_TYPE_VALUES = [
+  'global',
+  'subscription',
+  'bill',
+  'document',
+  'vehicle_insurance',
+  'vehicle_registration',
+  'vehicle_maintenance',
+] as const;
+export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPE_VALUES)[number];
+
+/** §8: same day / 1 / 3 / 7 / 30 days before. Stored as an integer day offset. */
+export const REMINDER_DAYS_BEFORE_VALUES = [0, 1, 3, 7, 30] as const;
+export type ReminderDaysBefore = (typeof REMINDER_DAYS_BEFORE_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// App settings (§35). Key/value store, one row per key.
+// ---------------------------------------------------------------------------
+
+export const APP_SETTING_VALUE_TYPE_VALUES = [
+  'string',
+  'number',
+  'boolean',
+  'json',
+] as const;
+export type AppSettingValueType = (typeof APP_SETTING_VALUE_TYPE_VALUES)[number];

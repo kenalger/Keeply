@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "Keeply",
+    "slug": "keeply",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "keeply",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.keeply.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSPhotoLibraryAddUsageDescription": "Keeply asks for permission to add to Photos only when you tap Save to Photos on a receipt or document image you stored in Keeply. Nothing is ever written to your library automatically."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.keeply.app"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "Keeply uses Face ID to unlock the app so your bills, receipts, and identity documents stay private if someone else picks up your phone. Face ID never leaves this device and Keeply never sees your biometric data."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Keeply uses Face ID to unlock the app so your bills, receipts, and identity documents stay private if someone else picks up your phone. Face ID never leaves this device and Keeply never sees your biometric data."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Keeply uses the camera so you can photograph a receipt or document instead of typing it in. The photo is saved only in Keeply's encrypted storage on this device — it is never uploaded, shared, or sent to any server.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Keeply asks for your photo library so you can attach a receipt or document you have already photographed. Keeply reads only the images you pick, copies them into its encrypted storage on this device, and never uploads them.",
+          "cameraPermission": "Keeply uses the camera so you can photograph a receipt or document instead of typing it in. The photo is saved only in Keeply's encrypted storage on this device — it is never uploaded, shared, or sent to any server.",
+          "microphonePermission": false
+        }
+      ],
+      "./plugins/with-local-only-notifications",
+      [
+        "./plugins/with-database-backup-exclusion",
+        {
+          "directory": "Keeply"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
