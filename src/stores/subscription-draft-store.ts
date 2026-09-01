@@ -56,6 +56,21 @@ export interface SubscriptionDraft {
    * After they have, nothing overwrites their answer.
    */
   dateTouched: boolean;
+  /**
+   * The `record.updatedAt` this draft was derived from. `null` for a new record.
+   *
+   * Without it a draft is undatable, and an undatable draft always wins:
+   * `stored ?? initial` handed back a value the user had already abandoned.
+   * Edit a subscription, change the amount, press Cancel, reopen — the stale
+   * amount reappeared looking exactly like the truth, and saving wrote it,
+   * because the patch sends every field. The nastier variant: pause a
+   * subscription, then edit it. The draft still held `isActive: true`, so any
+   * save silently un-paused the record and re-scheduled its reminders.
+   *
+   * Comparing this against the record the form was handed makes a stale draft
+   * detectable, so it can be dropped instead of trusted.
+   */
+  basedOnUpdatedAt: number | null;
 }
 
 /** `'new'`, or the id of the subscription being edited. */

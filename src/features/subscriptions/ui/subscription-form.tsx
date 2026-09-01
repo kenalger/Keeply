@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
+
+import { isDraftDirty, pickDraft } from './draft';
 
 import {
   AmountField,
@@ -124,6 +126,10 @@ function draftForNew(): SubscriptionDraft {
     notes: '',
     isActive: true,
     dateTouched: false,
+    // Nothing to go stale against — a new record has no stored version behind
+    // it, so this draft always survives. That is the interrupted-entry case the
+    // draft exists for.
+    basedOnUpdatedAt: null,
   };
 }
 
@@ -140,6 +146,7 @@ function draftForRecord(record: SubscriptionRecord): SubscriptionDraft {
     isActive: record.isActive,
     // An existing record's date was chosen by somebody. Never re-derive it.
     dateTouched: true,
+    basedOnUpdatedAt: record.updatedAt,
   };
 }
 
@@ -198,7 +205,18 @@ export function SubscriptionForm({ record, onSaved, onCancel }: SubscriptionForm
   const stored = useSubscriptionDraftStore((state) => state.drafts[draftKey]);
   const write = useSubscriptionDraftStore((state) => state.write);
   const clear = useSubscriptionDraftStore((state) => state.clear);
-  const draft = stored ?? initial;
+
+  /**
+   * A stored draft is used ONLY if it was derived from the record we now hold.
+   *
+   * `stored ?? initial` let an abandoned draft outrank the database forever.
+   * Anything that moved the record since — a save from another screen, pausing
+   * it from the detail view — leaves a draft describing a version that no
+   * longer exists; and because the patch sends every field, saving would write
+   * that whole stale picture back. When the record has moved on, the draft is
+   * dropped and the form re-seeds from the record.
+   */
+  const draft = pickDraft(stored, initial);
 
   const [errors, setErrors] = useState<FieldMessages>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -399,11 +417,45 @@ export function SubscriptionForm({ record, onSaved, onCancel }: SubscriptionForm
     })();
   }, [saving, draft, editing, record, clear, draftKey, onSaved]);
 
+  /**
+   * Cancel DISCARDS. Navigating away keeps.
+   *
+   * These are different acts and were being treated as one. Stepping out of a
+   * form — backgrounding the app, following a link — is not a decision, and
+   * coming back to find it empty is the same defect as a form that clears on a
+   * validation error. But pressing Cancel IS a decision, and keeping the draft
+   * through it meant the abandoned value came back on the next open looking like
+   * the record, and then got written.
+   *
+   * So only this button clears, and only after confirming when there is
+   * something to lose — a silent discard is the other half of the same
+   * never-lose-user-input rule.
+   */
   const cancel = useCallback(() => {
-    // Leaving KEEPS the draft: coming back to a form you stepped out of and
-    // finding it empty is the same defect as one that clears on an error.
-    onCancel();
-  }, [onCancel]);
+    const dirty = isDraftDirty(draft, initial);
+    if (!dirty) {
+      clear(draftKey);
+      onCancel();
+      return;
+    }
+    Alert.alert(
+      'Discard changes?',
+      editing
+        ? 'This subscription goes back to how it was. Nothing is deleted.'
+        : 'What you typed here will not be kept.',
+      [
+        { text: 'Keep editing', style: 'cancel' },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () => {
+            clear(draftKey);
+            onCancel();
+          },
+        },
+      ],
+    );
+  }, [draft, initial, clear, draftKey, editing, onCancel]);
 
   return (
     <FormScreen
