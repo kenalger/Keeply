@@ -34,7 +34,29 @@ export default function EditSubscriptionScreen() {
     );
   }
 
-  if (record.value === null) {
+  // A THROWN read is not a deleted record. `useAsyncRead` leaves `value` at
+  // null on error, so checking `value === null` alone told a user their
+  // subscription had been deleted when the read had merely failed — the most
+  // alarming possible way to report a transient problem, and it offered "Back
+  // to subscriptions" as the only way out. The sibling detail screen gets this
+  // right with `status === 'ready' && value === null`; this now matches it.
+  if (record.status === 'error') {
+    return (
+      <Screen edges={['top']}>
+        <ScreenHeader title="Edit subscription" onBack={leave} />
+        <EmptyState
+          icon="warning"
+          title="Could not open this subscription"
+          description="The record is still here — Keeply just could not read it right now. Try again in a moment."
+          actionLabel="Try again"
+          actionIcon="repeat"
+          onAction={record.reload}
+        />
+      </Screen>
+    );
+  }
+
+  if (record.status === 'ready' && record.value === null) {
     return (
       <Screen edges={['top']}>
         <ScreenHeader title="Edit subscription" onBack={leave} />
@@ -46,6 +68,18 @@ export default function EditSubscriptionScreen() {
           actionIcon="chevronLeft"
           onAction={() => router.replace('/subscriptions')}
         />
+      </Screen>
+    );
+  }
+
+  // Loading, error, and ready-with-no-record are all handled above, so a null
+  // here is unreachable. Rendering the skeleton rather than asserting keeps an
+  // impossible state from becoming a crash if a fourth status is ever added.
+  if (record.value === null) {
+    return (
+      <Screen edges={['top']}>
+        <ScreenHeader title="Edit subscription" onBack={leave} />
+        <SkeletonList count={5} leading={false} />
       </Screen>
     );
   }

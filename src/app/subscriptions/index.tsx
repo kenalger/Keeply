@@ -118,8 +118,21 @@ function buildRows(
   records: readonly SubscriptionRecord[],
   filtered: boolean,
   total: number,
+  totalsFailed = false,
 ): readonly ListRow[] {
   const rows: ListRow[] = [];
+
+  // A FAILED totals read used to render as no card at all — the list looked
+  // complete with its monthly cost quietly missing, which is worse than an
+  // error, because nothing tells the user a number is absent. Say so instead.
+  if (totalsFailed && !filtered) {
+    rows.push({ kind: 'sectionHeader', key: 'h:totals', title: 'What this costs' });
+    rows.push({
+      kind: 'note',
+      key: 'total:error',
+      text: 'Keeply could not add these up just now. Everything is stored on this device, so this is not a connection problem.',
+    });
+  }
 
   if (showsTotals(totals, filtered)) {
     const { primary } = totals;
@@ -233,8 +246,8 @@ export default function SubscriptionListScreen() {
   const filtered = search.trim().length > 0 || activity !== 'all' || category !== null;
 
   const rows = useMemo(
-    () => buildRows(totals.value, list.rows, filtered, list.total),
-    [totals.value, list.rows, filtered, list.total],
+    () => buildRows(totals.value, list.rows, filtered, list.total, totals.status === 'error'),
+    [totals.value, list.rows, filtered, list.total, totals.status],
   );
 
   const openRecord = useCallback(

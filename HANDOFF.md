@@ -1,7 +1,8 @@
 # Keeply — Handoff
 
-**State at this commit:** `tsc --noEmit` 0 · `eslint .` 0 errors (11 warnings) · `npm test` **686/686**.
-Runs on the iOS Simulator. Phases 1–3 complete, onboarding complete, Phases 4–8 outstanding.
+**State at this commit:** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **752/752**.
+Runs on the iOS Simulator. Phases 1–4 complete (receipts unverified on device), onboarding complete,
+Phases 5–8 outstanding.
 
 Read `CLAUDE.md` for conventions before touching anything. `plan/goal.md` is the product spec.
 
@@ -37,18 +38,21 @@ A private, offline-first iOS app you can actually use:
 `mobile-qa-engineer`), each with web research enabled. **They only register at session start** — a session
 that began before they existed cannot call them. Start a fresh session and they are available by name.
 
-**2. Phase 4 — Receipts** is the next phase and has not been started. See the warning below about brief size.
+**2. Render Phase 4 and look at it.** Receipts is code-complete and green — data layer, camera capture,
+storage, thumbnails, form, list, detail, filters, dashboard wiring — but **no screen has ever been
+rendered**. The agent doing the visual pass stalled before capturing anything. Camera capture, thumbnail
+generation, the missing-image state and the permission-denied paths are all unverified.
 
-**3. Two open audit findings**, both in `plan/phase2-3-remediation.md`:
-   - **T1** — a cancelled edit resurrects and overwrites the record. The draft is keyed on `record.id` and
-     always beats the freshly-read record; `clear()` runs on success only. Edit → change amount → Cancel →
-     reopen shows the stale value as if real, and saving writes it. The worse variant: a stale draft holds
-     `isActive: true`, so saving **silently un-pauses a paused subscription** and re-schedules its reminders.
-     `clearSubscriptionDraft` has zero call sites — there is no discard path at all. *Do not fix this by
-     deleting drafts;* they exist so an interrupted edit survives a backgrounded app.
-   - **T13/T14** — an edit-screen read failure renders "this subscription is gone, it was deleted" over a
-     record that exists (`status === 'error'` is never checked); a totals read failure omits the cost card
-     silently. `src/app/(tabs)/money.tsx:175-187` is the correct pattern for both.
+This matters more than it sounds. Rendering passes in this project have caught a six-screen-tall empty
+dashboard, a reminder promise truncated to "Remind me 3 days before Converge Fi…", and a `SelectField`
+that could not display its options **at all**. Green tests caught none of them. `mobile-ui-engineer` is
+the right agent for this.
+
+**3. Phase 8 (Backup) is load-bearing and scheduled last — consider moving it up.** The database is
+deliberately excluded from iCloud backup, which is correct for privacy and means a restored phone opens
+clean rather than bricked. But the replacement safety net is §20's encrypted export, which does not exist
+yet. **Right now: lose the phone, lose the data.** That was fine while the app held test records; it stops
+being fine the moment anyone puts real bills in it.
 
 ---
 
@@ -119,6 +123,24 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   Four tests in this repo passed against deliberately broken code before this was enforced.
 
 ---
+
+## Recently closed (do not re-fix)
+
+T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase2-3-remediation.md`. Highlights:
+
+- **T1** — a draft now records the `record.updatedAt` it was derived from and is trusted only while that
+  matches, so an abandoned draft can no longer outrank the database. Cancel discards (with a confirmation
+  when there is something to lose); navigating away still keeps the draft, because stepping out of a form
+  is not a decision and pressing Cancel is. `pickDraft`/`isDraftDirty` live in
+  `src/features/subscriptions/ui/draft.ts` — a `.ts` file, because `node --test` strips types but cannot
+  transform JSX, and logic deciding whether a user's data survives should not need a mounted screen to test.
+- **T7** — `rescheduleAll()` had **zero** production callers; the retention engine never ran. Now called on
+  boot, on foreground, and after any reminder-affecting settings change, via `src/lib/reminders.ts`.
+- **T12** — a float in `amount_minor` passes the `> 0` CHECK and used to throw from every read *including
+  both deletes*, leaving a record the user could neither see nor remove. Policy now: a list skips and
+  reports `damagedCount`, a single-record read still throws, and **delete never maps the row**.
+- **T2** — the renewal-candidate query ordered by the anchor, which never moves, so `LIMIT` kept the oldest
+  series and dropped renewals due tomorrow. Thirty old yearlies plus one due tomorrow returned **zero**.
 
 ## Known gaps, deliberately open
 
