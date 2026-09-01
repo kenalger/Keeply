@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { MinorUnits } from '@/db';
 import { billTotals, upcomingBills } from '@/features/bills';
+import { recentReceipts, receiptTotals } from '@/features/receipts';
 import { subscriptionTotals, upcomingRenewals } from '@/features/subscriptions';
 import { recentSubscriptions } from '@/features/subscriptions/ui';
 import { log } from '@/lib/log';
@@ -348,13 +349,13 @@ export interface DashboardSnapshot {
  * Read everything Home renders, from this device.
  *
  * ── WHAT IS WIRED, AND WHAT IS DELIBERATELY STILL EMPTY ────────────────────
- * Subscriptions exist (Phase 2); bills, receipts, vehicles and documents do
- * not (Phases 3–6). So `upcomingSubscriptions`, the subscriptions line of
- * "This month" and `recentActivity` come from SQLite, and `overdue`,
- * `upcomingPayments` and `expiringDocuments` stay empty — not stubbed, not
- * faked, just empty, which Home already renders correctly by omitting the
- * section entirely. Each of those becomes one more `Promise` in the array
- * below when its module lands.
+ * Subscriptions (Phase 2), bills (Phase 3) and receipts (Phase 4) exist;
+ * vehicles and documents do not. So `upcomingSubscriptions`, `overdue`,
+ * `upcomingPayments`, three of the four "This month" lines and
+ * `recentActivity` come from SQLite, and `expiringDocuments` and the Vehicle
+ * bucket stay empty — not stubbed, not faked, just empty, which Home already
+ * renders correctly by omitting the section entirely. Each becomes one more
+ * `Promise` in the array below when its module lands.
  *
  * ── EVERY NUMBER IS AGGREGATED BY SQLITE ───────────────────────────────────
  * The monthly figure is `subscriptionTotals()`, which is two grouped queries
@@ -376,6 +377,7 @@ export function useDashboardData(): DashboardSnapshot {
   const month = currentMonth();
   const currency = useCurrency();
   const revision = useRevision('subscriptions');
+  const receiptRevision = useRevision('receipts');
   const [nonce, setNonce] = useState(0);
 
   const [state, setState] = useState<{
@@ -409,7 +411,7 @@ export function useDashboardData(): DashboardSnapshot {
     return () => {
       cancelled = true;
     };
-  }, [sample, month, currency, revision, nonce]);
+  }, [sample, month, currency, revision, receiptRevision, nonce]);
 
   const reload = useCallback(() => setNonce((value) => value + 1), []);
 
@@ -435,7 +437,10 @@ export function useDashboardData(): DashboardSnapshot {
  * on one connection and there is no reason for the slowest to start last.
  */
 async function readDashboard(month: string, currency: CurrencyCode): Promise<DashboardData> {
-  const [renewals, totals, recent, bills, billSums] = await Promise.all([
+  const bounds = monthBounds(month);
+
+  const [renewals, totals, recent, bills, billSums, receiptSums, recentReceiptRows] =
+    await Promise.all([
     upcomingRenewals(UPCOMING_WINDOW_DAYS, { limit: RENEWAL_READ_LIMIT }),
     subscriptionTotals(),
     recentSubscriptions(RECENT_ACTIVITY_LIMIT),
@@ -444,12 +449,22 @@ async function readDashboard(month: string, currency: CurrencyCode): Promise<Das
     // this section and the bills list can never disagree about what is late.
     upcomingBills(UPCOMING_WINDOW_DAYS, { limit: RENEWAL_READ_LIMIT }),
     billTotals(),
+    // Three grouped queries inside SQLite, bounded to this calendar month by
+    // the same `fromISO`/`toISO` predicate the receipt list uses. No receipt
+    // row crosses into JavaScript to be summed here.
+    receiptTotals({ fromISO: bounds.fromISO, toISO: bounds.toISO }),
+    recentReceipts(RECENT_ACTIVITY_LIMIT),
   ]);
 
   const subscriptionsMinor = totals.primary.monthlyMinor;
   // The expected cost of what is still unpaid — the figure §5's "Bills" line is
   // asking about. Already aggregated by SQLite; nothing is summed here.
   const billsMinor = billSums.primary.unpaidExpectedMinor;
+  // §5's "Other": money already spent this month that no other bucket accounts
+  // for. Every receipt goes here, including the ones categorised `vehicle` —
+  // the Vehicle line belongs to the Phase 5 expense ledger, and counting a
+  // receipt in both would inflate the total the moment that module lands.
+  const receiptsMinor = receiptSums.primary.totalMinor;
 
   return {
     // §24 order. One split read: a bill is overdue or it is upcoming, never
@@ -499,22 +514,68 @@ async function readDashboard(month: string, currency: CurrencyCode): Promise<Das
         { key: 'subscriptions', label: 'Subscriptions', amountMinor: subscriptionsMinor },
         { key: 'bills', label: 'Bills', amountMinor: billsMinor },
         { key: 'vehicle', label: 'Vehicle', amountMinor: minor(0) },
-        { key: 'other', label: 'Other', amountMinor: minor(0) },
+        { key: 'other', label: 'Other', amountMinor: receiptsMinor },
       ],
-      // Four fixed buckets; vehicle and other are structurally zero until those
-      // modules land. This is not a reduce over rows — every figure in it was
-      // already aggregated by SQLite, and the total is the sum of two scalars.
-      totalMinor: minor(subscriptionsMinor + billsMinor),
+      // Four fixed buckets; vehicle is structurally zero until Phase 5 lands.
+      // This is not a reduce over rows — every figure in it was already
+      // aggregated by SQLite, and the total is the sum of three scalars.
+      totalMinor: minor(subscriptionsMinor + billsMinor + receiptsMinor),
     },
 
-    recentActivity: recent.map((row) => ({
-      id: row.id,
-      title: row.name,
-      source: 'subscription' as const,
-      amountMinor: row.amountMinor,
-      occurredAt: row.occurredAt,
-    })),
+    // §5 asks for "the latest" across every kind of record, so the feed is the
+    // merge of each module's own bounded read. Each side is already `LIMIT`ed
+    // by SQLite; the interleave is over at most ten objects, which is the one
+    // place a JavaScript sort is cheaper than a UNION the two features would
+    // have to share a statement to express.
+    //
+    // A receipt's `occurredAt` is `updated_at`, matching a subscription's, so
+    // "what did I last touch" orders the feed. Note that `recentReceipts()`
+    // SELECTS by purchase date (its documented §5 answer for a journal), so a
+    // receipt back-dated behind five newer purchases is not a candidate here
+    // even if it was typed in a minute ago.
+    recentActivity: [
+      ...recent.map((row) => ({
+        id: row.id,
+        title: row.name,
+        source: 'subscription' as const,
+        amountMinor: row.amountMinor,
+        occurredAt: row.occurredAt,
+      })),
+      ...recentReceiptRows.map((row) => ({
+        id: row.id,
+        title: row.merchant,
+        source: 'receipt' as const,
+        amountMinor: row.amountMinor,
+        occurredAt: row.updatedAt,
+      })),
+    ]
+      .sort((a, b) => b.occurredAt - a.occurredAt)
+      .slice(0, RECENT_ACTIVITY_LIMIT),
   };
+}
+
+/**
+ * The first and last calendar days of a `'YYYY-MM'` month, as `'YYYY-MM-DD'`.
+ *
+ * `new Date(year, monthNumber, 0)` — all NUMERIC arguments — is the last day of
+ * `monthNumber` (1-based), and rolls February correctly in a leap year. It is
+ * not `new Date('2026-02-01')`, which is UTC midnight and lands on January 31st
+ * in PH time; CLAUDE.md and the `CALENDAR_DATE_SYNTAX` lint rule both forbid
+ * that form, and this is the numeric constructor the rule deliberately allows.
+ */
+function monthBounds(month: string): { fromISO: string; toISO: string } {
+  const year = Number(month.slice(0, 4));
+  const monthNumber = Number(month.slice(5, 7));
+  const fromISO = `${month}-01`;
+
+  if (!Number.isInteger(year) || !Number.isInteger(monthNumber)) {
+    // `currentMonth()` cannot produce this; a caller passing something else
+    // gets a range that is still a valid one rather than a thrown dashboard.
+    return { fromISO, toISO: `${month}-28` };
+  }
+
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  return { fromISO, toISO: `${month}-${String(lastDay).padStart(2, '0')}` };
 }
 
 function sampleFor(mode: SampleDashboardMode, month: string): DashboardData {

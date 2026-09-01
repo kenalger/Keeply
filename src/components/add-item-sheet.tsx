@@ -16,10 +16,11 @@ import { useThemedStyles, type Theme } from '@/theme';
  * people. One tap now reaches a form.
  *
  * ── WHY THE UNBUILT KINDS ARE SHOWN, DISABLED ──────────────────────────────
- * Bills, receipts, vehicle expenses and documents are Phases 3–6. Listing them
+ * Bills, vehicle expenses and documents are Phases 3, 5 and 6. Listing them
  * greyed out costs one line each and tells the user what Keeply is FOR — the
  * shape of the product is legible from the first sheet they open, and the
  * absence of a "Bill" row would otherwise read as "this app does not do bills".
+ * Receipts left that list in Phase 4 and now route to the camera.
  *
  * They are `disabled`, not hidden and not tappable-with-an-alert: a control
  * that looks live and then apologises is worse than one that never claimed to
@@ -42,7 +43,9 @@ interface AddOption {
   readonly subtitle: string;
   readonly icon: IconName;
   /** `null` while the module does not exist yet. */
-  readonly route: '/subscriptions/new' | null;
+  readonly route: '/subscriptions/new' | '/receipts/capture' | null;
+  /** Spoken when the row is live. Each destination is a different screen. */
+  readonly hint?: string;
 }
 
 const OPTIONS: readonly AddOption[] = [
@@ -52,6 +55,7 @@ const OPTIONS: readonly AddOption[] = [
     subtitle: 'Something that renews — Netflix, iCloud, a gym',
     icon: 'repeat',
     route: '/subscriptions/new',
+    hint: 'Opens a new subscription form',
   },
   {
     key: 'bill',
@@ -63,9 +67,13 @@ const OPTIONS: readonly AddOption[] = [
   {
     key: 'receipt',
     title: 'Receipt',
-    subtitle: 'Coming later — photograph and keep a purchase',
+    subtitle: 'Photograph a purchase and keep it on this device',
     icon: 'receipt',
-    route: null,
+    // Straight to the camera, which is where §28's receipt flow starts —
+    // `Camera -> Amount -> Category -> Save`. The camera screen offers "Skip
+    // the photo", so this is a fast path rather than a forced detour.
+    route: '/receipts/capture',
+    hint: 'Opens the camera',
   },
   {
     key: 'vehicle-expense',
@@ -132,9 +140,7 @@ export function AddItemSheet({ visible, onClose }: AddItemSheetProps) {
                 disabled={!available}
                 chevron={available}
                 onPress={() => choose(option)}
-                accessibilityHint={
-                  available ? 'Opens a new subscription form' : undefined
-                }
+                accessibilityHint={available ? option.hint : undefined}
                 testID={`add-item-${option.key}`}
               />
             </Fragment>

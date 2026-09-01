@@ -1,0 +1,343 @@
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { memo, useCallback, useMemo, useState } from 'react';
+import { Alert, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
+
+import {
+  Amount,
+  Button,
+  EmptyState,
+  IconButton,
+  List,
+  ListBlock,
+  ListGroup,
+  ListNote,
+  ListSectionHeader,
+  Row,
+  Screen,
+  ScreenHeader,
+  amountLabel,
+  type GroupPosition,
+} from '@/components/ui';
+import type { MinorUnits } from '@/db';
+import type { ReceiptRecord } from '@/features/receipts';
+import {
+  ReceiptImage,
+  categoryLabel,
+  deleteReceipt,
+  useReceiptRecord,
+} from '@/features/receipts/ui';
+import { log } from '@/lib/log';
+import { formatDate, formatMoney, useThemedStyles, type Theme } from '@/theme';
+
+/**
+ * One receipt (§9, §10, §26).
+ *
+ * ── THE PHOTO IS THE FIRST THING AND THE LEAST IMPORTANT ───────────────────
+ * It goes at the top because it is how the user recognises the record, and it
+ * is `contentFit="contain"` rather than cropped because a receipt is a tall
+ * strip of text whose bottom line is the total. But everything BELOW it is the
+ * actual record, and none of it depends on the image existing: `<ReceiptImage/>`
+ * renders "Image unavailable" in the same footprint and the rest of the screen
+ * is untouched (§26, CLAUDE.md). A photo the OS evicted must never cost the
+ * user their amount, their merchant or their notes.
+ *
+ * ── DELETE SAYS WHAT IT DOES, INCLUDING TO THE FILE ────────────────────────
+ * There is no server, no account and no undo, so the confirmation names the
+ * record, names the amount leaving the totals, and — uniquely for receipts —
+ * says the photo is erased from the device with it. That last sentence is the
+ * one the user needs before tapping, because it is the only part of this app
+ * that destroys something they might have no other copy of.
+ *
+ * The order is fixed by the data layer and implemented in
+ * `@/features/receipts/ui`'s `deleteReceipt()`: the ROW is committed first and
+ * the FILE unlinked second, using the `orphanedUris` the transaction computed.
+ * A crash between them strands bytes nothing references — recoverable — rather
+ * than a receipt pointing at a photo that no longer exists, which is not.
+ */
+
+/* -------------------------------------------------------------------------- */
+/* Row model                                                                   */
+/* -------------------------------------------------------------------------- */
+
+type DetailRow =
+  | { kind: 'photo'; key: string; uri: string | null }
+  | { kind: 'sectionHeader'; key: string; title: string }
+  | { kind: 'note'; key: string; text: string }
+  | {
+      kind: 'amount';
+      key: string;
+      group: GroupPosition;
+      label: string;
+      amountMinor: MinorUnits;
+      currency: string;
+    }
+  | {
+      kind: 'fact';
+      key: string;
+      group: GroupPosition;
+      label: string;
+      value: string;
+      caption?: string;
+    }
+  | { kind: 'text'; key: string; group: GroupPosition; label: string; body: string };
+
+function buildDetailRows(record: ReceiptRecord): readonly DetailRow[] {
+  const rows: DetailRow[] = [];
+
+  rows.push({ kind: 'photo', key: 'photo', uri: record.localImageUri });
+
+  rows.push({ kind: 'sectionHeader', key: 'h:amount', title: 'What it cost' });
+  rows.push({
+    kind: 'amount',
+    key: 'amount',
+    group: 'first',
+    label: 'Total',
+    amountMinor: record.amountMinor,
+    currency: record.currency,
+  });
+  rows.push({
+    kind: 'fact',
+    key: 'date',
+    group: 'middle',
+    label: 'Purchased',
+    // `formatDate` parses 'YYYY-MM-DD' as a LOCAL calendar date. `new Date()`
+    // on that string is UTC midnight and shows the previous day in PH time.
+    value: formatDate(record.purchaseDate),
+  });
+  rows.push({
+    kind: 'fact',
+    key: 'category',
+    group: record.paymentMethod === null ? 'last' : 'middle',
+    label: 'Category',
+    value: categoryLabel(record.category),
+  });
+  if (record.paymentMethod !== null) {
+    rows.push({
+      kind: 'fact',
+      key: 'payment',
+      group: 'last',
+      label: 'Paid with',
+      value: record.paymentMethod,
+    });
+  }
+
+  if (record.notes !== null) {
+    rows.push({ kind: 'sectionHeader', key: 'h:notes', title: 'Notes' });
+    rows.push({ kind: 'text', key: 'notes', group: 'only', label: 'Notes', body: record.notes });
+  }
+
+  if (record.localImageUri === null) {
+    rows.push({
+      kind: 'note',
+      key: 'no-photo',
+      text: 'This receipt was saved without a photo. Edit it to attach one.',
+    });
+  }
+
+  return rows;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Screen                                                                      */
+/* -------------------------------------------------------------------------- */
+
+const makeStyles = (t: Theme) =>
+  StyleSheet.create({
+    content: { paddingHorizontal: t.layout.gutter, paddingBottom: t.space.xxl },
+    actions: { marginTop: t.layout.section, gap: t.space.sm },
+  });
+
+export default function ReceiptDetailScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
+  const record = useReceiptRecord(id);
+  const [busy, setBusy] = useState(false);
+
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/receipts');
+  }, [router]);
+
+  const value = record.value;
+
+  const rows = useMemo(() => (value === null ? [] : buildDetailRows(value)), [value]);
+
+  const confirmDelete = useCallback(() => {
+    if (value === null || busy) return;
+    const amount = formatMoney(value.amountMinor, value.currency);
+
+    Alert.alert(
+      `Delete this ${value.merchant} receipt?`,
+      [
+        `It leaves your receipt journal and every total it counted towards, including ${amount}.`,
+        value.localImageUri === null
+          ? 'There is no photo attached.'
+          : 'The photo is erased from this device too.',
+        'Keeply has no account and no server, so there is no copy of this anywhere else and no undo.',
+      ].join('\n\n'),
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setBusy(true);
+            void (async () => {
+              // Row first, file second. `deleteReceipt()` unlinks the URIs the
+              // transaction reported, after it committed — never before.
+              const result = await deleteReceipt(value.id);
+              setBusy(false);
+              if (result.ok) {
+                router.replace('/receipts');
+                return;
+              }
+              log.warn('receipts: a delete was refused');
+              Alert.alert(
+                'That did not delete',
+                'Keeply could not remove this receipt. Try again.',
+              );
+            })();
+          },
+        },
+      ],
+    );
+  }, [value, busy, router]);
+
+  const renderRow = useCallback(
+    ({ item }: ListRenderItemInfo<DetailRow>) => <DetailRowView row={item} />,
+    [],
+  );
+
+  const missing = record.status === 'ready' && value === null;
+
+  return (
+    <Screen edges={['top', 'bottom']} padded={false} keyboardAvoiding={false}>
+      <List<DetailRow>
+        data={rows}
+        renderItem={renderRow}
+        keyExtractor={detailRowKey}
+        separator="none"
+        loading={record.status === 'loading'}
+        error={
+          record.status === 'error' ? (
+            <EmptyState
+              icon="errorCircle"
+              title="Keeply could not open this receipt"
+              // The data layer THROWS rather than returning null for a row it
+              // cannot map, precisely so this does not claim the record is gone.
+              description="The record is on this device, so this is not a connection problem. It may be stored in a way Keeply cannot read."
+              actionLabel="Try again"
+              actionIcon="repeat"
+              onAction={record.reload}
+              fill={false}
+            />
+          ) : undefined
+        }
+        empty={
+          missing ? (
+            <EmptyState
+              icon="tray"
+              title="This receipt is gone"
+              description="It was deleted, so there is nothing left to show here."
+              actionLabel="Back to receipts"
+              actionIcon="chevronLeft"
+              onAction={() => router.replace('/receipts')}
+              fill={false}
+            />
+          ) : undefined
+        }
+        header={
+          <ScreenHeader
+            title={value?.merchant ?? 'Receipt'}
+            subtitle={value === null ? undefined : categoryLabel(value.category)}
+            onBack={goBack}
+            backLabel="Back to receipts"
+            right={
+              value === null ? undefined : (
+                <IconButton
+                  name="pencil"
+                  accessibilityLabel={`Edit this ${value.merchant} receipt`}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/receipts/[id]/edit',
+                      params: { id: value.id },
+                    })
+                  }
+                  testID="receipt-edit"
+                />
+              )
+            }
+          />
+        }
+        footer={
+          value === null ? undefined : (
+            <View style={styles.actions}>
+              <Button
+                title="Delete"
+                variant="dangerGhost"
+                icon="trash"
+                fullWidth
+                disabled={busy}
+                onPress={confirmDelete}
+                accessibilityHint="Asks you to confirm before removing it and its photo permanently"
+                testID="receipt-delete"
+              />
+            </View>
+          )
+        }
+        contentContainerStyle={styles.content}
+        accessibilityLabel="Receipt details"
+        testID="receipt-detail"
+      />
+    </Screen>
+  );
+}
+
+const detailRowKey = (row: DetailRow): string => row.key;
+
+/* -------------------------------------------------------------------------- */
+/* Rows                                                                        */
+/* -------------------------------------------------------------------------- */
+
+const DetailRowView = memo(function DetailRowView({ row }: { row: DetailRow }) {
+  switch (row.kind) {
+    case 'photo':
+      return (
+        <ListBlock>
+          <ReceiptImage uri={row.uri} testID="receipt-photo" />
+        </ListBlock>
+      );
+
+    case 'sectionHeader':
+      return <ListSectionHeader title={row.title} />;
+
+    case 'note':
+      return <ListNote>{row.text}</ListNote>;
+
+    case 'amount':
+      return (
+        <ListGroup position={row.group}>
+          <Row
+            title={row.label}
+            value={<Amount minor={row.amountMinor} currency={row.currency} size="lg" />}
+            valueLabel={amountLabel(row.amountMinor, { currency: row.currency })}
+          />
+        </ListGroup>
+      );
+
+    case 'fact':
+      return (
+        <ListGroup position={row.group}>
+          <Row title={row.label} value={row.value} valueCaption={row.caption} />
+        </ListGroup>
+      );
+
+    case 'text':
+      return (
+        <ListGroup position={row.group}>
+          <Row title={row.label} subtitle={row.body} chevron={false} />
+        </ListGroup>
+      );
+  }
+});

@@ -3,6 +3,15 @@
 Offline-first personal life & expense manager: subscriptions, bills, receipts, vehicle expenses, document expiry.
 Full product spec: `plan/goal.md`. Phase breakdown and stack rationale: `plan/phases.md`.
 
+## Output stays on this machine
+
+Never publish an Artifact, a hosted page, a share link, or anything visible outside this machine.
+Reports, plans and handoffs are files in this repo (`plan/*.md`, `HANDOFF.md`) or terminal output.
+Screenshots live in `plan/screenshots/`, on disk.
+
+This is the user's explicit instruction, and it follows from the product: an app whose promise is
+"your data stays on your phone" should not have its screens and plans published to a hosted page.
+
 ## The one rule
 
 **No feature may require network connectivity.** There is no backend and no account. Every CRUD write,

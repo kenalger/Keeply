@@ -17,6 +17,8 @@ import {
   type GroupPosition,
   type IconName,
 } from '@/components/ui';
+import type { ReceiptTotals } from '@/features/receipts';
+import { useReceiptTotals } from '@/features/receipts/ui';
 import type { SubscriptionTotals } from '@/features/subscriptions';
 import { useSubscriptionTotals } from '@/features/subscriptions/ui';
 import { formatMoney } from '@/theme';
@@ -31,10 +33,12 @@ import { formatMoney } from '@/theme';
  * carries real figures — `subscriptionTotals()`, aggregated by SQLite — and
  * leads somewhere.
  *
- * Bills and receipts remain rows with "Coming next"/"Coming later" on them
- * rather than being hidden. The same reasoning as the §28 add sheet: the shape
- * of the product should be legible before it is finished, and a missing row
- * reads as "Keeply does not do bills" rather than "not yet".
+ * Bills remain a row with "Coming next" on it rather than being hidden. The
+ * same reasoning as the §28 add sheet: the shape of the product should be
+ * legible before it is finished, and a missing row reads as "Keeply does not do
+ * bills" rather than "not yet". Receipts stopped being one of those rows in
+ * Phase 4 — it now carries `receiptTotals()`, aggregated by SQLite over every
+ * live receipt, and leads to the journal.
  *
  * ── WHY ONE LIST ───────────────────────────────────────────────────────────
  * `<List/>` over flattened rows, not a `ScrollView` of three lists: a receipt
@@ -57,7 +61,10 @@ interface LedgerSummary {
   readonly available: boolean;
 }
 
-function buildLedgers(totals: SubscriptionTotals | null): readonly LedgerSummary[] {
+function buildLedgers(
+  totals: SubscriptionTotals | null,
+  receipts: ReceiptTotals | null,
+): readonly LedgerSummary[] {
   return [
     {
       key: 'subscriptions',
@@ -82,11 +89,32 @@ function buildLedgers(totals: SubscriptionTotals | null): readonly LedgerSummary
       key: 'receipts',
       icon: 'receipt',
       title: 'Receipts',
-      subtitle: 'Photographed and kept on this device',
-      value: 'Coming later',
-      available: false,
+      subtitle: receiptSubtitle(receipts),
+      value:
+        receipts === null || receipts.receiptCount === 0
+          ? 'None yet'
+          : formatMoney(receipts.primary.totalMinor, receipts.primary.currency),
+      available: true,
     },
   ];
+}
+
+/**
+ * "12 kept · 3 without a photo", or what the section is for when it is empty.
+ *
+ * `withoutImageCount` is a COUNT and never a URI (§10) — it is the data layer's
+ * way of letting a screen nudge the user to attach photos with no path leaving
+ * the database.
+ */
+function receiptSubtitle(totals: ReceiptTotals | null): string {
+  if (totals === null || totals.receiptCount === 0) {
+    return 'Photographed and kept on this device';
+  }
+  const parts = [`${totals.receiptCount} kept`];
+  if (totals.withoutImageCount > 0) {
+    parts.push(`${totals.withoutImageCount} without a photo`);
+  }
+  return parts.join(' · ');
 }
 
 /** "3 active · 1 paused", or what the section is for when it is empty. */
@@ -133,21 +161,23 @@ export default function MoneyScreen() {
   const contentStyle = useTabScreenContentStyle();
   const router = useRouter();
   const totals = useSubscriptionTotals();
+  const receipts = useReceiptTotals();
 
   const nothingTracked =
-    totals.value === null || totals.value.activeCount + totals.value.inactiveCount === 0;
+    (totals.value === null || totals.value.activeCount + totals.value.inactiveCount === 0) &&
+    (receipts.value === null || receipts.value.receiptCount === 0);
 
   const rows = useMemo(
-    () => buildMoneyRows(buildLedgers(totals.value), nothingTracked),
-    [totals.value, nothingTracked],
+    () => buildMoneyRows(buildLedgers(totals.value, receipts.value), nothingTracked),
+    [totals.value, receipts.value, nothingTracked],
   );
 
   const openAdd = useCallback(() => router.push('/add'), [router]);
 
   const open = useCallback(
     (key: LedgerSummary['key']) => {
-      if (key !== 'subscriptions') return;
-      router.push('/subscriptions');
+      if (key === 'subscriptions') router.push('/subscriptions');
+      else if (key === 'receipts') router.push('/receipts');
     },
     [router],
   );
@@ -171,17 +201,20 @@ export default function MoneyScreen() {
         // `<ListGroup/>` draws its own hairlines between grouped rows; a list
         // separator here would also draw between a card and the next heading.
         separator="none"
-        loading={totals.status === 'loading'}
+        loading={totals.status === 'loading' || receipts.status === 'loading'}
         skeletonLeading={false}
         error={
-          totals.status === 'error' ? (
+          totals.status === 'error' || receipts.status === 'error' ? (
             <EmptyState
               icon="errorCircle"
               title="Keeply could not read your totals"
               description="Everything is stored on this device, so this is not a connection problem."
               actionLabel="Try again"
               actionIcon="repeat"
-              onAction={totals.reload}
+              onAction={() => {
+                totals.reload();
+                receipts.reload();
+              }}
               fill={false}
             />
           ) : undefined
@@ -257,7 +290,7 @@ const MoneyRowView = memo(function MoneyRowView({
             chevron={ledger.available}
             onPress={() => onOpen(ledger.key)}
             accessibilityHint={
-              ledger.available ? 'Opens your subscriptions' : undefined
+              ledger.available ? `Opens your ${ledger.title.toLowerCase()}` : undefined
             }
             testID={`money-ledger-${ledger.key}`}
           />
