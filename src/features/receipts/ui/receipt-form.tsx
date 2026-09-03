@@ -283,7 +283,7 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
       setErrors({
         ...(amountMinor === null ? { amountMinor: 'Enter an amount greater than zero.' } : {}),
         ...(purchaseDate === null
-          ? { purchaseDate: 'Choose the date printed on the receipt.' }
+          ? { purchaseDate: 'Choose the date you spent it.' }
           : {}),
       });
       setFormError(null);
@@ -348,7 +348,7 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
       testID="receipt-form"
       footer={
         <FormActions
-          primaryLabel={editing ? 'Save changes' : 'Save receipt'}
+          primaryLabel={editing ? 'Save changes' : 'Save expense'}
           onPrimary={submit}
           primaryDisabled={saving}
           secondaryLabel="Cancel"
@@ -357,7 +357,7 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
         />
       }>
       <ScreenHeader
-        title={editing ? 'Edit receipt' : 'New receipt'}
+        title={editing ? 'Edit expense' : 'New expense'}
         subtitle={
           editing ? undefined : 'Amount and merchant are all Keeply needs. The rest is filled in.'
         }
@@ -373,19 +373,76 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
         </View>
       )}
 
+      <FormSection>
+        <AmountField
+          label="Amount"
+          value={draft.amountMinor}
+          onChangeValue={setAmount}
+          error={errors.amountMinor}
+          required
+          autoFocus={!editing}
+          helper="What it cost."
+          testID="receipt-amount"
+        />
+
+        <TextField
+          label="Merchant"
+          content="organization"
+          value={draft.merchant}
+          onChangeText={setMerchant}
+          placeholder="SM Hypermarket"
+          error={errors.merchant}
+          required
+          maxLength={MERCHANT_MAX_LENGTH}
+          clearable
+          testID="receipt-merchant"
+        />
+
+        <SelectField
+          label="Category"
+          value={draft.category}
+          onChangeValue={setCategory}
+          options={CATEGORY_OPTIONS}
+          error={errors.category}
+          helper="Groups this expense in your totals and filters"
+          accessibilityHint="Opens the list of categories"
+          testID="receipt-category"
+        />
+
+        <DateField
+          label="Purchase date"
+          value={draft.purchaseDate}
+          onChangeValue={setDate}
+          error={errors.purchaseDate}
+          required
+          // Not `maxDate={today}`: a receipt is dated by what is printed on it,
+          // and a till whose clock is a day ahead is not the user's problem to
+          // argue with a date picker about.
+          helper="Defaults to today — change it if you spent it earlier."
+          testID="receipt-date"
+        />
+      </FormSection>
+
       <FormSection
         title="Photo"
         description={
           draft.imageUri === null
-            ? 'Optional. A receipt saves perfectly well without one.'
+            ? 'Optional. An expense saves perfectly well without one.'
             : 'Stored inside Keeply on this device. It is never uploaded.'
         }>
-        <ReceiptImage
-          uri={draft.imageUri}
-          height={draft.imageUri === null ? 140 : 240}
-          emptyLabel="No photo attached"
-          testID="receipt-form-photo"
-        />
+        {/* Nothing is drawn when there is no photo. The well used to render
+            at 140pt of empty rounded rectangle above the only required field;
+            now that the amount comes first the placeholder has no job left —
+            "Take a photo" already says a photo can go here, and an empty box
+            saying "No photo attached" says it a second time, in more space. */}
+        {draft.imageUri === null ? null : (
+          <ReceiptImage
+            uri={draft.imageUri}
+            height={240}
+            emptyLabel="No photo attached"
+            testID="receipt-form-photo"
+          />
+        )}
 
         {capture.error === null ? null : (
           <Text variant="caption" color="danger">
@@ -448,56 +505,6 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
             />
           </View>
         ) : null}
-      </FormSection>
-
-      <FormSection>
-        <AmountField
-          label="Amount"
-          value={draft.amountMinor}
-          onChangeValue={setAmount}
-          error={errors.amountMinor}
-          required
-          autoFocus={!editing}
-          helper="The total printed on the receipt."
-          testID="receipt-amount"
-        />
-
-        <TextField
-          label="Merchant"
-          content="organization"
-          value={draft.merchant}
-          onChangeText={setMerchant}
-          placeholder="SM Hypermarket"
-          error={errors.merchant}
-          required
-          maxLength={MERCHANT_MAX_LENGTH}
-          clearable
-          testID="receipt-merchant"
-        />
-
-        <SelectField
-          label="Category"
-          value={draft.category}
-          onChangeValue={setCategory}
-          options={CATEGORY_OPTIONS}
-          error={errors.category}
-          helper="Groups this receipt in your totals and filters"
-          accessibilityHint="Opens the list of categories"
-          testID="receipt-category"
-        />
-
-        <DateField
-          label="Purchase date"
-          value={draft.purchaseDate}
-          onChangeValue={setDate}
-          error={errors.purchaseDate}
-          required
-          // Not `maxDate={today}`: a receipt is dated by what is printed on it,
-          // and a till whose clock is a day ahead is not the user's problem to
-          // argue with a date picker about.
-          helper="Defaults to today — change it if the receipt says otherwise."
-          testID="receipt-date"
-        />
       </FormSection>
 
       <FormSection title="Optional" description="Nothing below is needed to save.">

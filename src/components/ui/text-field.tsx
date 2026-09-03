@@ -51,6 +51,23 @@ export type TextFieldContent =
   /** A plate, policy or account number: uppercase, no autocorrect, no autofill. */
   | 'reference'
   /**
+   * A backup passphrase. Masked, with a reveal toggle.
+   *
+   * Autocorrect, autocapitalise and spellcheck are all off, and that part is
+   * not negotiable: each of them can silently alter a passphrase which then
+   * cannot be typed back, and there is no server to appeal to when it cannot.
+   *
+   * `textContentType` is `'none'` and `autoComplete` is `'off'`, but iOS still
+   * treats any `secureTextEntry` field as a password field and shows its
+   * Passwords bar. That is not suppressible without `textContentType:
+   * 'oneTimeCode'`, which lies about what the field is and breaks it in other
+   * ways. So it is left alone, and the trade is deliberate: **Keeply never
+   * stores the passphrase**, but if the user chooses to put it in their own
+   * password manager, that is theirs to decide — and a passphrase they cannot
+   * recall is the likeliest way this feature fails them (§20).
+   */
+  | 'passphrase'
+  /**
    * A COUNT — days, quantity, mileage. Digits only, no autofill.
    *
    * Distinct from `phone`, which is what a numeric field had to borrow before
@@ -141,6 +158,14 @@ const CONTENT: Record<TextFieldContent, ContentSpec> = {
   number: {
     keyboardType: 'number-pad',
     inputMode: 'numeric',
+    autoCapitalize: 'none',
+    autoComplete: 'off',
+    autoCorrect: false,
+    spellCheck: false,
+    textContentType: 'none',
+  },
+  passphrase: {
+    keyboardType: 'default',
     autoCapitalize: 'none',
     autoComplete: 'off',
     autoCorrect: false,
@@ -260,6 +285,7 @@ export function TextField({
   const styles = useThemedStyles(makeStyles);
   const inputRef = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const accessoryID = useId();
 
   const isMultiline = multiline ?? content === 'notes';
@@ -290,7 +316,9 @@ export function TextField({
 
   const spec = CONTENT[content];
   const showAccessory = SUPPORTS_KEYBOARD_ACCESSORY && NEEDS_ACCESSORY.has(content);
+  const isPassphrase = content === 'passphrase';
   const canClear = clearable && !disabled && value.length > 0;
+  const canReveal = isPassphrase && !disabled && value.length > 0;
 
   const remaining = maxLength === undefined ? undefined : maxLength - value.length;
   const labelAccessory = showCount && remaining !== undefined ? `${remaining} left` : undefined;
@@ -325,6 +353,7 @@ export function TextField({
           onFocus={handleFocus}
           onBlur={handleBlur}
           maxFontSizeMultiplier={MAX_FONT_SCALE}
+          secureTextEntry={isPassphrase && !revealed}
           // A multiline field's return key inserts a newline; only a
           // single-line field can use it to navigate.
           returnKeyType={isMultiline ? 'default' : order.returnKeyType}
@@ -342,6 +371,17 @@ export function TextField({
           ]}
           {...spec}
         />
+        {canReveal ? (
+          // A masked field the user cannot check is how one mistyped character
+          // becomes a backup that never opens, with no server to appeal to.
+          <IconButton
+            name={revealed ? 'eyeSlash' : 'eye'}
+            accessibilityLabel={revealed ? `Hide ${label}` : `Show ${label}`}
+            size={15}
+            onPress={() => setRevealed((shown) => !shown)}
+            style={styles.clearButton}
+          />
+        ) : null}
         {canClear ? (
           <IconButton
             name="close"

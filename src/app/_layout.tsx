@@ -86,6 +86,11 @@ function BootGate() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="subscriptions" />
+        <Stack.Screen name="allowance" />
+        <Stack.Screen name="expenses" />
+        <Stack.Screen name="backup" />
+        <Stack.Screen name="reminders" />
+        <Stack.Screen name="maintenance" />
         {/* The first-run wizard. No gesture out of it: leaving is a decision
             the wizard records (finish or skip), not a swipe that would strand
             the user on a tab the gate is about to redirect away from again. */}
@@ -265,7 +270,7 @@ function BootFailure({ error, attempts }: { error: unknown; attempts: number }) 
     Alert.alert(
       'Erase everything in Keeply?',
       'This deletes the encrypted database on this device and the key that unlocks it.\n\n' +
-        'Every subscription, bill, payment history, receipt, vehicle expense and stored ' +
+        'Every subscription, bill, payment history, expense, vehicle cost and stored ' +
         'document goes with it. Keeply has no account and no server, so there is no copy ' +
         'anywhere else — unless you exported an encrypted backup yourself.\n\n' +
         'Keeply then starts as if you had just installed it.',

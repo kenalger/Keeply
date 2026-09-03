@@ -561,3 +561,97 @@ export async function eraseLocalDatabase(): Promise<void> {
 
   logOperation('db.erase');
 }
+
+// ---------------------------------------------------------------------------
+// Encrypted export (§20)
+// ---------------------------------------------------------------------------
+
+/** The alias the bundle is attached under. Must not collide with `main`. */
+const EXPORT_ALIAS = 'keeply_export';
+
+/**
+ * Write a complete, passphrase-encrypted copy of the database to `destination`.
+ *
+ * ── WHY SQLCipher DOES THIS AND NOT US ─────────────────────────────────────
+ * `sqlcipher_export()` is SQLCipher's own whole-database copy: it attaches a
+ * second file under a DIFFERENT key and streams every page across. The bundle
+ * is therefore a real SQLCipher database — AES-256-CBC pages, file key derived
+ * from the passphrase by PBKDF2-HMAC-SHA512 at 256,000 iterations — produced by
+ * the same audited implementation that protects the live file.
+ *
+ * The alternative was serialising to JSON and encrypting it ourselves.
+ * `expo-crypto` offers hashing and random bytes and **no AES and no KDF**, so
+ * that route means hand-rolling a cipher mode and a key-derivation function,
+ * which is the worst possible thing to hand-roll, plus a serialiser free to
+ * drift from the schema. See `plan/phase8-backup.md` §1.
+ *
+ * ── THE PASSPHRASE ─────────────────────────────────────────────────────────
+ * Interpolated into SQL is NOT an option — a passphrase containing `'` would
+ * break the statement, and worse, would be a quoting bug in the one place a
+ * quoting bug is a security bug. Both the path and the passphrase are BOUND
+ * parameters, which SQLite supports for `ATTACH`.
+ *
+ * It is never logged, never stored, and never returned. `logFailure` receives
+ * the operation name and the error only, and `DbOperation` has no field that
+ * could carry a value.
+ *
+ * ── ON FAILURE ─────────────────────────────────────────────────────────────
+ * The alias is detached in a `finally`, because a bundle left attached would
+ * stay attached for the life of the connection and the next export would fail
+ * with "database keeply_export is already in use" — an error about our
+ * bookkeeping, reported to a user trying to protect their data.
+ *
+ * A partially-written file is deleted. Half a backup that reports success is
+ * worse than no backup, because the user stops worrying about it.
+ *
+ * @param destination absolute filesystem path (no `file://` scheme).
+ * @throws {DatabaseInitError} if the copy did not complete.
+ */
+export async function exportEncryptedCopy(
+  destination: string,
+  passphrase: string,
+): Promise<void> {
+  const db = getRawConnection();
+
+  logOperation('db.export.start');
+
+  let attached = false;
+  try {
+    await db.execute(`ATTACH DATABASE ? AS ${EXPORT_ALIAS} KEY ?`, [destination, passphrase]);
+    attached = true;
+    await db.execute(`SELECT sqlcipher_export('${EXPORT_ALIAS}')`);
+  } catch (error) {
+    // `logFailure` prints the operation and an error CODE and never a message,
+    // so this line is safe. The next one would not be.
+    logFailure('db.export.failed', error);
+
+    // THE CAUSE IS DROPPED ON PURPOSE, and this is the one place in the app
+    // where that is right.
+    //
+    // op-sqlite echoes the BOUND PARAMETERS into its error message:
+    //
+    //   Failed query: ATTACH DATABASE ? AS keeply_export KEY ?
+    //   params: /Users/…/Keeply-backup-….keeply, correct horse battery staple
+    //
+    // The second parameter is the user's passphrase. Attaching that error as
+    // `cause` puts it on React Native's redbox in development, into anything
+    // that serialises a cause chain, and one careless `log.error(err.cause)`
+    // away from a device log — for the single most sensitive string this app
+    // ever handles, and one that protects a complete copy of everything the
+    // user owns.
+    //
+    // `logFailure` above has already recorded the error code, which is what
+    // debugging this actually needs.
+    throw new DatabaseInitError('Could not write the backup');
+  } finally {
+    if (attached) {
+      try {
+        await db.execute(`DETACH DATABASE ${EXPORT_ALIAS}`);
+      } catch (error) {
+        logFailure('db.export.failed', error);
+      }
+    }
+  }
+
+  logOperation('db.export.done');
+}

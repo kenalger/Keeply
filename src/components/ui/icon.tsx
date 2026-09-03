@@ -55,6 +55,7 @@ export const ICONS = {
   ellipsis: { ios: 'ellipsis', android: 'more_horiz' },
   repeat: { ios: 'repeat', android: 'repeat' },
   sparkle: { ios: 'sparkles', android: 'auto_awesome' },
+  eye: { ios: 'eye', android: 'visibility' },
   eyeSlash: { ios: 'eye.slash', android: 'visibility_off' },
   pause: { ios: 'pause.circle', android: 'pause_circle' },
   chartBar: { ios: 'chart.bar', android: 'bar_chart' },

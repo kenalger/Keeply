@@ -19,8 +19,8 @@ import {
   groupPosition,
   type GroupPosition,
 } from '@/components/ui';
-import type { MinorUnits } from '@/db';
-import type { ReceiptRecord, ReceiptTotals } from '@/features/receipts';
+import { minorUnits, type MinorUnits } from '@/db';
+import type { ReceiptRecord, ReceiptSort, ReceiptTotals } from '@/features/receipts';
 import {
   CATEGORY_ICONS,
   CATEGORY_LABELS,
@@ -87,7 +87,35 @@ type ListRow =
       currency: string;
     }
   | { kind: 'fact'; key: string; group: GroupPosition; label: string; value: string }
-  | { kind: 'receipt'; key: string; group: GroupPosition; record: ReceiptRecord };
+  | {
+      kind: 'receipt';
+      key: string;
+      group: GroupPosition;
+      record: ReceiptRecord;
+      /** Only when there is no day header above it to carry the date. */
+      showDate: boolean;
+    }
+  | {
+      kind: 'dayHeader';
+      key: string;
+      label: string;
+      /** `null` when the day holds one expense: a total equal to it says nothing. */
+      totalMinor: MinorUnits | null;
+      currency: string;
+    };
+
+/** Consecutive runs of one `purchase_date`, in the order the query returned. */
+function groupByDay(
+  records: readonly ReceiptRecord[],
+): readonly { dayIso: string; rows: readonly ReceiptRecord[] }[] {
+  const days: { dayIso: string; rows: ReceiptRecord[] }[] = [];
+  for (const record of records) {
+    const last = days[days.length - 1];
+    if (last !== undefined && last.dayIso === record.purchaseDate) last.rows.push(record);
+    else days.push({ dayIso: record.purchaseDate, rows: [record] });
+  }
+  return days;
+}
 
 function buildRows(
   totals: ReceiptTotals | null,
@@ -95,6 +123,7 @@ function buildRows(
   filtered: boolean,
   total: number,
   damaged: number,
+  sort: ReceiptSort,
 ): readonly ListRow[] {
   const rows: ListRow[] = [];
 
@@ -103,14 +132,14 @@ function buildRows(
     rows.push({
       kind: 'sectionHeader',
       key: 'h:totals',
-      title: filtered ? 'What these came to' : 'What you have kept',
+      title: filtered ? 'What these came to' : 'What you have spent',
     });
     rows.push({
       kind: 'total',
       key: 'total:spent',
       group: 'first',
-      label: filtered ? 'Matching receipts' : 'Total kept',
-      caption: `${totals.receiptCount} ${totals.receiptCount === 1 ? 'receipt' : 'receipts'}`,
+      label: filtered ? 'Matching expenses' : 'Total spent',
+      caption: `${totals.receiptCount} ${totals.receiptCount === 1 ? 'expense' : 'expenses'}`,
       amountMinor: primary.totalMinor,
       currency: primary.currency,
     });
@@ -141,16 +170,65 @@ function buildRows(
       key: 'h:rows',
       title: filtered
         ? `${total} ${total === 1 ? 'match' : 'matches'}`
-        : `${total} ${total === 1 ? 'receipt' : 'receipts'}`,
+        : `${total} ${total === 1 ? 'expense' : 'expenses'}`,
     });
-    records.forEach((record, index) =>
+
+    // GROUPED BY DAY, with a subtotal per day — but ONLY in date order.
+    //
+    // "Sep 3 · ₱12,480" is what makes a daily allowance legible without the
+    // user adding four rows up in their head. It depends entirely on the list
+    // being in date order: `groupByDay()` collects CONSECUTIVE runs of one
+    // date, so sorted by amount or by name the same day appears in several
+    // places down the list, each run carrying a partial sum with a day's date
+    // on it. That is not a smaller total — it is a wrong one, and it looks
+    // exactly like a right one.
+    //
+    // So grouping is dropped rather than shown wrong, and the sort control's
+    // helper text says it will be, before the user changes the order.
+    //
+    // The subtotal is summed in JS, and only over the rows already on screen —
+    // the one place in this feature that is allowed, because it is a fact about
+    // THE PAGE ("these rows come to ₱12,480"), not about the database. Every
+    // figure that describes the whole ledger still comes from SQLite
+    // (`receiptTotals`), and the header above says so with `total`.
+    const grouped = sort === 'purchase-date' ? groupByDay(records) : [];
+
+    if (grouped.length === 0) {
+      // Ungrouped: every row carries its own date, because there is no day
+      // header above it to say what it is.
+      records.forEach((record, index) =>
+        rows.push({
+          kind: 'receipt',
+          key: `r:${record.id}`,
+          group: groupPosition(index, records.length),
+          record,
+          showDate: true,
+        }),
+      );
+    }
+
+    for (const day of grouped) {
+      const sum = day.rows.reduce((carry, row) => carry + row.amountMinor, 0);
+      // ABOVE its day, not below it. A total placed under the last row sat
+      // between two cards and read as a heading for the one that followed —
+      // the date said "Sep 3" while the rows beneath it said "Sep 2".
       rows.push({
-        kind: 'receipt',
-        key: `r:${record.id}`,
-        group: groupPosition(index, records.length),
-        record,
-      }),
-    );
+        kind: 'dayHeader',
+        key: `day:${day.dayIso}`,
+        label: formatDateShort(day.dayIso),
+        totalMinor: day.rows.length > 1 ? minorUnits(sum) : null,
+        currency: day.rows[0].currency,
+      });
+      day.rows.forEach((record, index) =>
+        rows.push({
+          kind: 'receipt',
+          key: `r:${record.id}`,
+          group: groupPosition(index, day.rows.length),
+          record,
+          showDate: false,
+        }),
+      );
+    }
   }
 
   // Reported by the LIST rather than by the totals: a page can skip rows the
@@ -193,18 +271,19 @@ export default function ReceiptListScreen() {
   const setCount = activeFilterCount(filters);
 
   const rows = useMemo(
-    () => buildRows(totals.value, list.rows, filtered, list.total, list.damagedCount),
-    [totals.value, list.rows, filtered, list.total, list.damagedCount],
+    () =>
+      buildRows(totals.value, list.rows, filtered, list.total, list.damagedCount, filters.sort),
+    [totals.value, list.rows, filtered, list.total, list.damagedCount, filters.sort],
   );
 
   const open = useCallback(
-    (id: string) => router.push({ pathname: '/receipts/[id]', params: { id } }),
+    (id: string) => router.push({ pathname: '/expenses/[id]', params: { id } }),
     [router],
   );
 
   // §28's flow starts at the camera, so Add does too — and the camera screen
   // itself offers "Skip the photo", so this is never a forced detour.
-  const add = useCallback(() => router.push('/receipts/capture'), [router]);
+  const add = useCallback(() => router.push('/expenses/capture'), [router]);
 
   // Never a dead end: opened from Money there is a stack to pop, but a deep
   // link into this screen has none, and a back control that does nothing is
@@ -223,7 +302,7 @@ export default function ReceiptListScreen() {
 
   const header = (
     <ScreenHeader
-      title="Receipts"
+      title="Expenses"
       subtitle={summarise(totals.value, filters, filtered)}
       onBack={goBack}
       backLabel="Back to Money"
@@ -234,8 +313,8 @@ export default function ReceiptListScreen() {
               name="filter"
               accessibilityLabel={
                 setCount === 0
-                  ? 'Filter receipts'
-                  : `Filter receipts, ${setCount} ${setCount === 1 ? 'filter' : 'filters'} set`
+                  ? 'Filter and sort expenses'
+                  : `Filter and sort expenses, ${setCount} ${setCount === 1 ? 'filter' : 'filters'} set`
               }
               onPress={() => setSheetOpen(true)}
               testID="receipts-filter"
@@ -246,14 +325,14 @@ export default function ReceiptListScreen() {
           </View>
           <IconButton
             name="plus"
-            accessibilityLabel="Add a receipt"
+            accessibilityLabel="Add an expense"
             onPress={add}
             testID="receipts-add"
           />
         </View>
       }>
       <TextField
-        label="Search receipts"
+        label="Search expenses"
         labelHidden
         content="search"
         value={filters.search}
@@ -281,7 +360,7 @@ export default function ReceiptListScreen() {
           list.status === 'error' ? (
             <EmptyState
               icon="errorCircle"
-              title="Keeply could not read your receipts"
+              title="Keeply could not read your expenses"
               description="The database is on this device, so this is not a connection problem. Trying again usually clears it."
               actionLabel="Try again"
               actionIcon="repeat"
@@ -295,7 +374,7 @@ export default function ReceiptListScreen() {
             <EmptyState
               icon="search"
               title="Nothing matches"
-              description="No receipt matches this search and these filters."
+              description="No expense matches this search and these filters."
               actionLabel="Clear filters"
               actionIcon="close"
               onAction={clearFilters}
@@ -304,9 +383,9 @@ export default function ReceiptListScreen() {
           ) : (
             <EmptyState
               icon="receipt"
-              title="No receipts yet"
+              title="Nothing logged yet"
               description="Photograph what you buy and Keeply keeps the picture and the amount together — on this device, offline, never uploaded."
-              actionLabel="Add a receipt"
+              actionLabel="Add an expense"
               actionIcon="camera"
               onAction={add}
               actionHint="Opens the camera"
@@ -321,7 +400,7 @@ export default function ReceiptListScreen() {
         }
         onEndReached={list.hasMore ? list.loadMore : undefined}
         contentContainerStyle={styles.content}
-        accessibilityLabel="Receipts"
+        accessibilityLabel="Expenses"
         testID="receipts-list"
       />
 
@@ -356,7 +435,7 @@ function summarise(
 
   if (!filtered) {
     if (totals === null || totals.receiptCount === 0) {
-      return 'Photographed and kept on this device';
+      return 'What you bought, kept on this device';
     }
   }
 
@@ -403,6 +482,17 @@ const ReceiptListRow = memo(function ReceiptListRow({
         </ListGroup>
       );
 
+    case 'dayHeader':
+      return (
+        <ListSectionHeader
+          title={
+            row.totalMinor === null
+              ? row.label
+              : `${row.label} · ${formatMoney(row.totalMinor, row.currency)}`
+          }
+        />
+      );
+
     case 'fact':
       return (
         <ListGroup position={row.group}>
@@ -426,9 +516,9 @@ const ReceiptListRow = memo(function ReceiptListRow({
             subtitle={rowSubtitle(record.category, record.paymentMethod)}
             value={<Amount minor={record.amountMinor} currency={record.currency} />}
             valueLabel={amountLabel(record.amountMinor, { currency: record.currency })}
-            valueCaption={formatDateShort(record.purchaseDate)}
+            valueCaption={row.showDate ? formatDateShort(record.purchaseDate) : undefined}
             onPress={() => onOpen(record.id)}
-            accessibilityHint="Opens this receipt"
+            accessibilityHint="Opens this expense"
             testID={`receipt-row-${record.id}`}
           />
         </ListGroup>

@@ -164,6 +164,8 @@ interface MoreRowInput {
   readonly reminders: ReturnType<typeof useReminderDefaults>;
   readonly sampleDashboard: SampleDashboardMode;
   readonly cycleSampleDashboard: () => void;
+  readonly openReminders: () => void;
+  readonly openExport: () => void;
   readonly openDesignSystem: () => void;
   readonly restartOnboarding: () => void;
   /** The user asked for an app lock during setup (`plan/onboarding.md` step 6). */
@@ -197,6 +199,7 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
         title: 'Bill reminders',
         subtitle: describeReminderLeadTimes(input.reminders.billReminderLeadTimes),
         state: { kind: 'none' },
+        onPress: input.openReminders,
       },
       {
         key: 'subs',
@@ -204,6 +207,7 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
         title: 'Subscription renewals',
         subtitle: describeReminderLeadTimes(input.reminders.subscriptionReminderLeadTimes),
         state: { kind: 'none' },
+        onPress: input.openReminders,
       },
       {
         key: 'docs',
@@ -211,6 +215,7 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
         title: 'Document expiry',
         subtitle: describeReminderLeadTimes(input.reminders.documentReminderLeadTimes),
         state: { kind: 'none' },
+        onPress: input.openReminders,
       },
       {
         key: 'hour',
@@ -218,9 +223,10 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
         title: 'Delivered at',
         subtitle: 'Local time, scheduled on this device',
         state: { kind: 'text', label: formatReminderHour(input.reminders.reminderHour) },
+        onPress: input.openReminders,
       },
     ],
-    'Any single record can override these. Editing the defaults arrives with settings persistence.',
+    'Any single record can override these.',
   );
 
   pushSection(rows, 'Security', [
@@ -251,7 +257,8 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
       icon: 'download',
       title: 'Export an encrypted backup',
       subtitle: 'A file you keep yourself — there is no cloud account',
-      state: { kind: 'soon' },
+      state: { kind: 'none' },
+      onPress: input.openExport,
     },
     {
       key: 'restore',
@@ -347,6 +354,8 @@ export default function MoreScreen() {
     setThemePreference(next);
   }, [preference, setThemePreference]);
 
+  const openReminders = useCallback(() => router.push('/reminders'), [router]);
+  const openExport = useCallback(() => router.push('/backup/export'), [router]);
   const openDesignSystem = useCallback(() => router.push('/ui-preview'), [router]);
 
   /**
@@ -372,6 +381,8 @@ export default function MoreScreen() {
   const rows = useMemo(
     () =>
       buildMoreRows({
+        openReminders,
+        openExport,
         themePreference: preference,
         cycleTheme,
         reminders,

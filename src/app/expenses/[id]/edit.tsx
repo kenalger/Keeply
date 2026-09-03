@@ -30,19 +30,19 @@ export default function EditReceiptScreen() {
 
   const leave = useCallback(() => {
     if (router.canGoBack()) router.back();
-    else router.replace({ pathname: '/receipts/[id]', params: { id } });
+    else router.replace({ pathname: '/expenses/[id]', params: { id } });
   }, [router, id]);
 
   const takePhoto = useCallback(
     (draftKey: ReceiptDraftKey) =>
-      router.push({ pathname: '/receipts/capture', params: { draft: draftKey } }),
+      router.push({ pathname: '/expenses/capture', params: { draft: draftKey } }),
     [router],
   );
 
   if (record.status === 'loading') {
     return (
       <Screen edges={['top']}>
-        <ScreenHeader title="Edit receipt" onBack={leave} />
+        <ScreenHeader title="Edit expense" onBack={leave} />
         <SkeletonList count={5} leading={false} />
       </Screen>
     );
@@ -54,10 +54,10 @@ export default function EditReceiptScreen() {
   if (record.status === 'error') {
     return (
       <Screen edges={['top']}>
-        <ScreenHeader title="Edit receipt" onBack={leave} />
+        <ScreenHeader title="Edit expense" onBack={leave} />
         <EmptyState
           icon="errorCircle"
-          title="Keeply could not open this receipt"
+          title="Keeply could not open this expense"
           description="The record is on this device, so this is not a connection problem. It may be stored in a way Keeply cannot read."
           actionLabel="Try again"
           actionIcon="repeat"
@@ -70,14 +70,14 @@ export default function EditReceiptScreen() {
   if (record.value === null) {
     return (
       <Screen edges={['top']}>
-        <ScreenHeader title="Edit receipt" onBack={leave} />
+        <ScreenHeader title="Edit expense" onBack={leave} />
         <EmptyState
           icon="tray"
-          title="This receipt is gone"
+          title="This expense is gone"
           description="It was deleted, so there is nothing left to edit."
-          actionLabel="Back to receipts"
+          actionLabel="Back to expenses"
           actionIcon="chevronLeft"
-          onAction={() => router.replace('/receipts')}
+          onAction={() => router.replace('/expenses')}
         />
       </Screen>
     );

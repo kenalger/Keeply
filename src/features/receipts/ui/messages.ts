@@ -42,7 +42,7 @@ export function messageFor(error: ReceiptError): string {
     case 'invalid-category':
       return 'Choose a category.';
     case 'invalid-date':
-      return 'Choose the date printed on the receipt.';
+      return 'Choose the date you spent it.';
     case 'invalid-uri':
       // Never shown in the normal course of things: the only URIs this form
       // produces come from `storeReceiptImage()` and are sandbox files. It
@@ -51,7 +51,7 @@ export function messageFor(error: ReceiptError): string {
     case 'too-long':
       return tooLongMessage(error.field);
     case 'not-found':
-      return 'This receipt no longer exists.';
+      return 'This expense no longer exists.';
     case 'empty-patch':
       return 'Nothing was changed.';
     case 'invalid-range':

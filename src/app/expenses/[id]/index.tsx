@@ -15,6 +15,7 @@ import {
   Row,
   Screen,
   ScreenHeader,
+  Text,
   amountLabel,
   type GroupPosition,
 } from '@/components/ui';
@@ -84,7 +85,15 @@ type DetailRow =
 function buildDetailRows(record: ReceiptRecord): readonly DetailRow[] {
   const rows: DetailRow[] = [];
 
-  rows.push({ kind: 'photo', key: 'photo', uri: record.localImageUri });
+  // Only when there IS one. A receipt saved without a photo used to open on a
+  // 250pt empty rounded rectangle reading "No photo attached", with a note
+  // further down the screen saying the same thing in words — a quarter of the
+  // first screen spent saying "nothing here", twice, above the amount the user
+  // actually came to see. The note below carries it, and it carries the way to
+  // fix it too.
+  if (record.localImageUri !== null) {
+    rows.push({ kind: 'photo', key: 'photo', uri: record.localImageUri });
+  }
 
   rows.push({ kind: 'sectionHeader', key: 'h:amount', title: 'What it cost' });
   rows.push({
@@ -122,6 +131,8 @@ function buildDetailRows(record: ReceiptRecord): readonly DetailRow[] {
   }
 
   if (record.notes !== null) {
+    // The section header is the label. Giving the row one as well printed
+    // "Notes" twice, one directly under the other.
     rows.push({ kind: 'sectionHeader', key: 'h:notes', title: 'Notes' });
     rows.push({ kind: 'text', key: 'notes', group: 'only', label: 'Notes', body: record.notes });
   }
@@ -130,7 +141,7 @@ function buildDetailRows(record: ReceiptRecord): readonly DetailRow[] {
     rows.push({
       kind: 'note',
       key: 'no-photo',
-      text: 'This receipt was saved without a photo. Edit it to attach one.',
+      text: 'This expense was saved without a photo. Edit it to attach one.',
     });
   }
 
@@ -145,6 +156,9 @@ const makeStyles = (t: Theme) =>
   StyleSheet.create({
     content: { paddingHorizontal: t.layout.gutter, paddingBottom: t.space.xxl },
     actions: { marginTop: t.layout.section, gap: t.space.sm },
+    // A note is prose inside a grouped card: it needs the row's vertical
+    // rhythm without the row's one-and-two-line truncation.
+    note: { paddingVertical: t.space.sm },
   });
 
 export default function ReceiptDetailScreen() {
@@ -156,7 +170,7 @@ export default function ReceiptDetailScreen() {
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
-    else router.replace('/receipts');
+    else router.replace('/expenses');
   }, [router]);
 
   const value = record.value;
@@ -189,13 +203,13 @@ export default function ReceiptDetailScreen() {
               const result = await deleteReceipt(value.id);
               setBusy(false);
               if (result.ok) {
-                router.replace('/receipts');
+                router.replace('/expenses');
                 return;
               }
               log.warn('receipts: a delete was refused');
               Alert.alert(
                 'That did not delete',
-                'Keeply could not remove this receipt. Try again.',
+                'Keeply could not remove this expense. Try again.',
               );
             })();
           },
@@ -223,7 +237,7 @@ export default function ReceiptDetailScreen() {
           record.status === 'error' ? (
             <EmptyState
               icon="errorCircle"
-              title="Keeply could not open this receipt"
+              title="Keeply could not open this expense"
               // The data layer THROWS rather than returning null for a row it
               // cannot map, precisely so this does not claim the record is gone.
               description="The record is on this device, so this is not a connection problem. It may be stored in a way Keeply cannot read."
@@ -238,29 +252,29 @@ export default function ReceiptDetailScreen() {
           missing ? (
             <EmptyState
               icon="tray"
-              title="This receipt is gone"
+              title="This expense is gone"
               description="It was deleted, so there is nothing left to show here."
-              actionLabel="Back to receipts"
+              actionLabel="Back to expenses"
               actionIcon="chevronLeft"
-              onAction={() => router.replace('/receipts')}
+              onAction={() => router.replace('/expenses')}
               fill={false}
             />
           ) : undefined
         }
         header={
           <ScreenHeader
-            title={value?.merchant ?? 'Receipt'}
+            title={value?.merchant ?? 'Expense'}
             subtitle={value === null ? undefined : categoryLabel(value.category)}
             onBack={goBack}
-            backLabel="Back to receipts"
+            backLabel="Back to expenses"
             right={
               value === null ? undefined : (
                 <IconButton
                   name="pencil"
-                  accessibilityLabel={`Edit this ${value.merchant} receipt`}
+                  accessibilityLabel={`Edit this ${value.merchant} expense`}
                   onPress={() =>
                     router.push({
-                      pathname: '/receipts/[id]/edit',
+                      pathname: '/expenses/[id]/edit',
                       params: { id: value.id },
                     })
                   }
@@ -287,7 +301,7 @@ export default function ReceiptDetailScreen() {
           )
         }
         contentContainerStyle={styles.content}
-        accessibilityLabel="Receipt details"
+        accessibilityLabel="Expense details"
         testID="receipt-detail"
       />
     </Screen>
@@ -301,6 +315,7 @@ const detailRowKey = (row: DetailRow): string => row.key;
 /* -------------------------------------------------------------------------- */
 
 const DetailRowView = memo(function DetailRowView({ row }: { row: DetailRow }) {
+  const styles = useThemedStyles(makeStyles);
   switch (row.kind) {
     case 'photo':
       return (
@@ -334,9 +349,18 @@ const DetailRowView = memo(function DetailRowView({ row }: { row: DetailRow }) {
       );
 
     case 'text':
+      // NOT a `<Row/>`. Its title is `numberOfLines={1}` and its subtitle
+      // `numberOfLines={2}`, so a note of any length was silently truncated
+      // with no way to read the rest — and the row's label repeated the
+      // section header immediately above it. A note is prose: it gets a card
+      // and as many lines as it needs.
       return (
         <ListGroup position={row.group}>
-          <Row title={row.label} subtitle={row.body} chevron={false} />
+          <View style={styles.note}>
+            <Text variant="body" accessibilityLabel={`${row.label}: ${row.body}`}>
+              {row.body}
+            </Text>
+          </View>
         </ListGroup>
       );
   }

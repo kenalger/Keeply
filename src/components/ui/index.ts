@@ -22,6 +22,7 @@ export {
 } from './badge';
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './button';
 export { Card, type CardProps } from './card';
+export { ChipField, type ChipFieldProps, type ChipOption } from './chip-field';
 export { DateField, type DateFieldProps, type DatePresetKey } from './date-field';
 export { Divider, type DividerProps } from './divider';
 export {
@@ -84,6 +85,7 @@ export {
   SegmentedField,
   type SegmentedFieldProps,
   type SegmentedOption,
+  type SegmentedVariant,
 } from './segmented-field';
 export { SelectField, type SelectFieldProps, type SelectOption } from './select-field';
 export { Section, type SectionProps } from './section';

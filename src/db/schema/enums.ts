@@ -117,20 +117,70 @@ export const RECEIPT_CATEGORY_VALUES = [
 export type ReceiptCategory = (typeof RECEIPT_CATEGORY_VALUES)[number];
 
 // ---------------------------------------------------------------------------
-// Vehicles (§11, §12)
+// Maintenance (§11, §12, amended by plan/phase5-maintenance.md)
 // ---------------------------------------------------------------------------
 
-export const VEHICLE_TYPE_VALUES = ['car', 'motorcycle', 'other'] as const;
+/**
+ * What kind of thing needs looking after.
+ *
+ * `goal.md` §11 scoped this to cars and motorcycles. It is wider now: an aircon,
+ * a water heater and a laptop all have a service interval, a warranty and a
+ * running cost, and none of them is a vehicle. The category is what decides
+ * which fields a form offers — see `MAINTENANCE_ITEM_KIND_VALUES` consumers —
+ * not what the record fundamentally is.
+ */
+export const MAINTENANCE_ITEM_KIND_VALUES = [
+  'vehicle',
+  'appliance',
+  'home',
+  'electronics',
+  'other',
+] as const;
+export type MaintenanceItemKind = (typeof MAINTENANCE_ITEM_KIND_VALUES)[number];
+
+/**
+ * Vehicle sub-types. Only meaningful when the item's kind is `'vehicle'`.
+ *
+ * Kept as its own enum rather than folded into the kind list: "car" and
+ * "appliance" are not the same sort of distinction, and flattening them would
+ * make `kind` answer two questions at once.
+ */
+export const VEHICLE_TYPE_VALUES = ['car', 'motorcycle', 'bicycle', 'other'] as const;
 export type VehicleType = (typeof VEHICLE_TYPE_VALUES)[number];
 
-export const VEHICLE_EXPENSE_TYPE_VALUES = [
+/**
+ * What a cost row was for.
+ *
+ * §12's five, widened by two. `maintenance` became `service` because the table
+ * it sits in is now called maintenance and "maintenance.maintenance" says
+ * nothing; `parts` and `other` are added because a part bought without a shop
+ * visit, and a cost that is none of the above, both previously had nowhere to
+ * go but `repair`.
+ */
+export const MAINTENANCE_COST_TYPE_VALUES = [
   'fuel',
+  'service',
   'repair',
-  'maintenance',
+  'parts',
   'insurance',
   'registration',
+  'other',
 ] as const;
-export type VehicleExpenseType = (typeof VEHICLE_EXPENSE_TYPE_VALUES)[number];
+export type MaintenanceCostType = (typeof MAINTENANCE_COST_TYPE_VALUES)[number];
+
+/**
+ * A dated thing that expires and has to be renewed.
+ *
+ * `vehicle_insurance` and `vehicle_registration` were two tables with the same
+ * six columns and different names; warranty would have been a third. One table
+ * with this discriminator is one expiry query, one reminder path, one screen.
+ */
+export const MAINTENANCE_RENEWAL_KIND_VALUES = [
+  'insurance',
+  'registration',
+  'warranty',
+] as const;
+export type MaintenanceRenewalKind = (typeof MAINTENANCE_RENEWAL_KIND_VALUES)[number];
 
 // ---------------------------------------------------------------------------
 // Documents (§14)
@@ -161,6 +211,16 @@ export const NOTIFICATION_ENTITY_TYPE_VALUES = [
   'subscription',
   'bill',
   'document',
+  // These three still name the OLD vehicle tables. Renaming them to
+  // `maintenance_service` / `maintenance_renewal` changes a CHECK constraint,
+  // which SQLite can only do by rebuilding the table — and drizzle-kit's
+  // rebuild does not drop the dependent `notification_settings_live` view
+  // first, so the generated `ALTER TABLE … RENAME` fails with
+  // "error in view notification_settings_live: no such table".
+  //
+  // No code reads these values yet (grep: zero hits outside this file), so the
+  // rename waits for step 5e, when reminders are actually wired and the view
+  // can be dropped and recreated around the rebuild in one deliberate change.
   'vehicle_insurance',
   'vehicle_registration',
   'vehicle_maintenance',
@@ -182,3 +242,17 @@ export const APP_SETTING_VALUE_TYPE_VALUES = [
   'json',
 ] as const;
 export type AppSettingValueType = (typeof APP_SETTING_VALUE_TYPE_VALUES)[number];
+
+// ---------------------------------------------------------------------------
+// Allowance (Phase 9). The cadence a spending allowance is set on.
+// ---------------------------------------------------------------------------
+
+/**
+ * How often an allowance resets. Calendar-anchored, always: monthly is the 1st
+ * to the last day of the month, weekly is Monday to Sunday, daily is one local
+ * calendar day. The boundaries themselves live in
+ * `src/features/allowance/period.ts`, which is pure and testable in plain Node;
+ * this tuple is only the vocabulary the CHECK constraint is generated from.
+ */
+export const ALLOWANCE_PERIOD_VALUES = ['daily', 'weekly', 'monthly'] as const;
+export type AllowancePeriod = (typeof ALLOWANCE_PERIOD_VALUES)[number];

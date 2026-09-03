@@ -35,6 +35,7 @@ import {
   type UpcomingPaymentItem,
   type UpcomingSubscriptionItem,
 } from '@/lib/dashboard';
+import { AllowanceSummary } from '@/features/allowance/ui';
 import { formatMonthYear } from '@/theme';
 
 /**
@@ -103,6 +104,7 @@ type HomeRow =
   | { kind: 'allClear'; key: string; firstRun: boolean }
   | { kind: 'sectionHeader'; key: string; title: string }
   | { kind: 'quiet'; key: string; text: string }
+  | { kind: 'allowance'; key: string }
   | { kind: 'overdue'; key: string; group: GroupPosition; item: OverdueItem }
   | { kind: 'payment'; key: string; group: GroupPosition; item: UpcomingPaymentItem }
   | { kind: 'expiry'; key: string; group: GroupPosition; item: ExpiringDocumentItem }
@@ -130,7 +132,7 @@ function buildHomeRows(data: DashboardData): readonly HomeRow[] {
       {
         kind: 'quiet',
         key: 'first-run-hint',
-        text: 'Bills, subscriptions and receipts live in Money. Vehicles keeps fuel and repairs; Documents keeps licences and registrations.',
+        text: 'Bills, subscriptions and expenses live in Money. Maintenance keeps what your car, appliances and gadgets cost to look after; Documents keeps licences and registrations.',
       },
     ];
   }
@@ -191,6 +193,19 @@ function buildHomeRows(data: DashboardData): readonly HomeRow[] {
   // collapses to a single line instead.
   const spending = data.monthlySpending;
   const monthLabel = formatMonthYear(`${spending.month}-01`);
+
+  // The allowance sits ABOVE "This month" and below everything urgent (§24).
+  // It is context, not a task: an overdue bill still outranks it. Unlike the
+  // rest of this function the row carries no payload — the card reads its own
+  // data, because `HomeRowView` is a switch and a hook cannot live in a branch.
+  //
+  // It gets a heading like every other block. Without one it was the only
+  // unlabelled card on the screen, sitting directly under the subscriptions
+  // group — which made it read as part of that group rather than as its own
+  // answer to its own question.
+  rows.push({ kind: 'sectionHeader', key: 'h:allowance', title: 'Allowance' });
+  rows.push({ kind: 'allowance', key: 'allowance' });
+
   rows.push({ kind: 'sectionHeader', key: 'h:month', title: 'This month' });
   if (spending.totalMinor === 0) {
     rows.push({
@@ -344,6 +359,17 @@ const HomeRowView = memo(function HomeRowView({ row }: { row: HomeRow }) {
       return (
         <ListBlock>
           <AllClear firstRun={row.firstRun} />
+        </ListBlock>
+      );
+
+    case 'allowance':
+      // `gap="none"`: the section header above owns the gap below itself
+      // (`layout.heading`), and `ListBlock`'s default `section` gap would stack
+      // on top of it — which is precisely the 40pt of dead space that once sat
+      // under every header on this screen.
+      return (
+        <ListBlock gap="none">
+          <AllowanceSummary testID="home-allowance" />
         </ListBlock>
       );
 
@@ -540,7 +566,7 @@ const AllClear = memo(function AllClear({ firstRun }: { firstRun: boolean }) {
       title="You’re all caught up"
       description={
         firstRun
-          ? 'Nothing is tracked yet. Add a bill, subscription, receipt or document and Keeply watches the dates for you — on this device, offline.'
+          ? 'Nothing is tracked yet. Add a bill, subscription, expense or document and Keeply watches the dates for you — on this device, offline.'
           : 'Nothing is overdue, nothing is due soon and no document is close to expiring.'
       }
       actionLabel={firstRun ? 'Add your first record' : undefined}

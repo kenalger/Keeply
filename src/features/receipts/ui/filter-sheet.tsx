@@ -1,5 +1,6 @@
 /**
- * §23's receipt filters: merchant, category, date range, amount range.
+ * §23's expense filters — merchant, category, date range, amount range, photo —
+ * and the order the results come back in.
  *
  * ── WHY THREE OF THE FOUR ARE IN A SHEET ───────────────────────────────────
  * The merchant search is not here — it lives in the list header, always one tap
@@ -41,19 +42,73 @@ import {
   DateField,
   ErrorText,
   FieldLabel,
+  SegmentedField,
   SelectField,
   Sheet,
+  type SegmentedOption,
   type SelectOption,
 } from '@/components/ui';
 import type { MinorUnits } from '@/db';
 import { useThemedStyles, type Theme } from '@/theme';
 
-import type { ReceiptCategory } from '../types';
+import type { ReceiptCategory, ReceiptSort } from '../types';
 import type { ReceiptFilterState } from './hooks';
 import { CATEGORY_OPTIONS } from './labels';
 
 /** `'all'` is the ABSENCE of a category filter. `SelectOption` cannot spell `null`. */
 type CategoryChoice = ReceiptCategory | 'all';
+
+/**
+ * SORT IS NOT A FILTER, and this sheet holds both anyway.
+ *
+ * It changes the ORDER of what matched, never what matched — which is why it
+ * is excluded from `activeFilterCount()` and from `isFiltered()`, and why
+ * "Clear all filters" leaves it alone. Resetting the order the user chose
+ * because they cleared a category would be answering a question nobody asked.
+ *
+ * It lives in this sheet rather than in the header because the header already
+ * carries a search field and two buttons; a fourth control there would push the
+ * expenses themselves below the fold on every visit, including the majority
+ * where nothing is sorted or filtered at all.
+ */
+const SORT_OPTIONS: readonly SegmentedOption<ReceiptSort>[] = [
+  { value: 'purchase-date', label: 'Date' },
+  { value: 'amount', label: 'Amount' },
+  { value: 'merchant', label: 'Name' },
+];
+
+/**
+ * Each order's direction and its consequence, said out loud.
+ *
+ * The consequence matters: day grouping only makes sense while the list is in
+ * date order. Sorted by amount, one day's expenses are scattered down the list,
+ * and a "day total" over a scattered run would be a partial sum wearing the
+ * name of a whole one.
+ */
+const SORT_HELPERS: Record<ReceiptSort, string> = {
+  'purchase-date': 'Newest first, grouped by day with a total for each.',
+  amount: 'Largest first. Days are not grouped — the list is no longer in date order.',
+  merchant: 'A to Z. Days are not grouped — the list is no longer in date order.',
+};
+
+/** `'any'` is the ABSENCE of a photo filter. A segment cannot spell `null`. */
+type PhotoChoice = 'any' | 'with' | 'without';
+
+const PHOTO_OPTIONS: readonly SegmentedOption<PhotoChoice>[] = [
+  { value: 'any', label: 'Any' },
+  { value: 'with', label: 'With photo' },
+  { value: 'without', label: 'No photo' },
+];
+
+function photoChoice(hasImage: boolean | null): PhotoChoice {
+  if (hasImage === null) return 'any';
+  return hasImage ? 'with' : 'without';
+}
+
+function hasImageFor(choice: PhotoChoice): boolean | null {
+  if (choice === 'any') return null;
+  return choice === 'with';
+}
 
 const CATEGORY_CHOICES: readonly SelectOption<CategoryChoice>[] = [
   { value: 'all', label: 'All categories', icon: 'tag' },
@@ -92,12 +147,15 @@ export function ReceiptFilterSheet({
     value.maxAmountMinor !== null &&
     value.minAmountMinor > value.maxAmountMinor;
 
+  // NO SUBTITLE. It used to read "Every filter and the order are applied by the
+  // database on this device" — true, and reassurance worth giving once, not
+  // every time someone changes a sort order. Two wrapped lines of it sat above
+  // the first control and pushed the whole sheet down.
   return (
     <Sheet
       visible={visible}
       onClose={onClose}
-      title="Filter receipts"
-      subtitle="Everything here is applied by the database on this device."
+      title="Filter and sort"
       scroll
       testID={testID}
       footer={
@@ -114,12 +172,22 @@ export function ReceiptFilterSheet({
             variant="ghost"
             fullWidth
             onPress={onClearAll}
-            accessibilityHint="Removes the search, the category and both ranges"
+            accessibilityHint="Removes the search, the category, the photo filter and both ranges. The sort order is kept."
             testID={`${testID}-clear`}
           />
         </>
       }>
       <View style={styles.body}>
+        <SegmentedField<ReceiptSort>
+          label="Sort by"
+          variant="underline"
+          value={value.sort}
+          onChangeValue={(next) => set({ sort: next })}
+          options={SORT_OPTIONS}
+          helper={SORT_HELPERS[value.sort]}
+          testID={`${testID}-sort`}
+        />
+
         <SelectField<CategoryChoice>
           label="Category"
           value={value.category ?? 'all'}
@@ -127,6 +195,15 @@ export function ReceiptFilterSheet({
           options={CATEGORY_CHOICES}
           accessibilityHint="Opens the list of categories"
           testID={`${testID}-category`}
+        />
+
+        <SegmentedField<PhotoChoice>
+          label="Photo"
+          variant="underline"
+          value={photoChoice(value.hasImage)}
+          onChangeValue={(next) => set({ hasImage: hasImageFor(next) })}
+          options={PHOTO_OPTIONS}
+          testID={`${testID}-photo`}
         />
 
         <View style={styles.group}>

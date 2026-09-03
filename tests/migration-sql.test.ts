@@ -62,29 +62,30 @@ function payment(
   });
 }
 
-function vehicle(db: DatabaseSync, overrides: Record<string, string | number | null> = {}): string {
-  return insertRow(db, 'vehicles', {
-    id: testId('veh'),
+function item(db: DatabaseSync, overrides: Record<string, string | number | null> = {}): string {
+  return insertRow(db, 'maintenance_items', {
+    id: testId('item'),
     name: 'Vios',
-    type: 'car',
+    kind: 'vehicle',
+    vehicle_type: 'car',
     created_at: nowMs(),
     updated_at: nowMs(),
     ...overrides,
   });
 }
 
-function expense(
+function cost(
   db: DatabaseSync,
-  vehicleId: string,
+  itemId: string,
   overrides: Record<string, string | number | null> = {},
 ): string {
-  return insertRow(db, 'vehicle_expenses', {
-    id: testId('exp'),
-    vehicle_id: vehicleId,
+  return insertRow(db, 'maintenance_costs', {
+    id: testId('cost'),
+    item_id: itemId,
     type: 'fuel',
     amount_minor: 250000,
     currency: 'PHP',
-    expense_date: '2026-10-12',
+    cost_date: '2026-10-12',
     created_at: nowMs(),
     updated_at: nowMs(),
     ...overrides,
@@ -120,6 +121,7 @@ describe('the migration applies', () => {
     ).map((row) => row.name);
 
     const expectedTables = [
+      'allowances',
       'app_settings',
       'bill_payments',
       'bills',
@@ -127,11 +129,10 @@ describe('the migration applies', () => {
       'notification_settings',
       'receipts',
       'subscriptions',
-      'vehicle_expenses',
-      'vehicle_insurance',
-      'vehicle_maintenance',
-      'vehicle_registration',
-      'vehicles',
+      'maintenance_costs',
+      'maintenance_items',
+      'maintenance_renewals',
+      'maintenance_services',
     ];
     for (const table of expectedTables) assert.ok(tables.includes(table), `missing table ${table}`);
     assert.equal(expectedTables.length, 12);
@@ -206,8 +207,8 @@ describe('§29 — calendar dates are validated, not merely shaped', () => {
         }),
       'receipts.purchase_date',
     );
-    const vehicleId = vehicle(db);
-    assertRejected(() => expense(db, vehicleId, { expense_date: '2026-02-30' }), 'expense_date');
+    const itemId = item(db);
+    assertRejected(() => cost(db, itemId, { cost_date: '2026-02-30' }), 'expense_date');
   });
 
   test('an end date may not precede its start date', () => {
@@ -225,12 +226,12 @@ describe('§29 — calendar dates are validated, not merely shaped', () => {
         }),
       'expiry before issue',
     );
-    const vehicleId = vehicle(db);
+    const itemId = item(db);
     assertRejected(
       () =>
-        insertRow(db, 'vehicle_insurance', {
+        insertRow(db, 'maintenance_renewals', {
           id: testId('ins'),
-          vehicle_id: vehicleId,
+          item_id: itemId,
           provider: 'Malayan',
           start_date: '2026-10-12',
           expiry_date: '2026-01-01',
@@ -305,10 +306,10 @@ describe('§29 — money', () => {
 
   test('other numeric guards hold', () => {
     const db = createMigratedDatabase();
-    assertRejected(() => vehicle(db, { current_mileage: -1 }), 'negative mileage');
-    const vehicleId = vehicle(db);
-    assertRejected(() => expense(db, vehicleId, { odometer: -1 }), 'negative odometer');
-    assertRejected(() => expense(db, vehicleId, { fuel_liters_milli: 0 }), 'zero litres');
+    assertRejected(() => item(db, { current_mileage: -1 }), 'negative mileage');
+    const itemId = item(db);
+    assertRejected(() => cost(db, itemId, { odometer: -1 }), 'negative odometer');
+    assertRejected(() => cost(db, itemId, { fuel_liters_milli: 0 }), 'zero litres');
   });
 });
 
@@ -318,7 +319,7 @@ describe('§29 — enums', () => {
     assertRejected(() => bill(db, { category: 'groceries' }), 'bills.category');
     assertRejected(() => bill(db, { billing_cycle: 'fortnightly' }), 'bills.billing_cycle');
     assertRejected(() => bill(db, { status: 'overdue' }), 'bills.status — it is derived (§A6)');
-    assertRejected(() => vehicle(db, { type: 'submarine' }), 'vehicles.type');
+    assertRejected(() => item(db, { vehicle_type: 'submarine' }), 'maintenance_items.vehicle_type');
   });
 
   test('bills.status holds only the two persisted values', () => {
@@ -349,6 +350,7 @@ describe('§A2 — soft delete then re-insert, on every UNIQUE INDEX', () => {
     // If a new unique index is added, this fails until it is covered below.
     const db = createMigratedDatabase();
     assert.deepEqual(uniqueIndexNames(db).sort(), [
+      'allowances_period_effective_from_unq',
       'app_settings_key_unq',
       'notification_settings_entity_offset_unq',
     ]);
@@ -491,55 +493,54 @@ describe('§A5 — the _live views hide tombstones', () => {
     );
   });
 
-  test("a soft-deleted vehicle's whole ledger vanishes from the live views", () => {
+  test("a soft-deleted item's whole ledger vanishes from the live views", () => {
     const db = createMigratedDatabase();
-    const vehicleId = vehicle(db);
-    const expenseId = expense(db, vehicleId);
-    insertRow(db, 'vehicle_maintenance', {
+    const itemId = item(db);
+    const costId = cost(db, itemId);
+    insertRow(db, 'maintenance_services', {
       id: testId('mnt'),
-      vehicle_id: vehicleId,
-      expense_id: expenseId,
+      item_id: itemId,
+      cost_id: costId,
       service_type: 'oil change',
       service_date: '2026-10-12',
       created_at: nowMs(),
       updated_at: nowMs(),
     });
-    insertRow(db, 'vehicle_insurance', {
+    // Insurance and registration are ONE table now, discriminated by `kind`.
+    insertRow(db, 'maintenance_renewals', {
       id: testId('ins'),
-      vehicle_id: vehicleId,
+      item_id: itemId,
+      kind: 'insurance',
       provider: 'Malayan',
       created_at: nowMs(),
       updated_at: nowMs(),
     });
-    insertRow(db, 'vehicle_registration', {
+    insertRow(db, 'maintenance_renewals', {
       id: testId('reg'),
-      vehicle_id: vehicleId,
+      item_id: itemId,
+      kind: 'registration',
       created_at: nowMs(),
       updated_at: nowMs(),
     });
 
-    for (const view of [
-      'vehicle_expenses_live',
-      'vehicle_maintenance_live',
-      'vehicle_insurance_live',
-      'vehicle_registration_live',
-    ]) {
-      assert.equal(count(db, view), 1, `${view} before the delete`);
+    const CHILD_VIEWS = [
+      ['maintenance_costs_live', 1],
+      ['maintenance_services_live', 1],
+      ['maintenance_renewals_live', 2],
+    ] as const;
+
+    for (const [view, expected] of CHILD_VIEWS) {
+      assert.equal(count(db, view), expected, `${view} before the delete`);
     }
 
-    softDelete(db, 'vehicles', vehicleId);
+    softDelete(db, 'maintenance_items', itemId);
 
-    for (const view of [
-      'vehicle_expenses_live',
-      'vehicle_maintenance_live',
-      'vehicle_insurance_live',
-      'vehicle_registration_live',
-    ]) {
-      assert.equal(count(db, view), 0, `${view} still shows a soft-deleted vehicle's rows`);
+    for (const [view] of CHILD_VIEWS) {
+      assert.equal(count(db, view), 0, `${view} still shows a soft-deleted item's rows`);
     }
     // §13 totals read the view, so the ledger is genuinely empty.
     const total = db
-      .prepare('SELECT coalesce(sum(amount_minor), 0) AS total FROM vehicle_expenses_live')
+      .prepare('SELECT coalesce(sum(amount_minor), 0) AS total FROM maintenance_costs_live')
       .get() as { total: number };
     assert.equal(total.total, 0);
   });
@@ -585,41 +586,42 @@ describe('hard delete cascades', () => {
     assert.equal(count(db, 'bill_payments'), 0, 'ON DELETE CASCADE did not fire');
   });
 
-  test('deleting a vehicle removes its entire ledger', () => {
+  test('deleting an item removes its entire ledger', () => {
     const db = createMigratedDatabase();
-    const vehicleId = vehicle(db);
-    expense(db, vehicleId);
-    insertRow(db, 'vehicle_insurance', {
+    const itemId = item(db);
+    cost(db, itemId);
+    insertRow(db, 'maintenance_renewals', {
       id: testId('ins'),
-      vehicle_id: vehicleId,
+      item_id: itemId,
+      kind: 'insurance',
       provider: 'Malayan',
       created_at: nowMs(),
       updated_at: nowMs(),
     });
-    db.prepare('DELETE FROM vehicles WHERE id = ?').run(vehicleId);
-    assert.equal(count(db, 'vehicle_expenses'), 0);
-    assert.equal(count(db, 'vehicle_insurance'), 0);
+    db.prepare('DELETE FROM maintenance_items WHERE id = ?').run(itemId);
+    assert.equal(count(db, 'maintenance_costs'), 0);
+    assert.equal(count(db, 'maintenance_renewals'), 0);
   });
 
-  test('deleting an expense nulls the detail row that referenced it, not the row itself', () => {
+  test('deleting a cost nulls the detail row that referenced it, not the row itself', () => {
     const db = createMigratedDatabase();
-    const vehicleId = vehicle(db);
-    const expenseId = expense(db, vehicleId);
-    const maintenanceId = insertRow(db, 'vehicle_maintenance', {
+    const itemId = item(db);
+    const costId = cost(db, itemId);
+    const maintenanceId = insertRow(db, 'maintenance_services', {
       id: testId('mnt'),
-      vehicle_id: vehicleId,
-      expense_id: expenseId,
+      item_id: itemId,
+      cost_id: costId,
       service_type: 'oil change',
       service_date: '2026-10-12',
       created_at: nowMs(),
       updated_at: nowMs(),
     });
-    db.prepare('DELETE FROM vehicle_expenses WHERE id = ?').run(expenseId);
+    db.prepare('DELETE FROM maintenance_costs WHERE id = ?').run(costId);
     const row = db
-      .prepare('SELECT expense_id FROM vehicle_maintenance WHERE id = ?')
-      .get(maintenanceId) as { expense_id: string | null };
-    assert.equal(row.expense_id, null, 'ON DELETE SET NULL did not fire');
-    assert.equal(count(db, 'vehicle_maintenance'), 1);
+      .prepare('SELECT cost_id FROM maintenance_services WHERE id = ?')
+      .get(maintenanceId) as { cost_id: string | null };
+    assert.equal(row.cost_id, null, 'ON DELETE SET NULL did not fire');
+    assert.equal(count(db, 'maintenance_services'), 1);
   });
 
   test('a payment cannot reference a bill that does not exist', () => {
@@ -655,5 +657,271 @@ describe('§A6 — an overdue bill is derived, never stored', () => {
       .prepare("SELECT count(*) AS n FROM bills_live WHERE status = 'unpaid' AND due_date < ?")
       .get('2026-10-12') as { n: number };
     assert.equal(overdue.n, 1, 'exactly the unpaid, past-due, live bill');
+  });
+});
+
+describe('allowances — history that cannot be rewritten (Phase 9)', () => {
+  function allowance(
+    db: DatabaseSync,
+    overrides: Record<string, string | number | null> = {},
+  ): string {
+    return insertRow(db, 'allowances', {
+      id: testId('allw'),
+      period: 'monthly',
+      amount_minor: 1_500_000,
+      currency: 'PHP',
+      effective_from: '2026-09-01',
+      created_at: nowMs(),
+      updated_at: nowMs(),
+      ...overrides,
+    });
+  }
+
+  test('the three cadences are accepted and nothing else is', () => {
+    const db = createMigratedDatabase();
+    // Distinct dates so the unique index is not what any of these prove.
+    const days = { daily: '2026-09-01', weekly: '2026-09-02', monthly: '2026-09-03' };
+    for (const [period, effective_from] of Object.entries(days)) {
+      assert.doesNotThrow(() => allowance(db, { period, effective_from }), period);
+    }
+    for (const bad of ['yearly', 'fortnightly', 'Monthly', '']) {
+      assert.throws(() => allowance(db, { period: bad }), /CHECK/, bad);
+    }
+  });
+
+  test('an allowance of zero or less is not expressible', () => {
+    // "I have no budget" is the absence of a row, not a row that says nothing.
+    const db = createMigratedDatabase();
+    assert.throws(() => allowance(db, { amount_minor: 0 }), /CHECK/);
+    assert.throws(() => allowance(db, { amount_minor: -1 }), /CHECK/);
+    assert.doesNotThrow(() => allowance(db, { amount_minor: 1 }));
+  });
+
+  test('effective_from must be a real calendar day, not merely date-shaped', () => {
+    const db = createMigratedDatabase();
+    // SQLite's date() NORMALISES rather than rejects — date('2026-02-30') is
+    // '2026-03-02' — so the CHECK that works is `date(col) IS col`.
+    for (const bad of ['2026-02-30', '2026-13-01', '2026-04-31', 'someday', '09/01/2026']) {
+      assert.throws(() => allowance(db, { effective_from: bad }), /CHECK/, bad);
+    }
+    assert.doesNotThrow(() => allowance(db, { effective_from: '2028-02-29' }));
+  });
+
+  test('the currency is a three-letter code', () => {
+    const db = createMigratedDatabase();
+    assert.throws(() => allowance(db, { currency: 'php' }), /CHECK/);
+    assert.throws(() => allowance(db, { currency: 'PHPX' }), /CHECK/);
+    assert.doesNotThrow(() => allowance(db, { currency: 'USD' }));
+  });
+
+  test('two cadences may start on the same day; one cadence may not', () => {
+    const db = createMigratedDatabase();
+    allowance(db, { period: 'monthly', effective_from: '2026-09-01' });
+    // A different cadence on the same date is a different slot — this is what
+    // lets a user switch from monthly to weekly without deleting their history.
+    assert.doesNotThrow(() => allowance(db, { period: 'weekly', effective_from: '2026-09-01' }));
+    assert.throws(
+      () => allowance(db, { period: 'monthly', effective_from: '2026-09-01' }),
+      /UNIQUE/,
+    );
+  });
+
+  test('allowances_period_effective_from_unq: delete one, then set it again the same day', () => {
+    // §A2. Without the partial predicate, changing your mind twice in one day
+    // fails against a row you cannot see and cannot remove.
+    const db = createMigratedDatabase();
+    const first = allowance(db, { amount_minor: 1_000_000 });
+    softDelete(db, 'allowances', first);
+    assert.doesNotThrow(() => allowance(db, { amount_minor: 1_200_000 }));
+    assert.equal(count(db, 'allowances_live'), 1, 'only the replacement is live');
+    assert.equal(count(db, 'allowances'), 2, 'the tombstone is still on disk for a sync queue');
+  });
+
+  test('the resolution query returns the amount in force, not the newest row', () => {
+    // The T2 lesson: ORDER BY a column that moves. A correction entered today
+    // for a period that began in August must not win over September's raise.
+    const db = createMigratedDatabase();
+    allowance(db, { effective_from: '2026-08-01', amount_minor: 1_000_000 });
+    allowance(db, { effective_from: '2026-09-01', amount_minor: 1_500_000 });
+    // Entered last, effective earliest — a `created_at` ordering picks this one.
+    allowance(db, { effective_from: '2026-07-01', amount_minor: 800_000 });
+
+    const inForce = (periodStart: string) =>
+      (
+        db
+          .prepare(
+            `SELECT amount_minor AS a FROM allowances_live
+              WHERE period = 'monthly' AND effective_from <= ?
+              ORDER BY effective_from DESC LIMIT 1`,
+          )
+          .get(periodStart) as { a: number } | undefined
+      )?.a;
+
+    assert.equal(inForce('2026-09-01'), 1_500_000, 'September');
+    assert.equal(inForce('2026-08-01'), 1_000_000, 'August is unchanged by the raise');
+    assert.equal(inForce('2026-07-01'), 800_000, 'July');
+    assert.equal(inForce('2026-06-01'), undefined, 'before any allowance existed');
+  });
+
+  test('a soft-deleted allowance stops being in force', () => {
+    const db = createMigratedDatabase();
+    allowance(db, { effective_from: '2026-08-01', amount_minor: 1_000_000 });
+    const september = allowance(db, { effective_from: '2026-09-01', amount_minor: 1_500_000 });
+    softDelete(db, 'allowances', september);
+
+    const row = db
+      .prepare(
+        `SELECT amount_minor AS a FROM allowances_live
+          WHERE period = 'monthly' AND effective_from <= '2026-09-15'
+          ORDER BY effective_from DESC LIMIT 1`,
+      )
+      .get() as { a: number };
+    assert.equal(row.a, 1_000_000, 'falls back to the one before it, not to nothing');
+  });
+});
+
+describe('maintenance — one ledger for anything that needs looking after', () => {
+  function itemOf(db: DatabaseSync, kind: string, extra: Record<string, string | number | null> = {}) {
+    return insertRow(db, 'maintenance_items', {
+      id: testId('item'),
+      name: 'Thing',
+      kind,
+      created_at: nowMs(),
+      updated_at: nowMs(),
+      ...extra,
+    });
+  }
+
+  test('every kind is accepted — this is not a vehicle tracker any more', () => {
+    const db = createMigratedDatabase();
+    for (const kind of ['vehicle', 'appliance', 'home', 'electronics', 'other']) {
+      assert.doesNotThrow(() => itemOf(db, kind), kind);
+    }
+    assertRejected(() => itemOf(db, 'spaceship'), 'maintenance_items.kind');
+  });
+
+  test('a non-vehicle may leave every vehicle-only column NULL', () => {
+    // The whole point of one table with a `kind`: an aircon has no plate, no
+    // odometer and no vehicle type, and must not be forced to invent them.
+    const db = createMigratedDatabase();
+    const id = itemOf(db, 'appliance', { name: 'Aircon' });
+    const row = db
+      .prepare('SELECT vehicle_type, current_mileage, identifier FROM maintenance_items WHERE id = ?')
+      .get(id) as Record<string, unknown>;
+    assert.equal(row.vehicle_type, null);
+    assert.equal(row.current_mileage, null);
+    assert.equal(row.identifier, null);
+  });
+
+  test('vehicle_type is optional, and validated when present', () => {
+    const db = createMigratedDatabase();
+    assert.doesNotThrow(() => itemOf(db, 'vehicle', { vehicle_type: 'motorcycle' }));
+    assert.doesNotThrow(() => itemOf(db, 'vehicle', { vehicle_type: 'bicycle' }));
+    assertRejected(() => itemOf(db, 'vehicle', { vehicle_type: 'submarine' }), 'vehicle_type');
+  });
+
+  test('the cost ledger accepts every widened type', () => {
+    const db = createMigratedDatabase();
+    const id = itemOf(db, 'appliance');
+    for (const type of ['fuel', 'service', 'repair', 'parts', 'insurance', 'registration', 'other']) {
+      assert.doesNotThrow(() => cost(db, id, { type }), type);
+    }
+    assertRejected(() => cost(db, id, { type: 'bribe' }), 'maintenance_costs.type');
+  });
+
+  test('insurance, registration and warranty share one renewals table', () => {
+    // Three kinds, one expiry query, one reminder path — the reason the two
+    // vehicle tables were merged rather than a third one added.
+    const db = createMigratedDatabase();
+    const id = itemOf(db, 'electronics', { name: 'Laptop' });
+    for (const kind of ['insurance', 'registration', 'warranty']) {
+      assert.doesNotThrow(
+        () =>
+          insertRow(db, 'maintenance_renewals', {
+            id: testId('ren'),
+            item_id: id,
+            kind,
+            expiry_date: '2027-01-31',
+            created_at: nowMs(),
+            updated_at: nowMs(),
+          }),
+        kind,
+      );
+    }
+    assert.equal(count(db, 'maintenance_renewals_live'), 3);
+
+    assertRejected(
+      () =>
+        insertRow(db, 'maintenance_renewals', {
+          id: testId('ren'),
+          item_id: id,
+          kind: 'extended-care-plan',
+          created_at: nowMs(),
+          updated_at: nowMs(),
+        }),
+      'maintenance_renewals.kind',
+    );
+  });
+
+  test('a renewal cannot expire before it starts', () => {
+    const db = createMigratedDatabase();
+    const id = itemOf(db, 'vehicle');
+    assertRejected(
+      () =>
+        insertRow(db, 'maintenance_renewals', {
+          id: testId('ren'),
+          item_id: id,
+          kind: 'insurance',
+          start_date: '2026-06-01',
+          expiry_date: '2026-01-01',
+          created_at: nowMs(),
+          updated_at: nowMs(),
+        }),
+      'expiry before start',
+    );
+  });
+
+  test('the next service cannot be due before the service that set it', () => {
+    const db = createMigratedDatabase();
+    const id = itemOf(db, 'appliance');
+    assertRejected(
+      () =>
+        insertRow(db, 'maintenance_services', {
+          id: testId('svc'),
+          item_id: id,
+          service_type: 'aircon cleaning',
+          service_date: '2026-06-01',
+          next_service_date: '2026-01-01',
+          created_at: nowMs(),
+          updated_at: nowMs(),
+        }),
+      'next service before service',
+    );
+  });
+
+  test('a service costs nothing until a cost row says otherwise (§A3)', () => {
+    // `maintenance_services` carries NO money column. A warranty service is a
+    // real service with no price, expressible as an ABSENT cost and never as a
+    // second, disagreeing amount.
+    const db = createMigratedDatabase();
+    const id = itemOf(db, 'electronics');
+    const serviceId = insertRow(db, 'maintenance_services', {
+      id: testId('svc'),
+      item_id: id,
+      service_type: 'warranty repair',
+      service_date: '2026-06-01',
+      created_at: nowMs(),
+      updated_at: nowMs(),
+    });
+    const row = db
+      .prepare('SELECT cost_id FROM maintenance_services WHERE id = ?')
+      .get(serviceId) as { cost_id: string | null };
+    assert.equal(row.cost_id, null);
+
+    const columns = (
+      db.prepare('PRAGMA table_info(maintenance_services)').all() as { name: string }[]
+    ).map((c) => c.name);
+    assert.equal(columns.includes('amount_minor'), false, 'money lives on the ledger only');
+    assert.equal(columns.includes('currency'), false);
   });
 });

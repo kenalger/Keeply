@@ -43,7 +43,7 @@ interface AddOption {
   readonly subtitle: string;
   readonly icon: IconName;
   /** `null` while the module does not exist yet. */
-  readonly route: '/subscriptions/new' | '/receipts/capture' | null;
+  readonly route: '/subscriptions/new' | '/expenses/capture' | null;
   /** Spoken when the row is live. Each destination is a different screen. */
   readonly hint?: string;
 }
@@ -66,13 +66,13 @@ const OPTIONS: readonly AddOption[] = [
   },
   {
     key: 'receipt',
-    title: 'Receipt',
+    title: 'Expense',
     subtitle: 'Photograph a purchase and keep it on this device',
     icon: 'receipt',
     // Straight to the camera, which is where §28's receipt flow starts —
     // `Camera -> Amount -> Category -> Save`. The camera screen offers "Skip
     // the photo", so this is a fast path rather than a forced detour.
-    route: '/receipts/capture',
+    route: '/expenses/capture',
     hint: 'Opens the camera',
   },
   {

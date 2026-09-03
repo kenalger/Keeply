@@ -11,8 +11,9 @@ export * from './enums';
 export * from './subscriptions';
 export * from './bills';
 export * from './receipts';
-export * from './vehicles';
 export * from './documents';
 export * from './settings';
+export * from './maintenance';
+export * from './allowances';
 // The live-row views (`<table>_live`) are the READ path — see ./views.ts.
 export * from './views';

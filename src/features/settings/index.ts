@@ -117,6 +117,7 @@ export { createSettingsApi, ONBOARDING_KEY_PREFIX } from './queries';
 export type { PersistedSettings, SettingsApi, SettingsApiDeps } from './queries';
 export type { SettingsStore, SqlStatement, SqlValue } from './store';
 export {
+  ALLOWANCE_PERIOD,
   APP_SETTINGS_KEYS,
   APP_LOCK_ENABLED,
   APP_LOCK_GRACE_SECONDS,

@@ -18,11 +18,27 @@
  * Inversion is the one selection cue that cannot be missed at any brightness,
  * in either theme, or without colour vision, and it is the same cue a primary
  * button and a chosen date chip already use. One device: the fill.
+ *
+ * ── TWO VARIANTS, AND THE LINE BETWEEN THEM ────────────────────────────────
+ * `'segmented'` (default) is the control above: a filled track, for **setting a
+ * value on a record** — a billing cycle, an allowance cadence. It sits among
+ * `TextField`s and `DateField`s and has to read as a field, with an edge and a
+ * fill, or it reads as unfinished.
+ *
+ * `'underline'` is a row of plain labels with a rule under the selected one,
+ * for **choosing which of the same things to look at** — a sort order, an
+ * active/paused filter. Nothing is boxed and nothing is filled.
+ *
+ * The split is not decoration. A form field styled as tabs says "switch view"
+ * when it means "choose a value", and tabs styled as a filled field claim to be
+ * data the user entered. Selection still survives greyscale in both: the
+ * segmented variant inverts, the underline variant carries a 2pt rule AND a
+ * weight change AND full-strength ink against secondary.
  */
 import { useCallback } from 'react';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { MIN_TOUCH_TARGET, useThemedStyles, type Theme } from '@/theme';
+import { MIN_TOUCH_TARGET, useThemedStyles, type ColorKey, type Theme } from '@/theme';
 
 import { FieldShell } from './field-shell';
 import { Icon, type IconName } from './icon';
@@ -35,8 +51,12 @@ export interface SegmentedOption<T extends string> {
   disabled?: boolean;
 }
 
+export type SegmentedVariant = 'segmented' | 'underline';
+
 export interface SegmentedFieldProps<T extends string> {
   label: string;
+  /** `'segmented'` for a form value, `'underline'` for a filter. See the header. */
+  variant?: SegmentedVariant;
   /** Keep the label for assistive tech but do not draw it. See `FieldShell`. */
   labelHidden?: boolean;
   value: T;
@@ -53,6 +73,19 @@ export interface SegmentedFieldProps<T extends string> {
 
 /** Padding between the track and a segment, so the raised segment has room. */
 const TRACK_PADDING = 3;
+
+/**
+ * Ink for a label. The underline variant never draws on a fill, so it never
+ * needs `onAccent` — the colour that is legible ON the selection, not as it.
+ */
+function labelColor(underline: boolean, selected: boolean): ColorKey {
+  if (underline) return selected ? 'text' : 'textSecondary';
+  return selected ? 'onAccent' : 'textSecondary';
+}
+
+function iconColor(underline: boolean, selected: boolean): ColorKey {
+  return labelColor(underline, selected);
+}
 
 const makeStyles = (t: Theme) =>
   StyleSheet.create({
@@ -85,10 +118,42 @@ const makeStyles = (t: Theme) =>
     segmentSelected: { backgroundColor: t.color.accent },
     segmentPressed: { backgroundColor: t.color.pressed },
     segmentDisabled: { opacity: 0.45 },
+
+    // ── underline ──────────────────────────────────────────────────────────
+    // No track: the row is the control. Left-aligned rather than stretched,
+    // because a tab is as wide as its word and three stretched words read as
+    // three buttons.
+    underlineTrack: {
+      flexDirection: 'row',
+      alignItems: 'stretch',
+      gap: t.space.lg,
+      flexWrap: 'wrap',
+    },
+    underlineSegment: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: t.space.xs,
+      // Still 44pt of touch target, even though only the text is drawn.
+      minHeight: MIN_TOUCH_TARGET,
+      paddingBottom: 0,
+    },
+    // The rule is a child of the segment rather than a border on it, so it can
+    // be the width of the LABEL and not of the label plus its touch padding.
+    underlineRule: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: t.space.sm,
+      height: 2,
+      borderRadius: 1,
+      backgroundColor: t.color.text,
+    },
+    underlinePressed: { opacity: 0.6 },
   });
 
 export function SegmentedField<T extends string>({
   label,
+  variant = 'segmented',
   labelHidden,
   value,
   onChangeValue,
@@ -103,6 +168,7 @@ export function SegmentedField<T extends string>({
 }: SegmentedFieldProps<T>) {
   const styles = useThemedStyles(makeStyles);
   const invalid = typeof error === 'string' && error.length > 0;
+  const underline = variant === 'underline';
 
   const handlePress = useCallback(
     (next: T) => {
@@ -125,8 +191,8 @@ export function SegmentedField<T extends string>({
         accessibilityLabel={label}
         accessibilityHint={accessibilityHint}
         style={[
-          styles.track,
-          invalid ? styles.trackInvalid : null,
+          underline ? styles.underlineTrack : styles.track,
+          !underline && invalid ? styles.trackInvalid : null,
           disabled ? styles.trackDisabled : null,
         ]}>
         {options.map((option) => {
@@ -142,25 +208,34 @@ export function SegmentedField<T extends string>({
               disabled={isDisabled}
               onPress={() => handlePress(option.value)}
               testID={testID === undefined ? undefined : `${testID}-${option.value}`}
-              style={({ pressed }) => [
-                styles.segment,
-                selected ? styles.segmentSelected : null,
-                pressed && !selected && !isDisabled ? styles.segmentPressed : null,
-                isDisabled ? styles.segmentDisabled : null,
-              ]}>
+              style={({ pressed }) =>
+                underline
+                  ? [
+                      styles.underlineSegment,
+                      pressed && !isDisabled ? styles.underlinePressed : null,
+                      isDisabled ? styles.segmentDisabled : null,
+                    ]
+                  : [
+                      styles.segment,
+                      selected ? styles.segmentSelected : null,
+                      pressed && !selected && !isDisabled ? styles.segmentPressed : null,
+                      isDisabled ? styles.segmentDisabled : null,
+                    ]
+              }>
               {option.icon === undefined ? null : (
                 <Icon
                   name={option.icon}
                   size={15}
-                  color={selected ? 'onAccent' : 'textSecondary'}
+                  color={iconColor(underline, selected)}
                 />
               )}
               <Text
                 variant={selected ? 'bodyStrong' : 'body'}
-                color={selected ? 'onAccent' : 'textSecondary'}
+                color={labelColor(underline, selected)}
                 numberOfLines={1}>
                 {option.label}
               </Text>
+              {underline && selected ? <View style={styles.underlineRule} /> : null}
             </Pressable>
           );
         })}

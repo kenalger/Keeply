@@ -23,11 +23,11 @@ import { ReceiptForm, type ReceiptDraftKey } from '@/features/receipts/ui';
 export default function NewReceiptScreen() {
   const router = useRouter();
 
-  const leave = useCallback(() => router.replace('/receipts'), [router]);
+  const leave = useCallback(() => router.replace('/expenses'), [router]);
 
   const takePhoto = useCallback(
     (draftKey: ReceiptDraftKey) =>
-      router.push({ pathname: '/receipts/capture', params: { draft: draftKey } }),
+      router.push({ pathname: '/expenses/capture', params: { draft: draftKey } }),
     [router],
   );
 
@@ -35,7 +35,7 @@ export default function NewReceiptScreen() {
   // out of and finding it empty is the same defect as one that clears on error.
   const cancel = useCallback(() => {
     if (router.canGoBack()) router.back();
-    else router.replace('/receipts');
+    else router.replace('/expenses');
   }, [router]);
 
   return <ReceiptForm onTakePhoto={takePhoto} onSaved={leave} onCancel={cancel} />;

@@ -26,6 +26,7 @@ import type { MinorUnits } from '@/db';
 import type {
   SubscriptionCategory,
   SubscriptionRecord,
+  SubscriptionSort,
   SubscriptionTotals,
 } from '@/features/subscriptions';
 import {
@@ -234,11 +235,14 @@ export default function SubscriptionListScreen() {
   const [activity, setActivity] = useState<ActivityFilter>('all');
   const [category, setCategory] = useState<SubscriptionCategory | null>(null);
   const [categorySheet, setCategorySheet] = useState(false);
+  // Soonest renewal first, which is the question this list is opened to answer.
+  const [sort, setSort] = useState<SubscriptionSort>('next-billing');
 
   const filter = useSubscriptionFilter({
     search,
     activity,
     category: category ?? undefined,
+    sort,
   });
   const list = useSubscriptionList(filter);
   const totals = useSubscriptionTotals();
@@ -322,6 +326,7 @@ export default function SubscriptionListScreen() {
         />
         <SegmentedField<ActivityFilter>
           label="Show"
+          variant="underline"
           labelHidden
           value={activity}
           onChangeValue={setActivity}
@@ -397,7 +402,9 @@ export default function SubscriptionListScreen() {
           setCategory(next);
           setCategorySheet(false);
         }}
-        title="Filter by category"
+        sort={sort}
+        onChangeSort={setSort}
+        title="Filter and sort"
       />
     </Screen>
   );

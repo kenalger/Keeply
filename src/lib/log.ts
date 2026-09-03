@@ -62,6 +62,9 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 const SAFE_KEYS: ReadonlySet<string> = new Set([
   'attempt',
   'attempts',
+  // A byte count. Structural, like `count` and `durationms` — it describes the
+  // size of a thing and can carry none of its content.
+  'bytes',
   'code',
   'componentstack',
   'count',

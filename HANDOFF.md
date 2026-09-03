@@ -1,8 +1,9 @@
 # Keeply — Handoff
 
-**State at this commit:** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **752/752**.
-Runs on the iOS Simulator. Phases 1–4 complete (receipts unverified on device), onboarding complete,
-Phases 5–8 outstanding.
+**State at this commit:** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **824/824**.
+Runs on the iOS Simulator. Phases 1–4 complete **and rendered**, onboarding complete,
+**Phase 9 (Expenses & Allowance) complete**, **Phase 8 export done / import outstanding**,
+**Phase 5 is now Maintenance — schema done, feature/UI outstanding**, Phases 6–7 outstanding.
 
 Read `CLAUDE.md` for conventions before touching anything. `plan/goal.md` is the product spec.
 
@@ -18,6 +19,12 @@ A private, offline-first iOS app you can actually use:
   (`com.apple.metadata:com_apple_backup_excludeItem`). A restored phone opens a *clean* app rather than a
   bricked one; portability is §20's encrypted export, which is not built yet.
 - **Offline cold boot** with Wi-Fi off, verified: boots to Home in ~300ms.
+- **Expenses & allowance (Phase 9).** Set an allowance daily / weekly / monthly; the card on Home, the
+  Money tab and `/allowance` all read one `AllowanceStatus`, so they cannot disagree. Only day-to-day
+  expenses draw it down — bills and subscriptions are committed money and are never subtracted. The
+  allowance is a **history** table resolved by `effective_from`, so raising it in October cannot restate
+  September. Receipts is now "Expenses" (routes `src/app/expenses`, table still `receipts`), the list is
+  grouped by day with per-day totals, and the form opens on the amount.
 - **Subscriptions** — CRUD, anchored recurrence, SQL-side normalized totals, list/detail/form screens.
 - **Bills** — CRUD, payment history, derived overdue, ledger-anchored roll-forward.
 - **Local notifications** — six-state permission model, 60-slot rolling window, rebuilt on boot,
@@ -26,8 +33,8 @@ A private, offline-first iOS app you can actually use:
 - **Design system** — fully monochrome, deliberately de-decorated, full form layer, `ThemeLayout` spacing
   rules, measured contrast in both themes.
 
-167 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
-`16-` wizard, `17-` layout pass).
+188 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+`16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8).
 
 ---
 
@@ -38,21 +45,24 @@ A private, offline-first iOS app you can actually use:
 `mobile-qa-engineer`), each with web research enabled. **They only register at session start** — a session
 that began before they existed cannot call them. Start a fresh session and they are available by name.
 
-**2. Render Phase 4 and look at it.** Receipts is code-complete and green — data layer, camera capture,
-storage, thumbnails, form, list, detail, filters, dashboard wiring — but **no screen has ever been
-rendered**. The agent doing the visual pass stalled before capturing anything. Camera capture, thumbnail
-generation, the missing-image state and the permission-denied paths are all unverified.
+**2. ~~Render Phase 4~~ — done.** Every receipts/expenses screen has now been rendered and looked at,
+in both themes; screenshots at `plan/screenshots/18-*` and `19-*`. It found nine defects that green
+tests did not, listed in `plan/phase9-expenses-allowance.md` §13 — including a note field that silently
+truncated anything over two lines, and a form whose only required field sat below the fold under an
+empty photo box. All fixed.
 
-This matters more than it sounds. Rendering passes in this project have caught a six-screen-tall empty
-dashboard, a reminder promise truncated to "Remind me 3 days before Converge Fi…", and a `SelectField`
-that could not display its options **at all**. Green tests caught none of them. `mobile-ui-engineer` is
-the right agent for this.
+**Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
+camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
+real device or `xcrun simctl keychain <udid> reset`.
 
-**3. Phase 8 (Backup) is load-bearing and scheduled last — consider moving it up.** The database is
-deliberately excluded from iCloud backup, which is correct for privacy and means a restored phone opens
-clean rather than bricked. But the replacement safety net is §20's encrypted export, which does not exist
-yet. **Right now: lose the phone, lose the data.** That was fine while the app held test records; it stops
-being fine the moment anyone puts real bills in it.
+**3. Phase 8 (Backup) — the EXPORT half now exists; import is next.** A user can create an encrypted
+backup and share it out. What is still missing is restore, so a bundle is currently a file nobody can
+put back. `plan/phase8-backup.md` §5 has the remaining step (8c) and §7 the device verification.
+
+The format decision worth knowing before touching it: **a bundle IS a SQLCipher database**, written by
+SQLCipher's own `sqlcipher_export()` and keyed with the user's passphrase. No new dependency, no native
+rebuild, and the crypto is the same audited implementation protecting the live file. `expo-crypto` has
+hashing and random bytes and **no AES and no KDF**, so every other route meant hand-rolling one.
 
 ---
 
@@ -66,8 +76,8 @@ being fine the moment anyone puts real bills in it.
   `store.ts` (56 lines) and `index.ts` (186) are the pattern-defining ones.
 - **CDP works on `127.0.0.1:8081` only**, never `localhost`. Metro's proxy compares the `Origin` header
   against its own `serverBaseUrl.origin`, so host *and* `Origin` must both be `127.0.0.1:8081`. The `ws`
-  package is installed. This is the only reliable way to drive the app when the workstation is locked
-  (a locked screen kills synthetic taps).
+  package is installed. It is the only way to drive the app here — see "Driving the simulator without
+  taps" under Commands, which has the whole recipe worked out.
 - **Avoid `simctl openurl`.** iOS 26 raises an "Open in Keeply?" confirmation owned by SpringBoard, not the
   app. Terminating the app does not dismiss it and it reappears over whatever resumes. It has permanently
   stuck three agents; clearing it needs `xcrun simctl shutdown` / `boot`.
@@ -94,8 +104,22 @@ being fine the moment anyone puts real bills in it.
   itself works — hence `<List fill={false}/>`.
 - **`expo-notifications` reports `.provisional` and `.ephemeral` as `undetermined`.** Reading the top-level
   status alone re-prompts a user whose reminders already arrive, and on iOS that prompt fires once ever.
+- **op-sqlite echoes BOUND PARAMETERS into its error messages** (`Failed query: … params: …`). For most
+  statements that is merely a privacy smell; for `ATTACH DATABASE ? … KEY ?` the second parameter is the
+  user's backup passphrase. `exportEncryptedCopy()` therefore throws WITHOUT a `cause` — deliberately,
+  with the reason at the throw site. Never re-attach a driver error there.
+- **`sqlcipher_export()` IS available in this build** and produces a genuinely encrypted file (random
+  header, `sqlite3` refuses it, no merchant name in `strings`). Verified on device; see
+  `plan/phase8-backup.md` §7.
 - **`node:sqlite` binds every JS number as REAL.** Production is safe only because the columns have
   INTEGER affinity and no query does arithmetic on a bound parameter.
+- **drizzle-kit needs a TTY** when a diff contains both drops and creates — it asks whether each
+  pair is a rename. Split the change into two generates (drops, then creates) instead.
+- **drizzle-kit's SQLite table rebuild does NOT drop dependent views.** Any change to a CHECK
+  constraint rebuilds the table (SQLite cannot ALTER one) and the following `ALTER TABLE … RENAME`
+  then fails with `error in view <table>_live: no such table`. Every table here has a `*_live` view,
+  so this applies to all of them. Drop and recreate the view around the rebuild by hand when it
+  comes up — see `plan/phase5-maintenance.md` §9.
 - **SQLite `date()` normalises rather than rejects**: `date('2026-02-30')` is `'2026-03-02'`. The CHECK that
   actually works is `col IS NULL OR date(col) IS col`.
 
@@ -147,6 +171,12 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 - **13 lower-tier audit findings** in `plan/phase2-3-remediation.md` (Tier 4 form-layer items and the
   latent list): amount-field selection-delete clearing a committed value, pagination re-fetching from
   offset 0, no caret management, `+N more` undercounting past 24.
+- **Bills has NO UI.** Data layer, validation, SQL and notifications only — there is no
+  `src/features/bills/ui` and no `src/app/bills`. The Money tab's "Coming next" is accurate, not stale.
+  (This was mis-reported as a bug during Phase 9 and withdrawn.)
+- **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
+  budgets, no rollover. `allowances` must be added to Phase 8's export bundle or a restore returns
+  expenses without the budget they were measured against.
 - **Phases 5–8 not started**: Vehicles, Documents, Security (biometric lock), Backup (encrypted export).
   Note the backup story is what makes the "excluded from iCloud" decision safe — until §20 ships, a lost
   phone means lost data.
@@ -164,6 +194,24 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   carried by the boundary alone, and it matches iOS grouped-list convention.
 
 ## Commands
+
+### Driving the simulator without taps
+
+`Simulator.app` here reports **zero windows** to System Events, so AppleScript clicks and synthetic taps
+are not available at all. Drive the app over CDP instead — it worked reliably for the whole of Phase 9:
+
+- `curl -s -H "Origin: http://127.0.0.1:8081" http://127.0.0.1:8081/json/list` to find the target.
+- Connect with `ws` (installed), passing `Origin: http://127.0.0.1:8081`. Host **and** Origin must both
+  be `127.0.0.1`, never `localhost`.
+- `Runtime.evaluate` does **not** honour `awaitPromise` here — a promise comes back as a Hermes
+  `{_A,_x,_y,_z}` object. Stash the result on a global and poll it in a second call.
+- Metro's module registry is reachable: `__r.getModules()` returns a **Map**. Scan it for a module whose
+  exports match what you need (`e.router && e.useRouter` for expo-router, `e.getDb`, `e.bumpRevision`,
+  a feature's API). This is how to navigate, seed data and read the database from outside the app.
+- A raw drizzle handle needs `bindStatement()` (exported from `@/features/subscriptions`) — `db.all()`
+  takes a drizzle `SQL`, not `{sql, params}`.
+- An unhandled rejection inside an eval raises a LogBox toast that `__expo_dev_resetErrors()` does not
+  clear. Relaunch the app. Before blaming the app for a toast, check it is not yours.
 
 ```bash
 npm start               # Metro against the installed dev build

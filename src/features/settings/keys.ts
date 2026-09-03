@@ -54,6 +54,10 @@ import {
   type CurrencyCode,
   type ReminderLeadTime,
 } from '@/stores/settings-store';
+import {
+  ALLOWANCE_PERIODS,
+  type AllowancePeriod,
+} from '@/features/allowance/period';
 import type { ThemePreference } from '@/theme';
 
 import {
@@ -364,6 +368,26 @@ export const CURRENCY = enumSetting<CurrencyCode>(
   'a currency code',
 );
 
+/**
+ * Which cadence the user's allowance runs on (Phase 9).
+ *
+ * A PREFERENCE, not a record — which is why it belongs here and the allowance
+ * AMOUNT does not. "I budget monthly" is one current fact with no history worth
+ * keeping; "my September allowance was ₱15,000" is a fact about September that
+ * must survive every later change, so it lives in the `allowances` table
+ * instead. Storing the amount here would let raising it in October silently
+ * restate September. See `src/db/schema/allowances.ts`.
+ *
+ * The runtime import is safe: `features/allowance/period` is pure, reaching
+ * only `@/theme/format`, and never `@/db` — read the cycle warning at the top
+ * of this file for why that matters.
+ */
+export const ALLOWANCE_PERIOD = enumSetting<AllowancePeriod>(
+  'money.allowance_period',
+  ALLOWANCE_PERIODS,
+  'daily, weekly or monthly',
+);
+
 /* -------------------------------------------------------------------------- */
 /* The registry                                                                */
 /* -------------------------------------------------------------------------- */
@@ -411,6 +435,7 @@ export const SETTING_REGISTRY: readonly RegisteredSetting[] = [
   registered(APP_LOCK_GRACE_SECONDS),
   registered(THEME_PREFERENCE),
   registered(CURRENCY),
+  registered(ALLOWANCE_PERIOD),
 ];
 
 /**

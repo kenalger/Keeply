@@ -49,8 +49,21 @@ CRUD, fixed vs variable amounts, `bill_payments` history, paid/unpaid/overdue st
 ## Phase 4 — Receipts
 Camera + library capture, image written to app sandbox with thumbnail generation, metadata in SQLite, missing-file tolerance ("Image unavailable"), merchant/category/date-range/amount filters, spending summaries.
 
-## Phase 5 — Vehicles
-Multiple vehicles, five expense types (fuel / repair / maintenance / insurance / registration), odometer validation, analytics: cost-per-km, fuel efficiency (only with sufficient data), spend-by-type breakdowns.
+## Phase 9 — Expenses & Allowance  ← *done, built out of order*
+
+Set an allowance daily / weekly / monthly; day-to-day expenses draw it down, bills and subscriptions do
+not. Calendar periods, no rollover, one cadence at a time. `allowances` is a history table resolved by
+`effective_from`, so changing the budget never restates a month already lived. Receipts became
+"Expenses" — same table, same totals, photo optional, list grouped by day. Full plan and outcomes:
+`plan/phase9-expenses-allowance.md`.
+
+## Phase 5 — Maintenance  *(was "Vehicles" — see `plan/phase5-maintenance.md`)*
+Anything that needs looking after: **vehicles, appliances, home & property, electronics**. One item
+table with a `kind`, one cost ledger, service history with next-due by date or mileage, and one
+renewals table covering insurance, registration **and warranty**. Odometer, fuel efficiency and
+cost-per-km are kept but scoped to vehicles alone. Schema and migrations (`0002` drops the five
+vehicle tables, `0003` creates the four maintenance ones) are **done**; the feature and UI layers
+are not.
 
 ## Phase 6 — Documents
 Document CRUD, local file/PDF attachment, expiry bucketing (expired / today / 7 / 30 / 60 / 90 days), expiry notifications, masked document numbers (`**** **** 1234`).

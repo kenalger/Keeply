@@ -36,28 +36,18 @@
 import { and, eq, exists, isNull, sql } from 'drizzle-orm';
 import { QueryBuilder, sqliteView } from 'drizzle-orm/sqlite-core';
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { allowances } from './allowances';
+import {
+  maintenanceCosts,
+  maintenanceItems,
+  maintenanceRenewals,
+  maintenanceServices,
+} from './maintenance';
 import { billPayments, bills } from './bills';
 import { documents } from './documents';
 import { receipts } from './receipts';
 import { appSettings, notificationSettings } from './settings';
 import { subscriptions } from './subscriptions';
-import {
-  vehicleExpenses,
-  vehicleInsurance,
-  vehicleMaintenance,
-  vehicleRegistration,
-  vehicles,
-} from './vehicles';
-
-/** Correlated `EXISTS (SELECT 1 FROM vehicles WHERE id = ? AND deleted_at IS NULL)`. */
-function parentVehicleIsLive(childVehicleId: SQLiteColumn) {
-  return exists(
-    new QueryBuilder()
-      .select({ one: sql`1` })
-      .from(vehicles)
-      .where(and(eq(vehicles.id, childVehicleId), isNull(vehicles.deletedAt))),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Root tables — live means `deleted_at IS NULL`, nothing more.
@@ -73,10 +63,6 @@ export const billsLive = sqliteView('bills_live').as((qb) =>
 
 export const receiptsLive = sqliteView('receipts_live').as((qb) =>
   qb.select().from(receipts).where(isNull(receipts.deletedAt)),
-);
-
-export const vehiclesLive = sqliteView('vehicles_live').as((qb) =>
-  qb.select().from(vehicles).where(isNull(vehicles.deletedAt)),
 );
 
 export const documentsLive = sqliteView('documents_live').as((qb) =>
@@ -95,9 +81,62 @@ export const appSettingsLive = sqliteView('app_settings_live').as((qb) =>
   qb.select().from(appSettings).where(isNull(appSettings.deletedAt)),
 );
 
+export const allowancesLive = sqliteView('allowances_live').as((qb) =>
+  qb.select().from(allowances).where(isNull(allowances.deletedAt)),
+);
+
+export const maintenanceItemsLive = sqliteView('maintenance_items_live').as((qb) =>
+  qb.select().from(maintenanceItems).where(isNull(maintenanceItems.deletedAt)),
+);
+
 // ---------------------------------------------------------------------------
 // Child tables — live also means "my parent is live".
 // ---------------------------------------------------------------------------
+
+/** Correlated `EXISTS (SELECT 1 FROM maintenance_items WHERE id = ? AND live)`. */
+function parentItemIsLive(childItemId: SQLiteColumn) {
+  return exists(
+    new QueryBuilder()
+      .select({ one: sql`1` })
+      .from(maintenanceItems)
+      .where(
+        and(eq(maintenanceItems.id, childItemId), isNull(maintenanceItems.deletedAt)),
+      ),
+  );
+}
+
+export const maintenanceCostsLive = sqliteView('maintenance_costs_live').as((qb) =>
+  qb
+    .select()
+    .from(maintenanceCosts)
+    .where(
+      and(isNull(maintenanceCosts.deletedAt), parentItemIsLive(maintenanceCosts.itemId)),
+    ),
+);
+
+export const maintenanceServicesLive = sqliteView('maintenance_services_live').as((qb) =>
+  qb
+    .select()
+    .from(maintenanceServices)
+    .where(
+      and(
+        isNull(maintenanceServices.deletedAt),
+        parentItemIsLive(maintenanceServices.itemId),
+      ),
+    ),
+);
+
+export const maintenanceRenewalsLive = sqliteView('maintenance_renewals_live').as((qb) =>
+  qb
+    .select()
+    .from(maintenanceRenewals)
+    .where(
+      and(
+        isNull(maintenanceRenewals.deletedAt),
+        parentItemIsLive(maintenanceRenewals.itemId),
+      ),
+    ),
+);
 
 export const billPaymentsLive = sqliteView('bill_payments_live').as((qb) =>
   qb
@@ -116,56 +155,6 @@ export const billPaymentsLive = sqliteView('bill_payments_live').as((qb) =>
     ),
 );
 
-export const vehicleExpensesLive = sqliteView('vehicle_expenses_live').as((qb) =>
-  qb
-    .select()
-    .from(vehicleExpenses)
-    .where(
-      and(
-        isNull(vehicleExpenses.deletedAt),
-        parentVehicleIsLive(vehicleExpenses.vehicleId),
-      ),
-    ),
-);
-
-export const vehicleMaintenanceLive = sqliteView('vehicle_maintenance_live').as(
-  (qb) =>
-    qb
-      .select()
-      .from(vehicleMaintenance)
-      .where(
-        and(
-          isNull(vehicleMaintenance.deletedAt),
-          parentVehicleIsLive(vehicleMaintenance.vehicleId),
-        ),
-      ),
-);
-
-export const vehicleInsuranceLive = sqliteView('vehicle_insurance_live').as((qb) =>
-  qb
-    .select()
-    .from(vehicleInsurance)
-    .where(
-      and(
-        isNull(vehicleInsurance.deletedAt),
-        parentVehicleIsLive(vehicleInsurance.vehicleId),
-      ),
-    ),
-);
-
-export const vehicleRegistrationLive = sqliteView('vehicle_registration_live').as(
-  (qb) =>
-    qb
-      .select()
-      .from(vehicleRegistration)
-      .where(
-        and(
-          isNull(vehicleRegistration.deletedAt),
-          parentVehicleIsLive(vehicleRegistration.vehicleId),
-        ),
-      ),
-);
-
 /**
  * The read path, in one object. `getDb().select().from(live.bills)`.
  *
@@ -177,12 +166,12 @@ export const live = {
   bills: billsLive,
   billPayments: billPaymentsLive,
   receipts: receiptsLive,
-  vehicles: vehiclesLive,
-  vehicleExpenses: vehicleExpensesLive,
-  vehicleMaintenance: vehicleMaintenanceLive,
-  vehicleInsurance: vehicleInsuranceLive,
-  vehicleRegistration: vehicleRegistrationLive,
   documents: documentsLive,
   notificationSettings: notificationSettingsLive,
   appSettings: appSettingsLive,
+  allowances: allowancesLive,
+  maintenanceItems: maintenanceItemsLive,
+  maintenanceCosts: maintenanceCostsLive,
+  maintenanceServices: maintenanceServicesLive,
+  maintenanceRenewals: maintenanceRenewalsLive,
 } as const;

@@ -266,6 +266,8 @@ export interface ReceiptFilterState {
   toISO: string | null;
   minAmountMinor: MinorUnits | null;
   maxAmountMinor: MinorUnits | null;
+  /** `true` only with a photo, `false` only without, `null` for both. */
+  hasImage: boolean | null;
   sort: ReceiptSort;
 }
 
@@ -276,6 +278,7 @@ export const EMPTY_FILTER: ReceiptFilterState = {
   toISO: null,
   minAmountMinor: null,
   maxAmountMinor: null,
+  hasImage: null,
   sort: 'purchase-date',
 };
 
@@ -287,7 +290,8 @@ export function isFiltered(state: ReceiptFilterState): boolean {
     state.fromISO !== null ||
     state.toISO !== null ||
     state.minAmountMinor !== null ||
-    state.maxAmountMinor !== null
+    state.maxAmountMinor !== null ||
+    state.hasImage !== null
   );
 }
 
@@ -297,6 +301,10 @@ export function activeFilterCount(state: ReceiptFilterState): number {
   if (state.category !== null) count += 1;
   if (state.fromISO !== null || state.toISO !== null) count += 1;
   if (state.minAmountMinor !== null || state.maxAmountMinor !== null) count += 1;
+  if (state.hasImage !== null) count += 1;
+  // SORT IS NOT COUNTED. It changes the order of what matched, never what
+  // matched, so a badge that included it would tell the user something is
+  // being hidden when nothing is.
   return count;
 }
 
@@ -312,7 +320,7 @@ export function activeFilterCount(state: ReceiptFilterState): number {
  */
 export function useReceiptFilter(state: ReceiptFilterState): ReceiptFilter {
   const trimmed = state.search.trim();
-  const { category, fromISO, toISO, minAmountMinor, maxAmountMinor, sort } = state;
+  const { category, fromISO, toISO, minAmountMinor, maxAmountMinor, hasImage, sort } = state;
 
   return useMemo(
     () => ({
@@ -322,9 +330,10 @@ export function useReceiptFilter(state: ReceiptFilterState): ReceiptFilter {
       ...(toISO === null ? {} : { toISO }),
       ...(minAmountMinor === null ? {} : { minAmountMinor }),
       ...(maxAmountMinor === null ? {} : { maxAmountMinor }),
+      ...(hasImage === null ? {} : { hasImage }),
       sort,
     }),
-    [trimmed, category, fromISO, toISO, minAmountMinor, maxAmountMinor, sort],
+    [trimmed, category, fromISO, toISO, minAmountMinor, maxAmountMinor, hasImage, sort],
   );
 }
 

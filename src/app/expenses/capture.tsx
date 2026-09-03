@@ -40,10 +40,10 @@ export default function ReceiptCaptureScreen() {
 
   const toForm = useCallback(() => {
     if (editing) {
-      router.replace({ pathname: '/receipts/[id]/edit', params: { id: draftKey } });
+      router.replace({ pathname: '/expenses/[id]/edit', params: { id: draftKey } });
       return;
     }
-    router.replace('/receipts/new');
+    router.replace('/expenses/new');
   }, [router, editing, draftKey]);
 
   const onCaptured = useCallback(
@@ -65,7 +65,7 @@ export default function ReceiptCaptureScreen() {
   // pop, but a deep link straight into the camera has none.
   const cancel = useCallback(() => {
     if (router.canGoBack()) router.back();
-    else router.replace('/receipts');
+    else router.replace('/expenses');
   }, [router]);
 
   return (

@@ -17,6 +17,7 @@ import {
   type GroupPosition,
   type IconName,
 } from '@/components/ui';
+import { AllowanceSummary } from '@/features/allowance/ui';
 import type { ReceiptTotals } from '@/features/receipts';
 import { useReceiptTotals } from '@/features/receipts/ui';
 import type { SubscriptionTotals } from '@/features/subscriptions';
@@ -88,7 +89,7 @@ function buildLedgers(
     {
       key: 'receipts',
       icon: 'receipt',
-      title: 'Receipts',
+      title: 'Expenses',
       subtitle: receiptSubtitle(receipts),
       value:
         receipts === null || receipts.receiptCount === 0
@@ -108,9 +109,9 @@ function buildLedgers(
  */
 function receiptSubtitle(totals: ReceiptTotals | null): string {
   if (totals === null || totals.receiptCount === 0) {
-    return 'Photographed and kept on this device';
+    return 'What you bought, kept on this device';
   }
-  const parts = [`${totals.receiptCount} kept`];
+  const parts = [`${totals.receiptCount} logged`];
   if (totals.withoutImageCount > 0) {
     parts.push(`${totals.withoutImageCount} without a photo`);
   }
@@ -129,6 +130,7 @@ function subscriptionSubtitle(totals: SubscriptionTotals | null): string {
 
 type MoneyRow =
   | { kind: 'empty'; key: string }
+  | { kind: 'allowance'; key: string }
   | { kind: 'sectionHeader'; key: string; title: string }
   | { kind: 'ledger'; key: string; group: GroupPosition; ledger: LedgerSummary };
 
@@ -139,6 +141,12 @@ function buildMoneyRows(
   const rows: MoneyRow[] = [];
 
   if (nothingTracked) rows.push({ kind: 'empty', key: 'empty' });
+
+  // Above the ledgers: what is left to spend is the question this tab is most
+  // often opened to answer, and the three rows below it are where the money
+  // went. The row carries no payload — the card reads its own data.
+  rows.push({ kind: 'allowance', key: 'allowance' });
+
   rows.push({ kind: 'sectionHeader', key: 'h:ledgers', title: 'What lives here' });
 
   ledgers.forEach((ledger, index) =>
@@ -177,7 +185,7 @@ export default function MoneyScreen() {
   const open = useCallback(
     (key: LedgerSummary['key']) => {
       if (key === 'subscriptions') router.push('/subscriptions');
-      else if (key === 'receipts') router.push('/receipts');
+      else if (key === 'receipts') router.push('/expenses');
     },
     [router],
   );
@@ -222,7 +230,7 @@ export default function MoneyScreen() {
         header={
           <ScreenHeader
             title="Money"
-            subtitle="Subscriptions, bills and receipts — all kept on this device."
+            subtitle="Subscriptions, bills and expenses — all kept on this device."
             right={
               <IconButton
                 name="plus"
@@ -266,11 +274,18 @@ const MoneyRowView = memo(function MoneyRowView({
             variant="compact"
             icon="creditcard"
             title="Nothing tracked yet"
-            description="Add a subscription, a bill or a receipt and Keeply watches the dates and totals for you — on this device, offline."
+            description="Add a subscription, a bill or an expense and Keeply watches the dates and totals for you — on this device, offline."
             actionLabel="Add a record"
             onAction={onAdd}
             actionHint="Opens the list of things you can add"
           />
+        </ListBlock>
+      );
+
+    case 'allowance':
+      return (
+        <ListBlock>
+          <AllowanceSummary testID="money-allowance" />
         </ListBlock>
       );
 

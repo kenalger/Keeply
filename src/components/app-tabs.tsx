@@ -3,7 +3,7 @@ import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import { useTheme } from '@/theme';
 
 /**
- * The five-tab bar (§4): Home, Money, Vehicles, Documents, More.
+ * The five-tab bar (§4): Home, Money, Maintenance, Documents, More.
  *
  * Rendered by `app/(tabs)/_layout.tsx`. Kept as its own component so the route
  * file stays a thin layout and the tab configuration is readable in one place.
@@ -44,11 +44,14 @@ export default function AppTabs() {
         />
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="vehicles">
-        <NativeTabs.Trigger.Label>Vehicles</NativeTabs.Trigger.Label>
+      {/* Was "Vehicles" with a car. The domain is wider than cars now — an
+          aircon and a laptop need looking after too — so the label and the
+          glyph both had to stop naming one category of the four. */}
+      <NativeTabs.Trigger name="maintenance">
+        <NativeTabs.Trigger.Label>Maintenance</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
-          sf={{ default: 'car', selected: 'car.fill' }}
-          md={{ default: 'directions_car', selected: 'directions_car' }}
+          sf={{ default: 'wrench.and.screwdriver', selected: 'wrench.and.screwdriver.fill' }}
+          md={{ default: 'build', selected: 'build' }}
         />
       </NativeTabs.Trigger>
 

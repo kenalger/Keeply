@@ -65,6 +65,25 @@ export const REMINDER_LEAD_LABELS: Readonly<Record<ReminderLeadTime, string>> = 
 };
 
 /**
+ * The same lead times as CHIP labels.
+ *
+ * "1 day before" is a sentence and reads correctly in a settings row; on a chip
+ * beside four others it is four words of repetition, and five of them will not
+ * sit on one line. The section above the chips already says "before a bill is
+ * due", so the chip only has to carry the interval.
+ *
+ * Kept here, next to {@link REMINDER_LEAD_LABELS}, for the same reason that map
+ * exists: a screen must never invent its own words for a stored value.
+ */
+export const REMINDER_LEAD_SHORT_LABELS: Readonly<Record<ReminderLeadTime, string>> = {
+  'same-day': 'Same day',
+  '1-day': '1 day',
+  '3-days': '3 days',
+  '7-days': '7 days',
+  '30-days': '30 days',
+};
+
+/**
  * "30 days before and 7 days before" — a sentence fragment describing a set of
  * lead times, built from {@link REMINDER_LEAD_LABELS} rather than typed into a
  * screen, so a settings change can never leave a stale promise on a tab.
@@ -169,9 +188,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   update: (patch) => {
-    // Local write: apply now, persist after. No await, no spinner (§25).
+    // Local write: apply now, persist after. No await, no spinner (§25) — but
+    // QUEUED, so two quick writes cannot land out of order.
     set(patch);
-    void persist(patch);
+    enqueuePersist(patch);
   },
 
   toggleReminderLeadTime: (key, leadTime) => {
@@ -185,7 +205,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
     const patch = { [key]: next } as Partial<AppSettings>;
     set(patch);
-    void persist(patch);
+    enqueuePersist(patch);
   },
 
   reset: () => {
@@ -224,6 +244,39 @@ const REMINDER_AFFECTING_KEYS: readonly (keyof AppSettings)[] = [
   'documentReminderLeadTimes',
   'reminderHour',
 ];
+
+/**
+ * Settings writes, serialised.
+ *
+ * ── THE BUG THIS EXISTS TO STOP ────────────────────────────────────────────
+ * `update()` and `toggleReminderLeadTime()` both `set()` locally and then fire
+ * `persist()` WITHOUT awaiting — deliberately, because a preference must not
+ * make the UI wait (§25). Two writes started a frame apart are then two
+ * concurrent `saveAppSettings()` calls, and nothing made them land in the order
+ * they were made.
+ *
+ * Flipping two reminder switches quickly was enough to lose one. Observed on
+ * the device: toggling `30-days` then `same-day` left the store holding
+ * `[same-day, 1-day, 3-days, 30-days]` while the database kept
+ * `[1-day, 3-days, 30-days]` — the first write completing last and overwriting
+ * the second with its older snapshot. The screen showed the switch on; the next
+ * cold boot showed it off. The reminders screen puts fifteen switches in one
+ * scrolling list, which makes tapping two in quick succession ordinary.
+ *
+ * A queue is the whole fix: each write waits for the one before it, so the last
+ * call still wins and it wins with the newest value. It stays fire-and-forget
+ * from the caller's side — nothing awaits this — so no screen gets slower.
+ */
+let writeQueue: Promise<void> = Promise.resolve();
+
+function enqueuePersist(patch: Partial<AppSettings>): void {
+  // `persist()` never rejects, but the chain is guarded anyway: one rejection
+  // here would poison every settings write for the rest of the session.
+  writeQueue = writeQueue.then(
+    () => persist(patch),
+    () => persist(patch),
+  );
+}
 
 async function persist(patch: Partial<AppSettings>): Promise<void> {
   try {

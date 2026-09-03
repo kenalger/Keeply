@@ -45,6 +45,9 @@ export type DbOperation =
   | 'db.migrate.apply'
   | 'db.migrate.done'
   | 'db.migrate.skip'
+  | 'db.export.start'
+  | 'db.export.done'
+  | 'db.export.failed'
   | 'db.selfcheck'
   | 'db.init'
   | 'db.init.failed';

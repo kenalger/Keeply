@@ -28,6 +28,7 @@ import {
   subscriptionTotals,
   type SubscriptionFilter,
   type SubscriptionRecord,
+  type SubscriptionSort,
   type SubscriptionTotals,
 } from '@/features/subscriptions';
 import { log } from '@/lib/log';
@@ -230,8 +231,9 @@ export function useSubscriptionFilter(options: {
   search: string;
   activity: ActivityFilter;
   category: SubscriptionFilter['category'];
+  sort: SubscriptionSort;
 }): SubscriptionFilter {
-  const { search, activity, category } = options;
+  const { search, activity, category, sort } = options;
   const trimmed = search.trim();
   const categoryKey = Array.isArray(category) ? category.join(',') : (category ?? '');
 
@@ -242,9 +244,9 @@ export function useSubscriptionFilter(options: {
       ...(trimmed.length > 0 ? { search: trimmed } : {}),
       ...(category === undefined ? {} : { category }),
       ...(activity === 'all' ? {} : { active: activity === 'active' }),
-      sort: 'next-billing' as const,
+      sort,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [trimmed, activity, categoryKey],
+    [trimmed, activity, categoryKey, sort],
   );
 }

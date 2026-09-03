@@ -41,7 +41,7 @@ import { runMigrations } from './migrate';
 
 export { DatabaseInitError, DatabaseKeyUnavailableError } from './errors';
 export { newId } from './ids';
-export { eraseLocalDatabase, withTransaction } from './client';
+export { eraseLocalDatabase, exportEncryptedCopy, withTransaction } from './client';
 export { nowMs } from './time';
 
 /**

@@ -25,8 +25,14 @@ export type DataDomain =
   | 'subscriptions'
   | 'bills'
   | 'receipts'
-  | 'vehicles'
-  | 'documents';
+  // Was `vehicles`. The domain widened to anything that needs looking after —
+  // see `plan/phase5-maintenance.md`.
+  | 'maintenance'
+  | 'documents'
+  // Not a record kind but a sixth thing three screens read at once: the
+  // allowance card on Home, on Money and on the allowance screen all go stale
+  // when the budget changes, and none of them is watching `receipts`.
+  | 'allowance';
 
 type Revisions = Readonly<Record<DataDomain, number>>;
 
@@ -34,8 +40,9 @@ const ZERO: Revisions = {
   subscriptions: 0,
   bills: 0,
   receipts: 0,
-  vehicles: 0,
+  maintenance: 0,
   documents: 0,
+  allowance: 0,
 };
 
 interface RevisionState {
