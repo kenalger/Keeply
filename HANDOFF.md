@@ -1,9 +1,16 @@
 # Keeply — Handoff
 
-**State at this commit:** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **824/824**.
-Runs on the iOS Simulator. Phases 1–4 complete **and rendered**, onboarding complete,
-**Phase 9 (Expenses & Allowance) complete**, **Phase 8 export done / import outstanding**,
-**Phase 5 is now Maintenance — schema done, feature/UI outstanding**, Phases 6–7 outstanding.
+**State at `bfefae8` (pushed to `origin/main`):** `tsc --noEmit` 0 · `eslint .` 0 errors ·
+`npm test` **858/858**. Runs on the iOS Simulator.
+
+| Phase | State |
+| --- | --- |
+| 1–4 Foundation · Subscriptions · Bills · Receipts | Complete **and rendered**. Bills has NO UI — see Known gaps. |
+| Onboarding | Complete |
+| 9 Expenses & Allowance | **Complete** |
+| 8 Backup | **Export done. Import (restore) is not built** — a bundle is currently a file the app cannot read back. |
+| 5 Maintenance *(was Vehicles)* | Schema, item data layer and screens done. **Costs, services and renewals have tables but no API.** |
+| 6 Documents · 7 Security | Not started |
 
 Read `CLAUDE.md` for conventions before touching anything. `plan/goal.md` is the product spec.
 
@@ -17,7 +24,7 @@ A private, offline-first iOS app you can actually use:
   not `SQLite format 3`, and `sqlite3` refuses to open it. Key lives in the Keychain, device-only.
 - **Excluded from iCloud backup** by a config plugin, verified by `xattr`
   (`com.apple.metadata:com_apple_backup_excludeItem`). A restored phone opens a *clean* app rather than a
-  bricked one; portability is §20's encrypted export, which is not built yet.
+  bricked one; portability is §20's encrypted export, which now EXISTS — but cannot yet be imported.
 - **Offline cold boot** with Wi-Fi off, verified: boots to Home in ~300ms.
 - **Expenses & allowance (Phase 9).** Set an allowance daily / weekly / monthly; the card on Home, the
   Money tab and `/allowance` all read one `AllowanceStatus`, so they cannot disagree. Only day-to-day
@@ -25,6 +32,14 @@ A private, offline-first iOS app you can actually use:
   allowance is a **history** table resolved by `effective_from`, so raising it in October cannot restate
   September. Receipts is now "Expenses" (routes `src/app/expenses`, table still `receipts`), the list is
   grouped by day with per-day totals, and the form opens on the amount.
+- **Maintenance (Phase 5).** Anything that needs looking after — vehicles, appliances, home,
+  electronics. One `maintenance_items` table with a `kind`; the form CHANGES SHAPE with it, so an
+  aircon never sees an odometer field. Add / list / detail / edit / delete all work and survive a cold
+  boot. What you cannot yet record is the maintenance itself — see Known gaps.
+- **Encrypted export (Phase 8).** A backup IS a SQLCipher database, written by `sqlcipher_export()` and
+  keyed with a passphrase, then handed to the share sheet and deleted from the cache.
+- **Editable reminders.** `/reminders` sets lead times per record kind and the delivery hour, with a
+  permission banner — without it every control on that screen is theatre.
 - **Subscriptions** — CRUD, anchored recurrence, SQL-side normalized totals, list/detail/form screens.
 - **Bills** — CRUD, payment history, derived overdue, ledger-anchored roll-forward.
 - **Local notifications** — six-state permission model, 60-slot rolling window, rebuilt on boot,
@@ -33,8 +48,11 @@ A private, offline-first iOS app you can actually use:
 - **Design system** — fully monochrome, deliberately de-decorated, full form layer, `ThemeLayout` spacing
   rules, measured contrast in both themes.
 
-188 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
-`16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8).
+209 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+`16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
+`21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance).
+
+**They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
 ---
 
@@ -42,27 +60,42 @@ A private, offline-first iOS app you can actually use:
 
 **1. Restore the specialist agents.** `.claude/agents/` holds five mobile specialists
 (`expo-native-engineer`, `mobile-data-engineer`, `mobile-ui-engineer`, `mobile-feature-engineer`,
-`mobile-qa-engineer`), each with web research enabled. **They only register at session start** — a session
-that began before they existed cannot call them. Start a fresh session and they are available by name.
+`mobile-qa-engineer`), each with web research enabled. **They only register at session start** — a
+session that began before they existed cannot call them. Start a fresh session and they are available
+by name.
 
-**2. ~~Render Phase 4~~ — done.** Every receipts/expenses screen has now been rendered and looked at,
-in both themes; screenshots at `plan/screenshots/18-*` and `19-*`. It found nine defects that green
-tests did not, listed in `plan/phase9-expenses-allowance.md` §13 — including a note field that silently
-truncated anything over two lines, and a form whose only required field sat below the fold under an
-empty photo box. All fixed.
+**2. Build restore (Phase 8c). This is the one that matters most.**
+
+Export works; import does not. A backup is currently a file only a desktop `sqlcipher` can open, not
+the app — which is *worse than no backup*, because it invites the user to believe they are covered.
+Everything it needs already exists and is tested: `compareBundle()` refuses a `bundle-newer` file,
+`summariseBundle()` carries the photo caveat, and `tests/backup-policy.test.ts` covers both in 26
+tests (five mutations verified red against the suite). What is missing is opening the bundle,
+validating it, and writing the rows back.
+
+The format decision, before touching it: **a bundle IS a SQLCipher database**, written by SQLCipher's
+own `sqlcipher_export()` and keyed with the user's passphrase. No new dependency, no native rebuild,
+and the crypto is the same audited implementation protecting the live file — `expo-crypto` has hashing
+and random bytes and **no AES and no KDF**, so every other route meant hand-rolling one.
+`plan/phase8-backup.md` §5 has the step, §7 the device verification, §8 what the build found.
+
+Note before starting: **`allowances` must be in the bundle**, or a restore returns expenses without
+the budget they were measured against. `sqlcipher_export()` copies whole tables so this is already
+true — but the import summary and its test do not mention allowances yet.
+
+**3. Then: maintenance records (Phase 5c).** The tab is called Maintenance and you cannot record any.
+Items exist; the thing you attach to them does not. `maintenance_costs`, `maintenance_services` and
+`maintenance_renewals` have tables, views and migration-level tests, but no API and no screens — so
+the detail screen honestly says "Nothing recorded against it yet" rather than stubbing a section.
+This is what turns a list of possessions into a history.
+
+**4. Then: Bills screens.** The largest amount of finished, tested work in this repo that nobody can
+reach — CRUD, payment history, overdue derivation, recurrence roll-forward, notifications, and zero
+UI. See Known gaps.
 
 **Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
 camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
 real device or `xcrun simctl keychain <udid> reset`.
-
-**3. Phase 8 (Backup) — the EXPORT half now exists; import is next.** A user can create an encrypted
-backup and share it out. What is still missing is restore, so a bundle is currently a file nobody can
-put back. `plan/phase8-backup.md` §5 has the remaining step (8c) and §7 the device verification.
-
-The format decision worth knowing before touching it: **a bundle IS a SQLCipher database**, written by
-SQLCipher's own `sqlcipher_export()` and keyed with the user's passphrase. No new dependency, no native
-rebuild, and the crypto is the same audited implementation protecting the live file. `expo-crypto` has
-hashing and random bytes and **no AES and no KDF**, so every other route meant hand-rolling one.
 
 ---
 
@@ -145,10 +178,48 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   `src/lib/log.ts` is an allowlist — only `SAFE_KEYS` pass a value through.
 - **Every new test must be mutation-verified.** Break the behaviour, confirm the test goes red, restore.
   Four tests in this repo passed against deliberately broken code before this was enforced.
+- **Settings writes are QUEUED, not fire-and-forget.** `update()` and `toggleReminderLeadTime()` still
+  return immediately (§25 — a preference must not make the UI wait), but `enqueuePersist()` chains them
+  so two taps a frame apart cannot land out of order. Removing the queue silently loses settings; see
+  Recently closed.
+- **Day grouping only applies in date order.** `groupByDay()` collects CONSECUTIVE runs, so sorted by
+  amount the same date appears in several places, each run carrying a partial sum wearing that day's
+  name. The expenses list drops grouping rather than showing it wrong, and the sort control says so
+  before you change the order.
+- **`SegmentedField` has two variants and they are not interchangeable.** `'segmented'` (filled track)
+  is for **setting a value on a record** — it sits among `TextField`s and must read as a field.
+  `'underline'` (a row of labels with a rule) is for **choosing which of the same things to look at** —
+  a sort order, an active/paused filter. A form field styled as tabs says "switch view" when it means
+  "choose a value".
+- **A chip's label weight never changes with selection.** A chip is as wide as its own text, so bolding
+  the chosen one reflows a wrapping row *as you tap it*. The fill carries the state. `SegmentedField`
+  can bold safely because each segment is a fixed share of a fixed track; `ChipField` cannot.
 
 ---
 
 ## Recently closed (do not re-fix)
+
+### This session (`bfefae8`)
+
+- **A lost setting.** `persist()` in `src/stores/settings-store.ts` was fire-and-forget, so two quick
+  writes could complete out of order and the older one win. Observed on the device: toggling two
+  reminder lead times left the store holding four values and the database holding three — the switch
+  showed on, the next cold boot showed it off, nothing errored or logged. Fixed with a write queue.
+  Reachable before this session through appearance and currency, but the reminders screen puts fifteen
+  switches in one list, which makes it ordinary.
+- **A passphrase in an error message.** op-sqlite echoes bound parameters into its errors, and for
+  `ATTACH DATABASE ? … KEY ?` the second parameter is the user's backup passphrase.
+  `exportEncryptedCopy()` now throws WITHOUT a `cause`. Re-verified by forcing a failure.
+- **A note field that silently truncated.** Expense notes rendered in a `<Row/>`, whose subtitle is
+  `numberOfLines={2}` — anything longer was cut with no way to read it. Notes are prose now.
+- **A form whose required field sat below the fold.** `/expenses/new` opened photo-first; the amount
+  auto-focused, so the keyboard scrolled the title off the top. Amount and merchant come first.
+- **A settings screen that could not scroll.** `/reminders` omitted `Screen`'s `scroll` prop, so the
+  delivery hour was unreachable. Fixed, and the content was rebuilt as chips so it fits anyway.
+- **Nine Phase 4 defects** found by rendering screens that had never been looked at — listed in
+  `plan/phase9-expenses-allowance.md` §13.
+
+### Earlier
 
 T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase2-3-remediation.md`. Highlights:
 
@@ -177,9 +248,19 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
   budgets, no rollover. `allowances` must be added to Phase 8's export bundle or a restore returns
   expenses without the budget they were measured against.
-- **Phases 5–8 not started**: Vehicles, Documents, Security (biometric lock), Backup (encrypted export).
-  Note the backup story is what makes the "excluded from iCloud" decision safe — until §20 ships, a lost
-  phone means lost data.
+- **Restore does not exist.** Export ships; import does not. Until it does, the "excluded from iCloud"
+  decision is only half-covered — a user can make a backup and cannot use it. See Start here §2.
+- **Maintenance records do not exist.** `maintenance_costs`, `maintenance_services` and
+  `maintenance_renewals` have tables, views and migration tests, but no API, no screens and no
+  analytics (cost-per-km, fuel efficiency). Items can be added; what happens to them cannot.
+- **The `notification_settings.entity_type` enum still names the old vehicle tables**
+  (`vehicle_insurance`, `vehicle_registration`, `vehicle_maintenance`). Renaming them changes a CHECK,
+  which SQLite can only do by rebuilding the table — and drizzle-kit's rebuild does not drop the
+  dependent `notification_settings_live` view first, so the generated RENAME fails. No code reads
+  those values, so it waits for step 5e. The reason is written at the enum.
+- **Phases 6–7 not started**: Documents, Security (biometric lock). The onboarding wizard already
+  RECORDS that the user asked for an app lock, and More says "Soon" — a stated promise with nothing
+  behind it.
 - **`app.json` needs the Android notification icon wired.** The asset exists at
   `assets/images/notification-icon.png` (96×96, white-on-transparent, verified legible at 24px). It must sit
   **before** `./plugins/with-local-only-notifications` so the entitlement strip runs last, and needs a
@@ -218,8 +299,14 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 686 tests
+npm test                # node --test, 858 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
 Simulator in use: `BC119EA8-0D9A-4183-80F7-5123B0EAA301` (iPhone 17 Pro).
+**Shut down at the end of this session** — `xcrun simctl boot <udid>` then `open -a Simulator` to
+bring it back. Metro was left running on 8081; `npm start` if it is gone.
+
+The app on that simulator holds real test data: an allowance, a month of expenses, and four
+maintenance items (a Vios, an aircon, a water heater, a laptop). Useful for rendering passes, and
+worth knowing before you assume an empty database.
