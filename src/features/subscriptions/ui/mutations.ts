@@ -36,6 +36,7 @@ import {
 } from '@/features/subscriptions';
 import { log } from '@/lib/log';
 import { cancelRemindersFor, scheduleRemindersFor } from '@/lib/notifications';
+import type { ReminderEntity } from '@/lib/notifications-plan';
 import { advanceToFuture } from '@/lib/recurrence';
 import { useNotificationStore } from '@/stores/notification-store';
 import { bumpRevision } from '@/stores/revision-store';
@@ -78,17 +79,33 @@ export function projectedRenewal(record: SubscriptionRecord, todayISO?: string):
  * old date behind. A paused record resolves to "cancel everything, schedule
  * nothing" through the same code path — there is no special case here.
  */
+/**
+ * A subscription as the scheduler sees it.
+ *
+ * Exported because the reminders screen previews what a user's settings will
+ * actually produce, and it does that by running the SAME planner the scheduler
+ * runs. Building a second entity there — one field spelled differently, one
+ * `active` rule missed — would let the preview promise a reminder the queue
+ * does not hold, which is the one thing a preview must never do.
+ *
+ * The bills feature has had `billReminderEntity()` for the same reason since
+ * Phase 3; this is its twin.
+ */
+export function subscriptionReminderEntity(record: SubscriptionRecord): ReminderEntity {
+  return {
+    id: record.id,
+    kind: 'subscription',
+    title: record.name,
+    dateISO: projectedRenewal(record),
+    amountMinor: record.amountMinor,
+    currency: record.currency,
+    active: record.isActive,
+  };
+}
+
 async function syncReminders(record: SubscriptionRecord): Promise<void> {
   try {
-    const result = await scheduleRemindersFor({
-      id: record.id,
-      kind: 'subscription',
-      title: record.name,
-      dateISO: projectedRenewal(record),
-      amountMinor: record.amountMinor,
-      currency: record.currency,
-      active: record.isActive,
-    });
+    const result = await scheduleRemindersFor(subscriptionReminderEntity(record));
     useNotificationStore.getState().noteScheduleResult(result);
   } catch (error) {
     // The record is saved. A reminder that could not be placed is a degraded

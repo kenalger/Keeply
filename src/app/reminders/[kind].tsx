@@ -1,9 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback } from 'react';
-import { StyleSheet } from 'react-native';
+import { useCallback, useMemo } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import { ReminderPermissionBanner } from '@/components/reminder-permission-banner';
+import { ReminderSchedulePreview } from '@/components/reminder-schedule-preview';
 import {
+  Card,
   ChipField,
   EmptyState,
   FormSection,
@@ -12,7 +14,20 @@ import {
   Text,
   type ChipOption,
 } from '@/components/ui';
-import { reminderKindFor } from '@/features/settings';
+import { billReminderEntity, type BillRecord } from '@/features/bills';
+import type { SubscriptionRecord } from '@/features/subscriptions';
+import { useUpcomingBills } from '@/features/bills/ui';
+import { reminderKindFor, type ReminderKind } from '@/features/settings';
+import {
+  subscriptionReminderEntity,
+  useSubscriptionList,
+} from '@/features/subscriptions/ui';
+import {
+  planRemindersFor,
+  reminderDefaultsFromSettings,
+  type EntityPlan,
+  type ReminderEntity,
+} from '@/lib/notifications-plan';
 import {
   REMINDER_LEAD_SHORT_LABELS,
   REMINDER_LEAD_TIMES,
@@ -26,33 +41,38 @@ import { useThemedStyles, type Theme } from '@/theme';
 /**
  * When to be reminded about ONE kind of record (§8, §15).
  *
- * ── THE WHOLE POINT OF THIS SCREEN IS THAT IT IS ABOUT ONE THING ───────────
- * The previous version put all three kinds on one page. Choosing how much
- * warning you want before a BILL is due meant reading past subscriptions and
- * documents, and the five chips that mattered looked exactly like the ten that
- * did not. Here the title, the description, the chips and the sentence
- * underneath are all about the kind named in the route, and there is nothing
- * else on the screen to mistake for it.
+ * ── THE SCREEN ANSWERS A QUESTION, IT DOES NOT JUST HOLD FIVE SWITCHES ─────
+ * The first version of this screen was a row of chips and two sentences, and
+ * it was honest but inert: it told the user which intervals were selected, and
+ * left them to imagine the consequence. The question somebody actually has
+ * here is "so when will Keeply tell me?" — and until the preview below existed,
+ * nothing in the app answered it.
  *
- * ── IT STATES THE OUTCOME, NOT JUST THE INPUTS ─────────────────────────────
- * A row of selected chips is a set of intervals; what the user actually wants
- * to know is what will happen. `outcomeSentence()` composes the chosen lead
- * times with the delivery hour into the thing that is really being configured:
- * "Keeply will remind you 3 days before and 1 day before each bill is due, at
- * 9:00 AM." The old screen never said this anywhere, and the hour lived three
- * sections away from the chips it qualified.
+ * So the screen is three things, in the order the question is asked:
  *
- * ── NO SAVE BUTTON ─────────────────────────────────────────────────────────
- * Each chip writes immediately. `toggleReminderLeadTime()` queues the write
- * and, because a lead time is in `REMINDER_AFFECTING_KEYS`, rebuilds the OS
- * queue — the queue holds absolute instants, not a rule, so a changed lead
- * time reaches nobody until it is rebuilt. A local write is a millisecond and
- * a Save button would be a promise that something is being computed (§25).
+ *   1. **The answer, up front.** How many reminders, and at what time. One
+ *      line, large, so the setting is legible before anything is read.
+ *   2. **The control.** The chips.
+ *   3. **The proof.** The user's real next record, with the actual dates the
+ *      notifications will land on.
  *
- * ── OFF IS A VALID ANSWER ──────────────────────────────────────────────────
- * No chips selected means no reminders of this kind. It says so plainly rather
- * than keeping a hidden default, and it is not styled as an error: someone who
- * wants no bill reminders is not making a mistake.
+ * ── THE PREVIEW IS THE PLAN ITSELF ─────────────────────────────────────────
+ * `planRemindersFor()` is the function `rescheduleAll()` runs to fill the OS
+ * queue. Given the same entity and the same defaults it returns the same
+ * reminders, so the preview cannot promise something the queue does not hold.
+ * Re-deriving the dates here would be a second implementation of lead-time
+ * arithmetic — including the DST handling `reminderFireTime()` exists for —
+ * free to drift, and drifting silently.
+ *
+ * ── WHY THE SCREEN READS TWO FEATURES ──────────────────────────────────────
+ * A settings screen importing `@/features/bills` and `@/features/subscriptions`
+ * is a screen composing features, which is what screens are for (`money.tsx`
+ * reads three). Both hooks run on every render of this screen regardless of
+ * kind, because hooks cannot be conditional; both are bounded, indexed, local
+ * reads, and the one whose kind is not on screen is simply not used.
+ *
+ * Documents have no data layer yet (Phase 6), so that kind shows the honest
+ * version: the settings work and will apply to the first document added.
  */
 export default function ReminderKindScreen() {
   const { kind: slug } = useLocalSearchParams<{ kind: string }>();
@@ -69,11 +89,39 @@ export default function ReminderKindScreen() {
   const reminderHour = useSettingsStore((s) => s.reminderHour);
   const toggleReminderLeadTime = useSettingsStore((s) => s.toggleReminderLeadTime);
 
+  // Both reads run whatever the kind is — a hook cannot sit inside a branch.
+  // One row each, ordered by SQLite, so the unused one costs an indexed lookup.
+  const upcomingBills = useUpcomingBills(UPCOMING_WINDOW_DAYS, 1);
+  const upcomingSubscriptions = useSubscriptionList(SUBSCRIPTION_NEXT_FILTER);
+
   const byKey: Record<ReminderLeadTimeKey, readonly ReminderLeadTime[]> = {
     billReminderLeadTimes,
     subscriptionReminderLeadTimes,
     documentReminderLeadTimes,
   };
+
+  const defaults = useMemo(
+    () =>
+      reminderDefaultsFromSettings({
+        billReminderLeadTimes,
+        subscriptionReminderLeadTimes,
+        documentReminderLeadTimes,
+        reminderHour,
+      }),
+    [
+      billReminderLeadTimes,
+      subscriptionReminderLeadTimes,
+      documentReminderLeadTimes,
+      reminderHour,
+    ],
+  );
+
+  const subject = nextSubjectFor(kind, upcomingBills.value, upcomingSubscriptions.rows);
+
+  const plan: EntityPlan | null = useMemo(
+    () => (subject === null ? null : planRemindersFor(subject.entity, { defaults })),
+    [subject, defaults],
+  );
 
   const leave = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -99,6 +147,7 @@ export default function ReminderKindScreen() {
   }
 
   const selected = byKey[kind.settingKey];
+  const off = selected.length === 0;
 
   return (
     <Screen edges={['top']} scroll>
@@ -111,6 +160,32 @@ export default function ReminderKindScreen() {
 
       <ReminderPermissionBanner />
 
+      {/* 1. THE ANSWER. The setting stated as a quantity, before the controls
+          that produce it — the same reason the allowance card leads with the
+          number rather than with the budget that made it. */}
+      <View style={styles.hero}>
+        <Card>
+          <View style={styles.heroLine}>
+            <Text variant="amountLg">{off ? 'Off' : String(selected.length)}</Text>
+            <Text variant="body" color="textSecondary" style={styles.heroUnit}>
+              {off
+                ? `no reminders before ${kind.beforeWhat}`
+                : `${selected.length === 1 ? 'reminder' : 'reminders'} before ${
+                    kind.beforeWhat
+                  }`}
+            </Text>
+          </View>
+          {off ? null : (
+            <Text variant="caption" color="textSecondary" style={styles.heroFoot}>
+              {`Each arrives at ${formatReminderHour(
+                reminderHour,
+              )}, counted back from the day ${kind.beforeWhat}.`}
+            </Text>
+          )}
+        </Card>
+      </View>
+
+      {/* 2. THE CONTROL. */}
       <FormSection title="Remind me">
         <ChipField<ReminderLeadTime>
           label={kind.title}
@@ -122,9 +197,28 @@ export default function ReminderKindScreen() {
         />
       </FormSection>
 
-      <Text variant="body" color="textSecondary" style={styles.outcome}>
-        {outcomeSentence(selected, reminderHour, kind.beforeWhat)}
-      </Text>
+      {/* 3. THE PROOF. */}
+      {off ? null : (
+        <FormSection title="What you will get">
+          <Card>
+            {subject !== null && plan !== null && plan.reminders.length > 0 ? (
+              <ReminderSchedulePreview
+                subject={subject.name}
+                eventDateISO={subject.entity.dateISO}
+                reminders={plan.reminders}
+                skippedPast={plan.skippedPast}
+                eventLead={kind.eventLead}
+                eventLabel={kind.eventLabel}
+                testID={`reminder-preview-${kind.slug}`}
+              />
+            ) : (
+              <Text variant="caption" color="textSecondary">
+                {emptyPreviewCopy(kind, plan)}
+              </Text>
+            )}
+          </Card>
+        </FormSection>
+      )}
 
       <Text variant="caption" color="textTertiary" style={styles.footnote}>
         Choosing more lead times means more reminders competing for the limited number iOS lets an
@@ -134,36 +228,79 @@ export default function ReminderKindScreen() {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* The record the preview is about                                             */
+/* -------------------------------------------------------------------------- */
+
+/** How far ahead to look for a bill to preview against. A year is every cycle. */
+const UPCOMING_WINDOW_DAYS = 365;
+
 /**
- * The two facts the chips cannot carry: WHEN a reminder lands, and what the
- * intervals are counted back from.
- *
- * ── WHY NOT JUST RESTATE THE CHOSEN CHIPS ──────────────────────────────────
- * The first version did — "Keeply will remind you 3 days before and 1 day
- * before each bill" — and it broke on the one lead time that is not an
- * interval: `same-day` renders as "same day", giving "remind you same day each
- * bill". A sentence that is ungrammatical for one of five values is a sentence
- * that will be ungrammatical on somebody's screen.
- *
- * It was also redundant. The chips above already show which intervals are
- * chosen; what they do not show is the delivery hour — which now lives on the
- * previous screen — and what "3 days" is measured from. Those are what this
- * says, and they are true for every combination.
- *
- * `formatReminderHour` is the same function the overview renders, so the two
- * screens cannot disagree about when a reminder arrives.
+ * The soonest active subscription. A module constant, not an inline object:
+ * `useSubscriptionList` keys its read on `JSON.stringify(filter)`, and a fresh
+ * object every render is a fresh key every render.
  */
-function outcomeSentence(
-  selected: readonly ReminderLeadTime[],
-  hour: number,
-  beforeWhat: string,
-): string {
-  if (selected.length === 0) {
-    return `Off. Keeply will not remind you before ${beforeWhat}.`;
+const SUBSCRIPTION_NEXT_FILTER = { active: true, sort: 'next-billing' } as const;
+
+interface PreviewSubject {
+  readonly name: string;
+  readonly entity: ReminderEntity;
+}
+
+/**
+ * The record this kind's preview should be about, or `null`.
+ *
+ * Both entities come from the feature's OWN projector — `billReminderEntity`
+ * and `subscriptionReminderEntity` — never assembled here. A second
+ * construction is a second chance to get `active` wrong, and an entity with the
+ * wrong `active` produces a preview showing reminders the scheduler will not
+ * place.
+ */
+function nextSubjectFor(
+  kind: ReminderKind | null,
+  bills: readonly BillRecord[] | null,
+  subscriptions: readonly SubscriptionRecord[],
+): PreviewSubject | null {
+  if (kind === null) return null;
+
+  if (kind.slug === 'bills') {
+    const bill = bills?.[0];
+    return bill === undefined
+      ? null
+      : { name: bill.name, entity: billReminderEntity(bill) };
   }
-  return `Reminders arrive at ${formatReminderHour(
-    hour,
-  )}, counted back from the day ${beforeWhat}.`;
+
+  if (kind.slug === 'subscriptions') {
+    const record = subscriptions[0];
+    return record === undefined
+      ? null
+      : { name: record.name, entity: subscriptionReminderEntity(record) };
+  }
+
+  // Documents: Phase 6. There is no data layer to read, and inventing a
+  // placeholder record would be the one thing a preview must never do.
+  return null;
+}
+
+/**
+ * What to say when there is nothing to preview against.
+ *
+ * Three different reasons, and they are not interchangeable: nothing of this
+ * kind exists yet, the feature itself does not exist yet, or every reminder
+ * for the one record that does exist has already passed. Collapsing them into
+ * "nothing to show" would leave a user who set a 30-day warning on a bill due
+ * tomorrow wondering whether the setting took.
+ */
+function emptyPreviewCopy(kind: ReminderKind, plan: EntityPlan | null): string {
+  if (kind.slug === 'documents') {
+    return 'Documents arrive in a later update. These settings are saved and will apply to the first one you add.';
+  }
+  if (plan !== null && plan.skippedPast > 0) {
+    return `Your next ${kind.previewNoun} is too close for these lead times — every one of them has already passed for it. Later ones will get the full set.`;
+  }
+  return `Nothing to show yet. Add ${
+    kind.slug === 'bills' ? 'a bill' : 'a subscription'
+  } and its reminders will be listed here.`;
 }
 
 const LEAD_TIME_CHIPS: readonly ChipOption<ReminderLeadTime>[] = REMINDER_LEAD_TIMES.map(
@@ -173,6 +310,9 @@ const LEAD_TIME_CHIPS: readonly ChipOption<ReminderLeadTime>[] = REMINDER_LEAD_T
 const makeStyles = (t: Theme) =>
   StyleSheet.create({
     // A block owns the gap above itself, never below.
-    outcome: { marginTop: t.layout.block },
+    hero: { marginTop: t.layout.section },
+    heroLine: { flexDirection: 'row', alignItems: 'baseline', gap: t.space.sm },
+    heroUnit: { flex: 1 },
+    heroFoot: { marginTop: t.space.sm },
     footnote: { marginTop: t.layout.section },
   });

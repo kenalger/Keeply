@@ -48,6 +48,30 @@ describe('the reminder kinds', () => {
     for (const kind of REMINDER_KINDS) {
       assert.ok(kind.title.length > 0, kind.slug);
       assert.ok(kind.beforeWhat.length > 0, kind.slug);
+      assert.ok(kind.previewNoun.length > 0, kind.slug);
+      assert.ok(kind.eventLead.length > 0, kind.slug);
+      assert.ok(kind.eventLabel.length > 0, kind.slug);
+    }
+  });
+
+  test('each kind describes its own date with its own verb', () => {
+    // One shared verb produced "Subscription due Sep 30" in the preview, which
+    // is not how anyone describes a renewal — and a preview the user cannot
+    // recognise is a preview they cannot check against what they expected.
+    const leads = REMINDER_KINDS.map((kind) => kind.eventLead);
+    assert.equal(new Set(leads).size, leads.length, leads.join(', '));
+    const labels = REMINDER_KINDS.map((kind) => kind.eventLabel);
+    assert.equal(new Set(labels).size, labels.length, labels.join(', '));
+  });
+
+  test('the preview strings are capitalised, because they start their own line', () => {
+    // `beforeWhat` is the opposite — it is always embedded mid-sentence. Two
+    // fields with opposite casing rules sitting next to each other is exactly
+    // where a copy edit goes wrong.
+    for (const kind of REMINDER_KINDS) {
+      assert.equal(kind.eventLead[0], kind.eventLead[0].toUpperCase(), kind.slug);
+      assert.equal(kind.eventLabel[0], kind.eventLabel[0].toUpperCase(), kind.slug);
+      assert.equal(kind.previewNoun[0], kind.previewNoun[0].toLowerCase(), kind.slug);
     }
   });
 

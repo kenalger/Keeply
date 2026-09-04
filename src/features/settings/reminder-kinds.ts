@@ -27,6 +27,22 @@ export interface ReminderKind {
   readonly title: string;
   /** What the reminder is measured against. Completes "…before X". */
   readonly beforeWhat: string;
+  /**
+   * One record of this kind, for the preview: "your next bill". Lower case —
+   * it is always used mid-sentence.
+   */
+  readonly previewNoun: string;
+  /**
+   * What the record's own date DOES, for the preview: "Due Sep 30".
+   *
+   * A bill is due, a subscription renews, a document expires. One shared verb
+   * produced "Subscription due Sep 30", which is not how anyone describes a
+   * renewal — and the preview's whole job is to be recognisable enough that a
+   * user can check it against what they expected.
+   */
+  readonly eventLead: string;
+  /** The last stop on the preview rail: "Bill due", "Subscription renews". */
+  readonly eventLabel: string;
 }
 
 export const REMINDER_KINDS: readonly ReminderKind[] = [
@@ -35,18 +51,27 @@ export const REMINDER_KINDS: readonly ReminderKind[] = [
     settingKey: 'billReminderLeadTimes',
     title: 'Bills',
     beforeWhat: 'a bill is due',
+    previewNoun: 'bill',
+    eventLead: 'Due',
+    eventLabel: 'Bill due',
   },
   {
     slug: 'subscriptions',
     settingKey: 'subscriptionReminderLeadTimes',
     title: 'Subscription renewals',
     beforeWhat: 'a subscription charges again',
+    previewNoun: 'subscription',
+    eventLead: 'Renews',
+    eventLabel: 'Subscription renews',
   },
   {
     slug: 'documents',
     settingKey: 'documentReminderLeadTimes',
     title: 'Document expiry',
     beforeWhat: 'a document runs out',
+    previewNoun: 'document',
+    eventLead: 'Expires',
+    eventLabel: 'Document expires',
   },
 ];
 

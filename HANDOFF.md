@@ -1,7 +1,7 @@
 # Keeply — Handoff
 
 **State: Phase 8c (restore), Bills screens, and the reminders rework landed.**
-`tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **939/939**. Runs on the iOS Simulator.
+`tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **941/941**. Runs on the iOS Simulator.
 
 | Phase | State |
 | --- | --- |
@@ -44,11 +44,14 @@ A private, offline-first iOS app you can actually use:
   wrong passphrase and a tampered "newer" bundle were both refused, and a restore interrupted between
   the two renames was repaired on the next launch with every record intact. `plan/phase8-backup.md`
   §9–§10.
-- **Editable reminders, one kind at a time.** `/reminders` is an overview stating all four answers;
-  `/reminders/bills` (and `/subscriptions`, `/documents`) each edit exactly one kind and say what
-  the choice means — "Reminders arrive at 9:00 AM, counted back from the day a bill is due." More's
-  four reminder rows deep-link straight to their own kind. The permission banner travels with the
-  controls, because without delivery every one of them is theatre.
+- **Editable reminders, one kind at a time, with a real preview.** `/reminders` is an overview
+  stating all four answers; `/reminders/bills` (and `/subscriptions`, `/documents`) each edit
+  exactly one kind. Each of those screens is three things in the order the question is asked: the
+  answer as a quantity ("3 reminders before a bill is due, each at 9:00 AM"), the chips, and then
+  **the proof** — the user's real next bill with the actual dates the notifications will land on,
+  drawn on a rail that ends at the due date. The preview rows come from `planRemindersFor()`, the
+  same function `rescheduleAll()` runs, so a preview cannot promise a reminder the queue does not
+  hold. More's four reminder rows deep-link straight to their own kind.
 - **Subscriptions** — CRUD, anchored recurrence, SQL-side normalized totals, list/detail/form screens.
 - **Bills** — CRUD, payment history, derived overdue, ledger-anchored roll-forward, **and screens**:
   list with §23 filters, add/edit, and a detail screen that settles a period. The amount is
@@ -61,10 +64,10 @@ A private, offline-first iOS app you can actually use:
 - **Design system** — fully monochrome, deliberately de-decorated, full form layer, `ThemeLayout` spacing
   rules, measured contrast in both themes.
 
-217 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+219 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore, `28-31-` Bills, `32-34-` reminders).
+`27-` restore, `28-31-` Bills, `32-36-` reminders).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -228,6 +231,20 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 ### This session — the reminders rework
 
+- **The per-kind screen shows what will actually happen.** It was a row of chips and two sentences:
+  honest but inert. It told you which intervals were selected and left you to imagine the
+  consequence. It now leads with the setting as a quantity and closes with the real next record and
+  the dates its notifications will land on. The rows are `PlannedReminder`s from
+  `planRemindersFor()` — the scheduler's own planner — because a preview doing its own date
+  arithmetic is a second implementation of the DST-safe lead-time maths, free to drift silently.
+- **`subscriptionReminderEntity()` extracted** from `ui/mutations.ts`, mirroring bills'
+  `billReminderEntity()`. The preview and the scheduler must project a record the same way or the
+  preview shows reminders that will never be placed.
+- **Each kind names its own event.** One shared verb produced "Subscription due Sep 30", which is
+  not how anyone describes a renewal. `eventLead` / `eventLabel` on the kind table, pinned by tests
+  that also fix the casing rules — `beforeWhat` is always mid-sentence, `eventLead` always starts a
+  line.
+
 - **One screen per record kind.** `/reminders` was all three kinds on one page: fifteen chips under
   three headings. Everything was reachable and it was still the wrong shape, because setting a
   reminder is a decision about ONE kind of thing and the screen made you read the other two to find
@@ -375,7 +392,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 939 tests
+npm test                # node --test, 941 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 

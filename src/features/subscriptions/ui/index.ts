@@ -52,6 +52,7 @@ export {
   saveNewSubscription,
   saveSubscriptionEdit,
   setSubscriptionActive,
+  subscriptionReminderEntity,
 } from './mutations';
 export { lastUsedCategory, recentSubscriptions, type RecentSubscription } from './queries';
 export { SubscriptionForm, type SubscriptionFormProps } from './subscription-form';
