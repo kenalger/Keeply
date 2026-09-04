@@ -32,6 +32,7 @@
 import { getDb, newId, nowMs, withTransaction, type KeeplyDatabase } from '@/db';
 import { bindStatement } from '@/features/subscriptions';
 import { cancelRemindersFor, scheduleRemindersFor } from '@/lib/notifications';
+import { useNotificationStore } from '@/stores/notification-store';
 import { todayCalendarString } from '@/theme/format';
 
 import { createBillsApi, type BillNotificationsPort } from './queries';
@@ -73,16 +74,29 @@ const liveStore: BillStore = {
 };
 
 /**
- * `@/lib/notifications`, passed through unchanged.
+ * `@/lib/notifications`, plus the one thing the result is good for.
  *
- * Neither of these throws — a denied permission, a missing native module or a
- * full OS queue all come back as a result object — so a bill write never has to
+ * Neither call throws — a denied permission, a missing native module or a full
+ * OS queue all come back as a result object — so a bill write never has to
  * guard against a notification failure. `queries.ts` still wraps the calls,
  * because "never throws" is a property of the current implementation and a
  * saved bill must not depend on it.
+ *
+ * `noteScheduleResult` is why this is not a bare pass-through. Every
+ * `scheduleRemindersFor()` comes back carrying the CURRENT permission state,
+ * how many reminders are pending and where the 60-slot horizon now ends —
+ * which is exactly what `/reminders` renders. `queries.ts` discards the result
+ * (it has no business knowing about a store), so without this line the
+ * reminders screen would keep showing counts from the last boot until
+ * `syncAllReminders()` happened to run. Subscriptions does the same thing at
+ * its own notification boundary, in `ui/mutations.ts`.
  */
 const notifications: BillNotificationsPort = {
-  scheduleRemindersFor: (entity) => scheduleRemindersFor(entity),
+  scheduleRemindersFor: async (entity) => {
+    const result = await scheduleRemindersFor(entity);
+    useNotificationStore.getState().noteScheduleResult(result);
+    return result;
+  },
   cancelRemindersFor: (entityId) => cancelRemindersFor(entityId),
 };
 

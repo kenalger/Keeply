@@ -19,6 +19,8 @@ import {
 } from '@/components/ui';
 import { AllowanceSummary } from '@/features/allowance/ui';
 import type { ReceiptTotals } from '@/features/receipts';
+import type { BillTotals } from '@/features/bills';
+import { useBillTotals } from '@/features/bills/ui';
 import { useReceiptTotals } from '@/features/receipts/ui';
 import type { SubscriptionTotals } from '@/features/subscriptions';
 import { useSubscriptionTotals } from '@/features/subscriptions/ui';
@@ -34,12 +36,12 @@ import { formatMoney } from '@/theme';
  * carries real figures — `subscriptionTotals()`, aggregated by SQLite — and
  * leads somewhere.
  *
- * Bills remain a row with "Coming next" on it rather than being hidden. The
- * same reasoning as the §28 add sheet: the shape of the product should be
- * legible before it is finished, and a missing row reads as "Keeply does not do
- * bills" rather than "not yet". Receipts stopped being one of those rows in
- * Phase 4 — it now carries `receiptTotals()`, aggregated by SQLite over every
- * live receipt, and leads to the journal.
+ * All three rows now carry real figures, aggregated by SQLite, and all three
+ * lead somewhere. Bills was the last "Coming next" row; what it shows instead
+ * is what is STILL TO PAY rather than a monthly average, because that is the
+ * number somebody opens this tab to see — and it names anything overdue in the
+ * subtitle, since a total that is quietly late is the one figure on this
+ * screen that cannot wait for a tap.
  *
  * ── WHY ONE LIST ───────────────────────────────────────────────────────────
  * `<List/>` over flattened rows, not a `ScrollView` of three lists: a receipt
@@ -64,6 +66,7 @@ interface LedgerSummary {
 
 function buildLedgers(
   totals: SubscriptionTotals | null,
+  bills: BillTotals | null,
   receipts: ReceiptTotals | null,
 ): readonly LedgerSummary[] {
   return [
@@ -82,9 +85,12 @@ function buildLedgers(
       key: 'bills',
       icon: 'banknote',
       title: 'Bills',
-      subtitle: 'Electricity, water, internet, rent',
-      value: 'Coming next',
-      available: false,
+      subtitle: billSubtitleLine(bills),
+      value:
+        bills === null || bills.activeCount === 0
+          ? 'None yet'
+          : formatMoney(bills.primary.unpaidExpectedMinor, bills.primary.currency),
+      available: true,
     },
     {
       key: 'receipts',
@@ -98,6 +104,25 @@ function buildLedgers(
       available: true,
     },
   ];
+}
+
+/**
+ * "3 unpaid · 1 overdue", or what the section is for when it is empty.
+ *
+ * Overdue is named here rather than left to the list screen: this tab is where
+ * somebody checks in, and a late bill they are not told about is the failure
+ * this row exists to prevent. `unknownAmountCount` is said too — the value
+ * beside this subtitle is a SUM, and a sum that quietly omits a bill is worse
+ * than one that admits it did (§7).
+ */
+function billSubtitleLine(totals: BillTotals | null): string {
+  if (totals === null || totals.activeCount === 0) {
+    return 'Electricity, water, internet, rent';
+  }
+  const parts: string[] = [`${totals.unpaidCount} unpaid`];
+  if (totals.overdueCount > 0) parts.push(`${totals.overdueCount} overdue`);
+  if (totals.unknownAmountCount > 0) parts.push(`${totals.unknownAmountCount} without an amount`);
+  return parts.join(' · ');
 }
 
 /**
@@ -169,15 +194,21 @@ export default function MoneyScreen() {
   const contentStyle = useTabScreenContentStyle();
   const router = useRouter();
   const totals = useSubscriptionTotals();
+  const bills = useBillTotals();
   const receipts = useReceiptTotals();
 
   const nothingTracked =
     (totals.value === null || totals.value.activeCount + totals.value.inactiveCount === 0) &&
+    (bills.value === null || bills.value.activeCount + bills.value.inactiveCount === 0) &&
     (receipts.value === null || receipts.value.receiptCount === 0);
 
   const rows = useMemo(
-    () => buildMoneyRows(buildLedgers(totals.value, receipts.value), nothingTracked),
-    [totals.value, receipts.value, nothingTracked],
+    () =>
+      buildMoneyRows(
+        buildLedgers(totals.value, bills.value, receipts.value),
+        nothingTracked,
+      ),
+    [totals.value, bills.value, receipts.value, nothingTracked],
   );
 
   const openAdd = useCallback(() => router.push('/add'), [router]);
@@ -185,6 +216,7 @@ export default function MoneyScreen() {
   const open = useCallback(
     (key: LedgerSummary['key']) => {
       if (key === 'subscriptions') router.push('/subscriptions');
+      else if (key === 'bills') router.push('/bills');
       else if (key === 'receipts') router.push('/expenses');
     },
     [router],

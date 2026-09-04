@@ -1,11 +1,11 @@
 # Keeply — Handoff
 
-**State: Phase 8c (restore) landed.** `tsc --noEmit` 0 · `eslint .` 0 errors ·
-`npm test` **878/878**. Runs on the iOS Simulator.
+**State: Phase 8c (restore) and Bills screens landed.** `tsc --noEmit` 0 ·
+`eslint .` 0 errors · `npm test` **932/932**. Runs on the iOS Simulator.
 
 | Phase | State |
 | --- | --- |
-| 1–4 Foundation · Subscriptions · Bills · Receipts | Complete **and rendered**. Bills has NO UI — see Known gaps. |
+| 1–4 Foundation · Subscriptions · Bills · Receipts | Complete **and rendered**, Bills included. |
 | Onboarding | Complete |
 | 9 Expenses & Allowance | **Complete** |
 | 8 Backup | **Complete.** Export and restore, both verified on the device. |
@@ -47,17 +47,21 @@ A private, offline-first iOS app you can actually use:
 - **Editable reminders.** `/reminders` sets lead times per record kind and the delivery hour, with a
   permission banner — without it every control on that screen is theatre.
 - **Subscriptions** — CRUD, anchored recurrence, SQL-side normalized totals, list/detail/form screens.
-- **Bills** — CRUD, payment history, derived overdue, ledger-anchored roll-forward.
+- **Bills** — CRUD, payment history, derived overdue, ledger-anchored roll-forward, **and screens**:
+  list with §23 filters, add/edit, and a detail screen that settles a period. The amount is
+  OPTIONAL end to end (§7's variable bill), so every screen renders an em dash rather than ₱0.00 and
+  the totals say how many bills they left out. Marking paid writes the ledger row, rolls the due
+  date forward and says so in words; undo rewinds both. `plan/phase3-bills-ui.md`.
 - **Local notifications** — six-state permission model, 60-slot rolling window, rebuilt on boot,
   foreground, and any reminder-affecting settings change.
 - **First-run wizard** — 6 steps, resumable, 56-entry Philippine catalogue, all importable.
 - **Design system** — fully monochrome, deliberately de-decorated, full form layer, `ThemeLayout` spacing
   rules, measured contrast in both themes.
 
-210 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+214 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore).
+`27-` restore, `28-31-` Bills).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -76,10 +80,6 @@ Items exist; the thing you attach to them does not. `maintenance_costs`, `mainte
 `maintenance_renewals` have tables, views and migration-level tests, but no API and no screens — so
 the detail screen honestly says "Nothing recorded against it yet" rather than stubbing a section.
 This is what turns a list of possessions into a history.
-
-**3. Then: Bills screens.** The largest amount of finished, tested work in this repo that nobody can
-reach — CRUD, payment history, overdue derivation, recurrence roll-forward, notifications, and zero
-UI. See Known gaps.
 
 **Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
 camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
@@ -191,6 +191,20 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   `'underline'` (a row of labels with a rule) is for **choosing which of the same things to look at** —
   a sort order, an active/paused filter. A form field styled as tabs says "switch view" when it means
   "choose a value".
+- **A bill's amount may legitimately be `null`, and `₱0.00` is never a substitute.** §7's variable
+  bill is one the user cannot estimate; forcing a figure makes them invent one, and an invented
+  ₱1,500 then feeds totals and reminders as though it were real. Screens render an em dash; totals
+  report `unknownAmountCount` rather than folding a blank in as zero.
+- **A bill's record moves WITHOUT the user editing it.** `payBill()` advances `dueDate` and flips
+  `status`. That is why draft provenance (T1) matters more for bills than for subscriptions: a draft
+  seeded before a payment and saved after it un-rolls the settled period. `pickDraft()` in
+  `src/features/bills/ui/draft.ts`.
+- **A test must never iterate the list it is validating.** `DRAFT_FIELDS` was checked by a loop over
+  `DRAFT_FIELDS`, so deleting an entry changed nothing and the mutation passed. Derive the expected
+  set from the data's own shape instead.
+- **Status colours come from the tokens that already exist** — `overdue`, `dueToday`, `upcoming`,
+  `paid`, `inactive`. Inventing a success/danger/warning vocabulary means a late bill and an expired
+  document are different reds. `StatusPill` rejects unknown keys at the type level.
 - **A restore swaps the FILE; it never copies rows into the current schema.** `drizzle/0002` DROPs
   five tables, so a bundle can carry tables this build no longer has and lack tables it does. Copying
   row-by-row means a second migration path that must agree with the real one forever. Swapping the
@@ -205,7 +219,19 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 ## Recently closed (do not re-fix)
 
-### This session — Phase 8c
+### This session — Bills screens (Phase 3c)
+
+- **Bills has a UI.** See `plan/phase3-bills-ui.md` for the decisions; the summary is in
+  "What works today".
+- **`repeat` was being spent twice.** The first icon map gave `phone` the `repeat` glyph, which is
+  Subscriptions' own mark — a Globe Postpaid row and a Netflix row were indistinguishable at a
+  glance. `repeat` is now reserved for `subscription`, pinned by a test, and the categories with no
+  glyph in the set (`water`, `phone`) take the generic `tag` rather than something confidently wrong.
+- **Every bill write was discarding its `ScheduleResult`.** `src/features/bills/index.ts`'s
+  notification port was a bare pass-through, so `/reminders` kept showing counts from the last boot
+  until `syncAllReminders()` happened to run. It calls `noteScheduleResult` now.
+
+### Earlier this session — Phase 8c
 
 - **Restore built.** `inspectBundle()` reads a bundle without writing anything; `restoreBundle()`
   stages → swaps → opens → migrates → discards, in that order, so the previous database is still on
@@ -265,9 +291,13 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 - **13 lower-tier audit findings** in `plan/phase2-3-remediation.md` (Tier 4 form-layer items and the
   latent list): amount-field selection-delete clearing a committed value, pagination re-fetching from
   offset 0, no caret management, `+N more` undercounting past 24.
-- **Bills has NO UI.** Data layer, validation, SQL and notifications only — there is no
-  `src/features/bills/ui` and no `src/app/bills`. The Money tab's "Coming next" is accurate, not stale.
-  (This was mis-reported as a bug during Phase 9 and withdrawn.)
+- **A recorded payment cannot be edited from a screen.** `saveBillPaymentEdit()` and
+  `deleteBillPayment()` are wired and exported and the `anchor-row` refusal has its sentence, but a
+  ledger row on the bill detail screen is not tappable yet. The natural next slice.
+- **Bills are not on Home.** `useUpcomingBills()` exists and is exported for exactly that.
+- **`useAsyncRead` is duplicated FIVE times** (subscriptions, receipts, allowance, maintenance,
+  bills) — ~60 lines of subtle concurrency logic (generation counter, cancellation) copied per
+  feature. Worth extracting across all five at once; not worth smuggling into one of them.
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
   budgets, no rollover.
 - **Maintenance records do not exist.** `maintenance_costs`, `maintenance_services` and
@@ -319,7 +349,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 878 tests
+npm test                # node --test, 932 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
@@ -327,6 +357,9 @@ Simulator in use: `BC119EA8-0D9A-4183-80F7-5123B0EAA301` (iPhone 17 Pro).
 **Shut down at the end of this session** — `xcrun simctl boot <udid>` then `open -a Simulator` to
 bring it back. Metro was left running on 8081; `npm start` if it is gone.
 
-The app on that simulator holds real test data: an allowance, a month of expenses, and four
-maintenance items (a Vios, an aircon, a water heater, a laptop). Useful for rendering passes, and
+The app on that simulator holds real test data: an allowance, a month of expenses, four
+maintenance items (a Vios, an aircon, a water heater, a laptop), three subscriptions and three
+bills. **Meralco now carries two months of payment history** (₱4,120.75 and ₱2,980.50 against a
+₱3,500 estimate) and has rolled forward to November — added while verifying Phase 3c, and worth
+keeping: it is the only record in the database that renders a ledger. Useful for rendering passes, and
 worth knowing before you assume an empty database.
