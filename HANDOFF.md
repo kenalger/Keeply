@@ -1,7 +1,13 @@
 # Keeply — Handoff
 
-**State: Phase 8c (restore), Bills screens, and the reminders rework landed.**
-`tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **960/960**. Runs on the iOS Simulator.
+**State at `a87182c`.** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **960/960**.
+Runs on the iOS Simulator.
+
+> **Six commits are UNPUSHED** (`edda5d1..a87182c`). `git log origin/main..HEAD` to see them.
+> Nothing is half-finished — each one is green on its own — but `origin/main` is six behind.
+
+This session: restore (Phase 8c), the Bills screens (Phase 3c), the reminders rework, and a
+design pass that reached the whole app.
 
 | Phase | State |
 | --- | --- |
@@ -81,11 +87,24 @@ A private, offline-first iOS app you can actually use:
 session that began before they existed cannot call them. Start a fresh session and they are available
 by name.
 
-**2. Build maintenance records (Phase 5c). This is the one that matters most now.** The tab is called Maintenance and you cannot record any.
-Items exist; the thing you attach to them does not. `maintenance_costs`, `maintenance_services` and
-`maintenance_renewals` have tables, views and migration-level tests, but no API and no screens — so
-the detail screen honestly says "Nothing recorded against it yet" rather than stubbing a section.
-This is what turns a list of possessions into a history.
+**2. Build maintenance records (Phase 5c). The biggest hole in the product.** The tab is called
+Maintenance and you cannot record any maintenance. Items exist; the thing you attach to them does
+not. `maintenance_costs`, `maintenance_services` and `maintenance_renewals` have tables, views and
+migration-level tests, but no API and no screens — so the detail screen honestly says "Nothing
+recorded against it yet" rather than stubbing a section. This is what turns a list of possessions
+into a history, and it is the last domain where finished schema is unreachable.
+
+Note it drags **step 5e** with it: `notification_settings.entity_type` still names the old vehicle
+tables, and fixing that needs the drizzle-kit view-drop dance in Known gaps.
+
+**3. Then Documents (Phase 6), the last unbuilt record kind.** Everything around it already exists
+and points at it — the tab, the reminder settings screen, `documentReminderLeadTimes`, the expiry
+status tokens. It is the only kind whose reminder preview says "arrives in a later update".
+
+**4. Small, high-value, any time.** Each is an hour or two and each closes something that currently
+reads as broken: a ledger row on the bill detail screen is not tappable (`saveBillPaymentEdit()` is
+wired and exported); bills are absent from Home (`useUpcomingBills()` exists for exactly that); and
+`useAsyncRead` is now copied into five features and wants extracting across all five at once.
 
 **Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
 camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
@@ -244,40 +263,60 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 ## Recently closed (do not re-fix)
 
-### This session — the reminders rework
+Newest first, labelled by the commit that closed them — "this session" stopped being a useful
+label four commits ago.
 
-- **The per-kind screen shows what will actually happen.** It was a row of chips and two sentences:
-  honest but inert. It told you which intervals were selected and left you to imagine the
-  consequence. It now leads with the setting as a quantity and closes with the real next record and
-  the dates its notifications will land on. The rows are `PlannedReminder`s from
-  `planRemindersFor()` — the scheduler's own planner — because a preview doing its own date
-  arithmetic is a second implementation of the DST-safe lead-time maths, free to drift silently.
+### `a87182c` · one accent colour, and contrast that is measured
+
+- **The app has a colour.** Greyscale everywhere, plus one accent (`#175CD3` light / `#8AB4F8`
+  dark) spent only on interactive-or-selected: the primary button, a chosen chip, the active tab, a
+  focused field, the caret. Every consumer already read `theme.color.accent`, so it was three values
+  per theme and nothing else.
+- **"Measured contrast in both themes" was a claim with nothing measuring it.** Checked by hand once
+  and trusted through every palette edit since. Survivable while everything was grey — a wrong grey
+  is obvious — and not survivable with a hue, because two blues that look identical in a mockup can
+  differ by 3:1 against a card. `tests/theme-contrast.test.ts` now measures it, both directions.
+- **The palettes moved to `src/theme/palette.ts`** so `node --test` can reach them; `tokens.ts`
+  imports react-native for `Platform.select`.
+
+### `4ecb864` · the hierarchy the screens were missing
+
+- **A section title was competing with its own content.** `FormSection` rendered it at 17pt semibold
+  in the PRIMARY text colour — so every screen had two hierarchy levels where a legible one needs
+  three or four, and resolved into equally loud grey slabs with no focal point. Now a 13pt uppercase
+  tertiary eyebrow, in `ListSectionHeader` too. This was never a one-screen problem: it improved the
+  export form and the Bills list as much as it improved reminders.
+- **The reminder screen lost its hero card** — a third full-width slab holding one number, which put
+  the answer above the question. The count is one line under the chips now.
+
+### `9c4098b` · reminders show what the settings will actually do
+
+- **The per-kind screen was honest but inert.** It named the intervals and left the user to imagine
+  the consequence. It now closes with the real next record and the dates its notifications will land
+  on. The rows are `PlannedReminder`s from `planRemindersFor()` — the scheduler's own planner —
+  because a preview doing its own date arithmetic is a second implementation of the DST-safe
+  lead-time maths, free to drift silently.
 - **`subscriptionReminderEntity()` extracted** from `ui/mutations.ts`, mirroring bills'
-  `billReminderEntity()`. The preview and the scheduler must project a record the same way or the
+  `billReminderEntity()`. The preview and the scheduler must project a record the same way, or the
   preview shows reminders that will never be placed.
 - **Each kind names its own event.** One shared verb produced "Subscription due Sep 30", which is
-  not how anyone describes a renewal. `eventLead` / `eventLabel` on the kind table, pinned by tests
-  that also fix the casing rules — `beforeWhat` is always mid-sentence, `eventLead` always starts a
-  line.
+  not how anyone describes a renewal. `eventLead` / `eventLabel`, pinned by tests that also fix the
+  casing rules — `beforeWhat` is always mid-sentence, `eventLead` always starts a line.
 
-- **One screen per record kind.** `/reminders` was all three kinds on one page: fifteen chips under
-  three headings. Everything was reachable and it was still the wrong shape, because setting a
-  reminder is a decision about ONE kind of thing and the screen made you read the other two to find
-  it. It is now an overview that states all four answers plus `/reminders/[kind]`, which is
-  unambiguously about one of them. `src/features/settings/reminder-kinds.ts` is the table that
-  keeps the slugs and the setting keys in step — a wrong setting key means a screen headed "Bills"
-  silently editing document reminders.
-- **The screens now state the OUTCOME, not just the inputs.** The chips show intervals; what they
-  never showed was the delivery hour (three sections away, on the old page) or what the intervals
-  are measured from. Both are in one sentence now.
+### `86f9341` · one reminder screen per record kind
+
+- **`/reminders` was all three kinds on one page**: fifteen chips under three headings. Everything
+  was reachable and it was still the wrong shape, because setting a reminder is a decision about ONE
+  kind of thing and the screen made you read the other two to find it. Now an overview stating all
+  four answers, plus `/reminders/[kind]`. `src/features/settings/reminder-kinds.ts` keeps the slugs
+  and the setting keys in step — a wrong setting key means a screen headed "Bills" silently editing
+  document reminders.
 - **An unknown slug renders "No such reminder" rather than falling back.** A default would let
   `/reminders/nonsense` quietly edit real bill reminders under a header saying something else.
-- **A false claim removed, in two places.** "Any single bill, subscription or document can override
-  these" — it cannot. `ReminderEntity.leadTimes` exists in `notifications-plan.ts` and is tested,
-  but **no production caller ever sets it**: no form has the control. The sentence promised a
-  feature that does not exist, on the two screens where a user would go looking for it.
+- **A false claim removed, from two screens.** "Any single bill, subscription or document can
+  override these" — it cannot. See the convention above; nothing sets `ReminderEntity.leadTimes`.
 
-### Earlier this session — Bills screens (Phase 3c)
+### `18edc4e` · Bills screens (Phase 3c)
 
 - **Bills has a UI.** See `plan/phase3-bills-ui.md` for the decisions; the summary is in
   "What works today".
@@ -289,7 +328,7 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   notification port was a bare pass-through, so `/reminders` kept showing counts from the last boot
   until `syncAllReminders()` happened to run. It calls `noteScheduleResult` now.
 
-### Earlier this session — Phase 8c
+### `094c8ee` · restore from an encrypted backup (Phase 8c)
 
 - **Restore built.** `inspectBundle()` reads a bundle without writing anything; `restoreBundle()`
   stages → swaps → opens → migrates → discards, in that order, so the previous database is still on
@@ -306,7 +345,7 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 - **The handoff claimed allowances were missing from the export.** They were not — `sqlcipher_export`
   copies whole tables, and `summariseBundle` already named them. Withdrawn.
 
-### Earlier this session (`bfefae8`)
+### `bfefae8` · the session before this one
 
 - **A lost setting.** `persist()` in `src/stores/settings-store.ts` was fire-and-forget, so two quick
   writes could complete out of order and the older one win. Observed on the device: toggling two
@@ -322,7 +361,8 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 - **A form whose required field sat below the fold.** `/expenses/new` opened photo-first; the amount
   auto-focused, so the keyboard scrolled the title off the top. Amount and merchant come first.
 - **A settings screen that could not scroll.** `/reminders` omitted `Screen`'s `scroll` prop, so the
-  delivery hour was unreachable. Fixed, and the content was rebuilt as chips so it fits anyway.
+  delivery hour was unreachable. (That file has since become `src/app/reminders/index.tsx`; the
+  `scroll` prop is still what makes it reachable at an accessibility text size.)
 - **Nine Phase 4 defects** found by rendering screens that had never been looked at — listed in
   `plan/phase9-expenses-allowance.md` §13.
 
@@ -411,9 +451,9 @@ npm test                # node --test, 960 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
-Simulator in use: `BC119EA8-0D9A-4183-80F7-5123B0EAA301` (iPhone 17 Pro).
-**Shut down at the end of this session** — `xcrun simctl boot <udid>` then `open -a Simulator` to
-bring it back. Metro was left running on 8081; `npm start` if it is gone.
+Simulator: `BC119EA8-0D9A-4183-80F7-5123B0EAA301` (iPhone 17 Pro). **Shut down** at the end of this
+session — `xcrun simctl boot <udid>` then `open -a Simulator` brings it back, and the dev client is
+still installed, so no rebuild is needed. Metro was left running on 8081; `npm start` if it is gone.
 
 The app on that simulator holds real test data: an allowance, a month of expenses, four
 maintenance items (a Vios, an aircon, a water heater, a laptop), three subscriptions and three
