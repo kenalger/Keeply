@@ -1,7 +1,7 @@
 # Keeply — Handoff
 
-**State: Phase 8c (restore) and Bills screens landed.** `tsc --noEmit` 0 ·
-`eslint .` 0 errors · `npm test` **932/932**. Runs on the iOS Simulator.
+**State: Phase 8c (restore), Bills screens, and the reminders rework landed.**
+`tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **939/939**. Runs on the iOS Simulator.
 
 | Phase | State |
 | --- | --- |
@@ -44,8 +44,11 @@ A private, offline-first iOS app you can actually use:
   wrong passphrase and a tampered "newer" bundle were both refused, and a restore interrupted between
   the two renames was repaired on the next launch with every record intact. `plan/phase8-backup.md`
   §9–§10.
-- **Editable reminders.** `/reminders` sets lead times per record kind and the delivery hour, with a
-  permission banner — without it every control on that screen is theatre.
+- **Editable reminders, one kind at a time.** `/reminders` is an overview stating all four answers;
+  `/reminders/bills` (and `/subscriptions`, `/documents`) each edit exactly one kind and say what
+  the choice means — "Reminders arrive at 9:00 AM, counted back from the day a bill is due." More's
+  four reminder rows deep-link straight to their own kind. The permission banner travels with the
+  controls, because without delivery every one of them is theatre.
 - **Subscriptions** — CRUD, anchored recurrence, SQL-side normalized totals, list/detail/form screens.
 - **Bills** — CRUD, payment history, derived overdue, ledger-anchored roll-forward, **and screens**:
   list with §23 filters, add/edit, and a detail screen that settles a period. The amount is
@@ -58,10 +61,10 @@ A private, offline-first iOS app you can actually use:
 - **Design system** — fully monochrome, deliberately de-decorated, full form layer, `ThemeLayout` spacing
   rules, measured contrast in both themes.
 
-214 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+217 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore, `28-31-` Bills).
+`27-` restore, `28-31-` Bills, `32-34-` reminders).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -191,6 +194,10 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   `'underline'` (a row of labels with a rule) is for **choosing which of the same things to look at** —
   a sort order, an active/paused filter. A form field styled as tabs says "switch view" when it means
   "choose a value".
+- **Per-record reminder overrides DO NOT EXIST.** `ReminderEntity.leadTimes` is honoured by
+  `resolveLeadTimes()` and covered by `tests/notifications-plan.test.ts`, but nothing in the app
+  ever sets it — `billReminderEntity()` and its subscription twin both omit it. Do not write UI copy
+  that promises it until a form actually writes one.
 - **A bill's amount may legitimately be `null`, and `₱0.00` is never a substitute.** §7's variable
   bill is one the user cannot estimate; forcing a figure makes them invent one, and an invented
   ₱1,500 then feeds totals and reminders as though it were real. Screens render an em dash; totals
@@ -219,7 +226,26 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 ## Recently closed (do not re-fix)
 
-### This session — Bills screens (Phase 3c)
+### This session — the reminders rework
+
+- **One screen per record kind.** `/reminders` was all three kinds on one page: fifteen chips under
+  three headings. Everything was reachable and it was still the wrong shape, because setting a
+  reminder is a decision about ONE kind of thing and the screen made you read the other two to find
+  it. It is now an overview that states all four answers plus `/reminders/[kind]`, which is
+  unambiguously about one of them. `src/features/settings/reminder-kinds.ts` is the table that
+  keeps the slugs and the setting keys in step — a wrong setting key means a screen headed "Bills"
+  silently editing document reminders.
+- **The screens now state the OUTCOME, not just the inputs.** The chips show intervals; what they
+  never showed was the delivery hour (three sections away, on the old page) or what the intervals
+  are measured from. Both are in one sentence now.
+- **An unknown slug renders "No such reminder" rather than falling back.** A default would let
+  `/reminders/nonsense` quietly edit real bill reminders under a header saying something else.
+- **A false claim removed, in two places.** "Any single bill, subscription or document can override
+  these" — it cannot. `ReminderEntity.leadTimes` exists in `notifications-plan.ts` and is tested,
+  but **no production caller ever sets it**: no form has the control. The sentence promised a
+  feature that does not exist, on the two screens where a user would go looking for it.
+
+### Earlier this session — Bills screens (Phase 3c)
 
 - **Bills has a UI.** See `plan/phase3-bills-ui.md` for the decisions; the summary is in
   "What works today".
@@ -349,7 +375,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 932 tests
+npm test                # node --test, 939 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 

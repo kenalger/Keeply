@@ -18,6 +18,7 @@ import {
   type GroupPosition,
   type IconName,
 } from '@/components/ui';
+import type { ReminderKindSlug } from '@/features/settings';
 import { isDev } from '@/lib/env';
 import { log } from '@/lib/log';
 import {
@@ -165,6 +166,7 @@ interface MoreRowInput {
   readonly sampleDashboard: SampleDashboardMode;
   readonly cycleSampleDashboard: () => void;
   readonly openReminders: () => void;
+  readonly openReminderKind: (slug: ReminderKindSlug) => void;
   readonly openExport: () => void;
   readonly openRestore: () => void;
   readonly openDesignSystem: () => void;
@@ -200,7 +202,10 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
         title: 'Bill reminders',
         subtitle: describeReminderLeadTimes(input.reminders.billReminderLeadTimes),
         state: { kind: 'none' },
-        onPress: input.openReminders,
+        // Straight to the one kind, not to the reminders index. Each of these
+        // rows already names a kind and states its answer; landing on a page
+        // that says the same four things again is a tap that changed nothing.
+        onPress: () => input.openReminderKind('bills'),
       },
       {
         key: 'subs',
@@ -208,7 +213,7 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
         title: 'Subscription renewals',
         subtitle: describeReminderLeadTimes(input.reminders.subscriptionReminderLeadTimes),
         state: { kind: 'none' },
-        onPress: input.openReminders,
+        onPress: () => input.openReminderKind('subscriptions'),
       },
       {
         key: 'docs',
@@ -216,7 +221,7 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
         title: 'Document expiry',
         subtitle: describeReminderLeadTimes(input.reminders.documentReminderLeadTimes),
         state: { kind: 'none' },
-        onPress: input.openReminders,
+        onPress: () => input.openReminderKind('documents'),
       },
       {
         key: 'hour',
@@ -224,10 +229,17 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
         title: 'Delivered at',
         subtitle: 'Local time, scheduled on this device',
         state: { kind: 'text', label: formatReminderHour(input.reminders.reminderHour) },
+        // The hour is not a per-kind setting, so it goes to the index, which
+        // is where it lives.
         onPress: input.openReminders,
       },
     ],
-    'Any single record can override these.',
+    // WAS: "Any single record can override these." It could not. The
+    // mechanism exists in `notifications-plan.ts` (`ReminderEntity.leadTimes`)
+    // and is tested, but nothing in the app ever sets it — no form has the
+    // control — so the sentence promised a feature that does not exist, on the
+    // screen where a user would go looking for it.
+    'These apply to every record of their kind.',
   );
 
   pushSection(rows, 'Security', [
@@ -357,6 +369,11 @@ export default function MoreScreen() {
   }, [preference, setThemePreference]);
 
   const openReminders = useCallback(() => router.push('/reminders'), [router]);
+  const openReminderKind = useCallback(
+    (kind: ReminderKindSlug) =>
+      router.push({ pathname: '/reminders/[kind]', params: { kind } }),
+    [router],
+  );
   const openExport = useCallback(() => router.push('/backup/export'), [router]);
   const openRestore = useCallback(() => router.push('/backup/restore'), [router]);
   const openDesignSystem = useCallback(() => router.push('/ui-preview'), [router]);
@@ -385,6 +402,7 @@ export default function MoreScreen() {
     () =>
       buildMoreRows({
         openReminders,
+        openReminderKind,
         openExport,
         openRestore,
         themePreference: preference,

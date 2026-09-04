@@ -156,3 +156,6 @@ export type {
   SettingValueType,
   StoredSetting,
 } from './types';
+
+export { REMINDER_KINDS, reminderKindFor } from './reminder-kinds';
+export type { ReminderKind, ReminderKindSlug } from './reminder-kinds';
