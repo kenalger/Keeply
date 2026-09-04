@@ -95,6 +95,22 @@ const makeStyles = (t: Theme) =>
     },
 
     /* FormSection */
+    /**
+     * The section eyebrow, not a heading.
+     *
+     * It was `subheading` — 17pt, semibold, in the primary text colour, which
+     * is the same weight and colour as the content underneath it. That left
+     * the screen with two hierarchy levels (the 28pt page title, and
+     * everything else at full strength) when a legible one needs three or
+     * four, and the result reads as a stack of equally loud slabs with no
+     * focal point.
+     *
+     * 13pt uppercase with tracking, in `textTertiary`, is the grouped-list
+     * convention on this platform for a reason: a section label is a
+     * signpost, not content. Pushing it down a level is what lets the content
+     * above it be the loudest thing on the screen.
+     */
+    sectionTitle: { textTransform: 'uppercase' },
     /* The gap belongs ABOVE the block, never below — see `ThemeLayout`. */
     section: { marginTop: t.layout.section },
     sectionHeader: { marginBottom: t.layout.heading },
@@ -296,7 +312,11 @@ export function FormSection({
       {title === undefined && description === undefined ? null : (
         <View style={styles.sectionHeader}>
           {title === undefined ? null : (
-            <Text variant="subheading" accessibilityRole="header">
+            <Text
+              variant="label"
+              color="textTertiary"
+              accessibilityRole="header"
+              style={styles.sectionTitle}>
               {title}
             </Text>
           )}

@@ -64,10 +64,10 @@ A private, offline-first iOS app you can actually use:
 - **Design system** — fully monochrome, deliberately de-decorated, full form layer, `ThemeLayout` spacing
   rules, measured contrast in both themes.
 
-219 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+221 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore, `28-31-` Bills, `32-36-` reminders).
+`27-` restore, `28-31-` Bills, `32-38-` reminders).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -215,6 +215,12 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 - **Status colours come from the tokens that already exist** — `overdue`, `dueToday`, `upcoming`,
   `paid`, `inactive`. Inventing a success/danger/warning vocabulary means a late bill and an expired
   document are different reds. `StatusPill` rejects unknown keys at the type level.
+- **A section title is an EYEBROW, not a heading.** `FormSection` rendered its title as
+  `subheading` — 17pt semibold in the primary text colour, the same weight and colour as the
+  content beneath it. That left two hierarchy levels (the 28pt page title, and everything else at
+  full strength) where a legible screen needs three or four, and every screen read as a stack of
+  equally loud slabs with no focal point. It is now 13pt uppercase tracked in `textTertiary`. The
+  rule: a signpost must be quieter than what it points at.
 - **A restore swaps the FILE; it never copies rows into the current schema.** `drizzle/0002` DROPs
   five tables, so a bundle can carry tables this build no longer has and lack tables it does. Copying
   row-by-row means a second migration path that must agree with the real one forever. Swapping the

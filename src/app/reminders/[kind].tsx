@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 
 import { ReminderPermissionBanner } from '@/components/reminder-permission-banner';
 import { ReminderSchedulePreview } from '@/components/reminder-schedule-preview';
@@ -160,32 +160,12 @@ export default function ReminderKindScreen() {
 
       <ReminderPermissionBanner />
 
-      {/* 1. THE ANSWER. The setting stated as a quantity, before the controls
-          that produce it — the same reason the allowance card leads with the
-          number rather than with the budget that made it. */}
-      <View style={styles.hero}>
-        <Card>
-          <View style={styles.heroLine}>
-            <Text variant="amountLg">{off ? 'Off' : String(selected.length)}</Text>
-            <Text variant="body" color="textSecondary" style={styles.heroUnit}>
-              {off
-                ? `no reminders before ${kind.beforeWhat}`
-                : `${selected.length === 1 ? 'reminder' : 'reminders'} before ${
-                    kind.beforeWhat
-                  }`}
-            </Text>
-          </View>
-          {off ? null : (
-            <Text variant="caption" color="textSecondary" style={styles.heroFoot}>
-              {`Each arrives at ${formatReminderHour(
-                reminderHour,
-              )}, counted back from the day ${kind.beforeWhat}.`}
-            </Text>
-          )}
-        </Card>
-      </View>
-
-      {/* 2. THE CONTROL. */}
+      {/* THE CONTROL, and directly beneath it the answer it produces.
+          The count used to sit in a card of its own above the chips. It was a
+          third full-width slab holding one number and one sentence, and it put
+          the answer ABOVE the question — so the screen opened with a figure
+          before anything explained what produced it. It belongs here, against
+          the control, where it reads as that control's current value. */}
       <FormSection title="Remind me">
         <ChipField<ReminderLeadTime>
           label={kind.title}
@@ -195,6 +175,13 @@ export default function ReminderKindScreen() {
           options={LEAD_TIME_CHIPS}
           testID={kind.settingKey}
         />
+        <Text variant="body" color={off ? 'textSecondary' : 'text'}>
+          {off
+            ? `Off — nothing before ${kind.beforeWhat}.`
+            : `${selected.length} ${
+                selected.length === 1 ? 'reminder' : 'reminders'
+              }, each at ${formatReminderHour(reminderHour)}.`}
+        </Text>
       </FormSection>
 
       {/* 3. THE PROOF. */}
@@ -309,10 +296,5 @@ const LEAD_TIME_CHIPS: readonly ChipOption<ReminderLeadTime>[] = REMINDER_LEAD_T
 
 const makeStyles = (t: Theme) =>
   StyleSheet.create({
-    // A block owns the gap above itself, never below.
-    hero: { marginTop: t.layout.section },
-    heroLine: { flexDirection: 'row', alignItems: 'baseline', gap: t.space.sm },
-    heroUnit: { flex: 1 },
-    heroFoot: { marginTop: t.space.sm },
     footnote: { marginTop: t.layout.section },
   });

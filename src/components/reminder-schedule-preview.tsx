@@ -66,16 +66,20 @@ export function ReminderSchedulePreview({
 
   return (
     <View style={styles.wrap} testID={testID}>
-      <Text variant="bodyStrong">{subject}</Text>
+      {/* The record's name is the loudest thing in the card: it is what makes
+          the preview recognisable as the user's own data rather than an
+          illustration. */}
+      <Text variant="subheading">{subject}</Text>
       <Text variant="caption" color="textSecondary">
         {`${eventLead} ${formatDateShort(eventDateISO)}`}
       </Text>
 
       <View style={styles.rail}>
-        {reminders.map((reminder) => (
+        {reminders.map((reminder, index) => (
           <RailRow
             key={reminder.identifier}
             dot="open"
+            first={index === 0}
             primary={`${formatDateCompact(reminder.fireDateISO)}, ${formatReminderHour(
               reminder.fireAt.getHours(),
             )}`}
@@ -104,31 +108,35 @@ export function ReminderSchedulePreview({
 /**
  * One stop on the rail.
  *
- * The connector is drawn as a segment ABOVE each dot rather than below it, so
- * the line never overshoots the last row — the same "a block owns the gap
- * above itself" rule the layout uses, applied to a stroke.
+ * The connector is a segment ABOVE each dot rather than below it, so the line
+ * never overshoots the last row — the layout's "a block owns the gap above
+ * itself" rule, applied to a stroke. The FIRST row is the exception and has to
+ * be: with a leading segment it rendered as a thread hanging off the top of
+ * the rail, attached to nothing.
  */
 function RailRow({
   dot,
   primary,
   secondary,
+  first = false,
   last = false,
 }: {
   dot: 'open' | 'event';
   primary: string;
   secondary: string;
+  first?: boolean;
   last?: boolean;
 }) {
   const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.row}>
       <View style={styles.gutter}>
-        <View style={styles.connector} />
+        <View style={first ? styles.connectorNone : styles.connector} />
         <View style={dot === 'event' ? styles.dotEvent : styles.dotOpen} />
         {last ? null : <View style={styles.connectorAfter} />}
       </View>
       <View style={last ? [styles.rowText, styles.rowTextLast] : styles.rowText}>
-        <Text variant="body">{primary}</Text>
+        <Text variant="bodyStrong">{primary}</Text>
         <Text variant="caption" color="textSecondary">
           {secondary}
         </Text>
@@ -143,26 +151,36 @@ function leadLabel(leadDays: number): string {
   return leadDays === 1 ? '1 day before' : `${leadDays} days before`;
 }
 
-const DOT = 9;
-const GUTTER = 24;
+const DOT = 10;
+const GUTTER = 28;
 
 const makeStyles = (t: Theme) =>
   StyleSheet.create({
     wrap: { gap: 2 },
     // A block owns the gap above itself, never below.
-    rail: { marginTop: t.space.md },
+    rail: { marginTop: t.space.lg },
     row: { flexDirection: 'row', alignItems: 'stretch' },
     gutter: { width: GUTTER, alignItems: 'center' },
     // The stub above the first dot is deliberate: it makes every row identical,
     // and the rail reads as continuing up into the record's name rather than
     // starting in mid-air.
-    connector: { width: t.hairline * 2, flexGrow: 0, height: t.space.sm, backgroundColor: t.color.border },
-    connectorAfter: { width: t.hairline * 2, flex: 1, backgroundColor: t.color.border },
+    // `borderStrong`, not `border`. At `border` the rail was a grey thread on
+    // a grey card — technically present, invisible in use, and a timeline
+    // whose line cannot be seen is a list of dates with wasted indent.
+    connector: {
+      width: 2,
+      flexGrow: 0,
+      height: t.space.sm,
+      backgroundColor: t.color.borderStrong,
+    },
+    connectorAfter: { width: 2, flex: 1, backgroundColor: t.color.borderStrong },
+    /** The first dot starts the rail; there is nothing above it to join. */
+    connectorNone: { height: 0 },
     dotOpen: {
       width: DOT,
       height: DOT,
       borderRadius: DOT / 2,
-      borderWidth: t.hairline * 2,
+      borderWidth: 2,
       borderColor: t.color.text,
       backgroundColor: t.color.surface,
     },
