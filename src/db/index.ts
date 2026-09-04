@@ -30,18 +30,39 @@
  */
 import {
   closeDatabase as closeConnection,
+  discardStagedCopy,
   getDb as getDrizzle,
   isDatabaseOpen,
   openDatabase,
+  rollBackStagedCopy,
+  stageEncryptedCopy,
+  swapInStagedCopy,
   type KeeplyDatabase,
 } from './client';
-import { DatabaseInitError, DatabaseKeyUnavailableError } from './errors';
+import {
+  DatabaseInitError,
+  DatabaseKeyUnavailableError,
+  RestoreFailedError,
+} from './errors';
 import { logFailure, logOperation } from './log';
 import { runMigrations } from './migrate';
 
-export { DatabaseInitError, DatabaseKeyUnavailableError } from './errors';
+export { shippedSchemaVersions } from './migrate';
+
+export {
+  BackupUnreadableError,
+  DatabaseInitError,
+  DatabaseKeyUnavailableError,
+  RestoreFailedError,
+} from './errors';
 export { newId } from './ids';
-export { eraseLocalDatabase, exportEncryptedCopy, withTransaction } from './client';
+export {
+  eraseLocalDatabase,
+  exportEncryptedCopy,
+  inspectEncryptedCopy,
+  withTransaction,
+} from './client';
+export type { BundleTableRows, EncryptedCopyReport } from './client';
 export { nowMs } from './time';
 
 /**
@@ -145,4 +166,105 @@ export async function closeDatabase(): Promise<void> {
 /** Whether `initDatabase()` has completed and the connection is still open. */
 export function isDatabaseReady(): boolean {
   return initialized && isDatabaseOpen();
+}
+
+/**
+ * Replace this device's database with the contents of an encrypted bundle
+ * (§20, Phase 8c).
+ *
+ * ── THE ORDER IS THE SAFETY ────────────────────────────────────────────────
+ *
+ *   1. stage    write a copy of the bundle, re-keyed to this device.
+ *   2. swap     close, move the live file aside, move the copy in.
+ *   3. open     prove the new file opens and its key unlocks it.
+ *   4. migrate  bring an older bundle's schema forward, with the real SQL.
+ *   5. discard  only now delete the file the user had before.
+ *
+ * Everything expensive and everything likely to fail happens in step 1, where
+ * failing costs nothing. Steps 3 and 4 are the proof that the restore worked;
+ * until they have both returned, the previous database is still on disk and a
+ * failure puts it back. Step 5 is the point of no return, and it is last.
+ *
+ * ── WHY MIGRATIONS RUN AFTER, NOT BEFORE ───────────────────────────────────
+ * The bundle may have been written by an older build. Rather than translate
+ * its rows into today's schema by hand — a second migration path that would
+ * have to agree with the real one forever — the restored file is brought
+ * forward by the same `drizzle/*.sql` that brought this device forward. See
+ * the long comment above `inspectEncryptedCopy()` in `client.ts`.
+ *
+ * The caller must have checked compatibility first (`judgeBundle()` in
+ * `@/features/backup`): a bundle from a NEWER build has no migration to run
+ * and must be refused before any of this starts.
+ *
+ * @param sourcePath absolute filesystem path to the bundle (no `file://`).
+ * @throws {BackupUnreadableError} wrong passphrase, or not a Keeply backup.
+ *         Nothing was touched.
+ * @throws {RestoreFailedError} the restore did not complete. `rolledBack`
+ *         says whether the previous database is back — the caller must tell
+ *         the user which, because "it failed" alone is the most frightening
+ *         thing this app could say.
+ */
+export async function restoreFromEncryptedCopy(
+  sourcePath: string,
+  passphrase: string,
+): Promise<void> {
+  // Step 1. A failure here throws BackupUnreadableError or DatabaseInitError
+  // and has changed nothing on disk, so it is not a RestoreFailedError.
+  await stageEncryptedCopy(sourcePath, passphrase);
+
+  // Step 2. From here on there is something to undo.
+  try {
+    await swapInStagedCopy();
+  } catch (error) {
+    logFailure('db.import.failed', error);
+    // `swapInStagedCopy` already put the previous file back; the connection is
+    // closed either way, so reopen it before reporting.
+    await reopenAfterFailedRestore();
+    throw new RestoreFailedError(
+      'The restore could not start. Your data is unchanged.',
+      true,
+      { cause: error },
+    );
+  }
+
+  initialized = false;
+  initPromise = null;
+
+  // Steps 3 and 4.
+  try {
+    await initDatabase();
+  } catch (error) {
+    logFailure('db.import.failed', error);
+    await rollBackStagedCopy();
+    const recovered = await reopenAfterFailedRestore();
+    throw new RestoreFailedError(
+      recovered
+        ? 'The backup could not be opened on this device. Your data has been put back and nothing was lost.'
+        : 'The backup could not be opened, and Keeply could not reopen your previous data either. Close and reopen the app.',
+      recovered,
+      { cause: error },
+    );
+  }
+
+  // Step 5.
+  await discardStagedCopy();
+}
+
+/**
+ * Reopen after a restore went wrong, reporting whether it worked.
+ *
+ * Never throws: it is called from a `catch` whose job is to report the
+ * original failure, and an exception here would replace that report with a
+ * less informative one.
+ */
+async function reopenAfterFailedRestore(): Promise<boolean> {
+  initialized = false;
+  initPromise = null;
+  try {
+    await initDatabase();
+    return true;
+  } catch (error) {
+    logFailure('db.init.failed', error);
+    return false;
+  }
 }

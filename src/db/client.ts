@@ -51,10 +51,15 @@
  * `selfCheck()` (`./selfcheck.ts`) proves the bridge on every dev boot.
  */
 import type { DB, Scalar } from '@op-engineering/op-sqlite';
+import { getTableName, is, Table } from 'drizzle-orm';
 import { drizzle, type OPSQLiteDatabase } from 'drizzle-orm/op-sqlite';
 import { Directory, File } from 'expo-file-system';
 import { Platform } from 'react-native';
-import { DatabaseInitError, DatabaseKeyUnavailableError } from './errors';
+import {
+  BackupUnreadableError,
+  DatabaseInitError,
+  DatabaseKeyUnavailableError,
+} from './errors';
 import { deleteDatabaseKey, resolveDatabaseKey } from './key';
 import { logFailure, logOperation } from './log';
 import * as schema from './schema';
@@ -64,6 +69,13 @@ const DATABASE_NAME = 'keeply.db';
 
 /** Our own folder inside the platform's private, non-user-facing storage. */
 const DATABASE_DIRECTORY = 'Keeply';
+
+/**
+ * drizzle's own bookkeeping table. Declared here rather than in `migrate.ts`
+ * because a bundle carries one too, and `inspectEncryptedCopy()` reads it to
+ * work out which version of Keeply wrote the file. One spelling, two readers.
+ */
+export const MIGRATIONS_TABLE = '__drizzle_migrations';
 
 /**
  * The drizzle instance every repository codes against.
@@ -292,6 +304,12 @@ export async function openDatabase(): Promise<void> {
   assertSQLCipher(op);
 
   const directory = resolveDatabaseDirectory(op);
+
+  // Before anything looks at the file: put back a database that a restore
+  // moved aside and was killed before replacing. This must run ahead of
+  // `databaseFileExists()` below, or an interrupted restore reads as "no
+  // database yet" and mints a fresh key over the user's data.
+  recoverInterruptedRestore(directory.uri);
 
   // op-sqlite creates every missing directory along `location` itself
   // (cpp/OPBridge.cpp:66-83, `std::filesystem::create_directories`), so there
@@ -654,4 +672,444 @@ export async function exportEncryptedCopy(
   }
 
   logOperation('db.export.done');
+}
+
+// ---------------------------------------------------------------------------
+// Encrypted import / restore (§20, Phase 8c)
+// ---------------------------------------------------------------------------
+
+/**
+ * ── HOW A RESTORE WORKS, AND WHY IT IS A FILE SWAP ─────────────────────────
+ *
+ * A bundle is a whole SQLCipher database (see `exportEncryptedCopy`), so the
+ * restore is its mirror image: open the bundle under the user's passphrase,
+ * `sqlcipher_export()` it into a staging file keyed with THIS DEVICE's key,
+ * then move that file into place and reopen.
+ *
+ * The obvious alternative — `DELETE FROM` every table and
+ * `INSERT … SELECT` the bundle's rows across an ATTACH — is one transaction
+ * and looks safer. It is not, and the reason is in `drizzle/0002`:
+ *
+ *     DROP TABLE `vehicles`;   DROP TABLE `vehicle_expenses`;   …
+ *
+ * Schemas do not only gain columns. A bundle written by an older build can
+ * carry tables this build has deleted, columns that were renamed, and none of
+ * the tables added since. Copying it row-by-row into the CURRENT schema means
+ * hand-writing, forever, a second migration path that has to agree with the
+ * real one — and every disagreement is silent data loss at the exact moment
+ * the user is relying on us most.
+ *
+ * Swapping the file means the restored database is the bundle, byte for byte,
+ * and `runMigrations()` then brings it forward using the same SQL that brought
+ * this device forward. Old rows are dropped by the migration that dropped
+ * them here. There is one migration path, and it is the tested one.
+ *
+ * ── THE WINDOW ─────────────────────────────────────────────────────────────
+ * The swap is two renames, and a process death between them would leave no
+ * `keeply.db`. `recoverInterruptedRestore()` runs at the top of
+ * `openDatabase()` and puts the previous file back, so the worst case is the
+ * restore did not happen — never that the database is gone.
+ *
+ * ── THE PREVIOUS DATABASE IS KEPT UNTIL THE NEW ONE OPENS ──────────────────
+ * `keeply.previous.db` is deleted only after the restored file has opened,
+ * unlocked and migrated. Until then a failure can be rolled back.
+ */
+
+/** The alias a bundle is attached under while being staged. */
+const RESTORE_ALIAS = 'keeply_restore';
+
+/** The re-keyed copy, before it becomes `keeply.db`. */
+const STAGING_NAME = 'keeply.restoring.db';
+
+/** What `keeply.db` is renamed to during the swap. Deleted once the new one opens. */
+const PREVIOUS_NAME = 'keeply.previous.db';
+
+/** SQLite's journal sidecars. Stale ones against a swapped file are corruption. */
+const SIDECAR_SUFFIXES = ['-wal', '-shm'] as const;
+
+/** One table in a bundle, and how many live rows it holds. */
+export interface BundleTableRows {
+  readonly name: string;
+  readonly rows: number;
+}
+
+/** Everything readable from a bundle without writing anything. */
+export interface EncryptedCopyReport {
+  /** `__drizzle_migrations` as the bundle carries it. Empty if it has none. */
+  readonly migrations: readonly { readonly hash: string; readonly createdAt: number }[];
+  /** Live-row counts keyed by BASE TABLE NAME, for tables this build also has. */
+  readonly liveRows: Readonly<Record<string, number>>;
+  /** Of live `receipts`, how many name an image file the bundle does not carry. */
+  readonly receiptsWithImage: number;
+  /** Tables the bundle has that this build's schema does not — `0002`'s vehicles. */
+  readonly retiredTables: readonly BundleTableRows[];
+}
+
+/**
+ * Base table names in THIS build's schema, from the drizzle objects rather
+ * than a hand-kept list — a hand-kept list is one that goes stale on the
+ * migration nobody remembered to update it for.
+ */
+function currentTableNames(): ReadonlySet<string> {
+  const names = new Set<string>();
+  for (const value of Object.values(schema)) {
+    if (is(value, Table)) names.add(getTableName(value));
+  }
+  return names;
+}
+
+/**
+ * A table name safe to interpolate into SQL.
+ *
+ * Table names here come out of the `sqlite_master` of a file the user chose,
+ * and SQLite has no parameter binding for identifiers. Rather than escape,
+ * refuse: a real Keeply table is `[a-z_]`, and anything that is not is not
+ * worth counting.
+ */
+const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Open a bundle as its own connection.
+ *
+ * NOT `ATTACH … KEY ?` on the live connection, which is how the export writes
+ * one. `ATTACH` binds the passphrase as a parameter, and op-sqlite echoes
+ * bound parameters into its error messages — the leak `exportEncryptedCopy()`
+ * has to drop a `cause` to contain. `open()` takes the key as a field of an
+ * options object, so on this path the passphrase is never a query parameter
+ * and never reachable through an error at all.
+ *
+ * @throws {BackupUnreadableError} wrong passphrase, or not a database. The two
+ *         are indistinguishable; see the error's own comment.
+ */
+function openBundle(op: OpSqliteModule, sourcePath: string, passphrase: string): DB {
+  const separator = sourcePath.lastIndexOf('/');
+  if (separator <= 0) {
+    throw new BackupUnreadableError();
+  }
+  const location = sourcePath.slice(0, separator);
+  const name = sourcePath.slice(separator + 1);
+
+  let bundle: DB;
+  try {
+    bundle = op.open({ name, location, encryptionKey: passphrase });
+  } catch {
+    logFailure('db.import.failed', new Error('open'));
+    throw new BackupUnreadableError();
+  }
+
+  // SQLCipher does not check the key at open time — `sqlite3_key()` only
+  // stores it. The first statement that must read a page is what fails. Same
+  // probe, and same reason, as `assertKeyUnlocksDatabase()`.
+  try {
+    bundle.executeSync('SELECT count(*) FROM sqlite_master');
+  } catch {
+    closeQuietly(bundle);
+    logFailure('db.import.failed', new Error('unlock'));
+    throw new BackupUnreadableError();
+  }
+
+  logOperation('db.import.open');
+  return bundle;
+}
+
+/** Every base table in an opened database, `sqlite_%` internals excluded. */
+function bundleTableNames(bundle: DB): string[] {
+  const result = bundle.executeSync(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+  );
+  return ((result.rows ?? []) as { name?: unknown }[])
+    .map((row) => String(row.name ?? ''))
+    .filter((name) => PLAIN_IDENTIFIER.test(name));
+}
+
+/** `SELECT count(*)`, returning 0 for anything unreadable rather than throwing. */
+function countRows(bundle: DB, sql: string): number {
+  try {
+    const result = bundle.executeSync(sql);
+    const row = (result.rows ?? [])[0] as { n?: unknown } | undefined;
+    const value = Number(row?.n);
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    // A table without `deleted_at`, or one this build cannot read. A summary
+    // that refuses to render because one count failed helps nobody.
+    return 0;
+  }
+}
+
+/**
+ * Open a bundle, read what is in it, close it. Writes nothing.
+ *
+ * This is the whole of the "are you sure?" screen's evidence: what the file
+ * is, what version of Keeply wrote it, and how many of each record it holds.
+ *
+ * @param sourcePath absolute filesystem path (no `file://` scheme).
+ * @throws {BackupUnreadableError} the passphrase is wrong or it is not a
+ *         SQLCipher database.
+ */
+export async function inspectEncryptedCopy(
+  sourcePath: string,
+  passphrase: string,
+): Promise<EncryptedCopyReport> {
+  const op = await loadOpSqlite();
+  assertSQLCipher(op);
+
+  const bundle = openBundle(op, sourcePath, passphrase);
+
+  try {
+    const present = new Set(bundleTableNames(bundle));
+    const known = currentTableNames();
+
+    const migrations: { hash: string; createdAt: number }[] = [];
+    if (present.has(MIGRATIONS_TABLE)) {
+      const result = bundle.executeSync(
+        `SELECT hash, created_at FROM \`${MIGRATIONS_TABLE}\` ORDER BY created_at`,
+      );
+      for (const row of (result.rows ?? []) as { hash?: unknown; created_at?: unknown }[]) {
+        const createdAt = Number(row.created_at);
+        if (Number.isFinite(createdAt)) {
+          migrations.push({ hash: String(row.hash ?? ''), createdAt });
+        }
+      }
+    }
+
+    const liveRows: Record<string, number> = {};
+    for (const name of known) {
+      if (!present.has(name)) continue; // Predates the feature. Legitimately none.
+      liveRows[name] = countRows(bundle, `SELECT count(*) AS n FROM "${name}" WHERE deleted_at IS NULL`);
+    }
+
+    const receiptsWithImage = present.has('receipts')
+      ? countRows(
+          bundle,
+          'SELECT count(*) AS n FROM "receipts" WHERE deleted_at IS NULL AND local_image_uri IS NOT NULL',
+        )
+      : 0;
+
+    const retiredTables: BundleTableRows[] = [];
+    for (const name of present) {
+      if (known.has(name) || name === MIGRATIONS_TABLE) continue;
+      const rows = countRows(bundle, `SELECT count(*) AS n FROM "${name}" WHERE deleted_at IS NULL`);
+      if (rows > 0) retiredTables.push({ name, rows });
+    }
+
+    logOperation('db.import.inspect');
+    return { migrations, liveRows, receiptsWithImage, retiredTables };
+  } finally {
+    closeQuietly(bundle);
+  }
+}
+
+/**
+ * Write a copy of the bundle, re-keyed to this device, next to the live
+ * database. Nothing is replaced yet.
+ *
+ * This is the expensive half and the half that can fail on its own terms (a
+ * full disk, an unreadable page). Doing it BEFORE anything is moved means a
+ * failure here leaves the device exactly as it was, with nothing to undo.
+ *
+ * @throws {BackupUnreadableError} the bundle would not open.
+ * @throws {DatabaseKeyUnavailableError} this device's key is unreachable.
+ * @throws {DatabaseInitError} the copy could not be written.
+ */
+export async function stageEncryptedCopy(
+  sourcePath: string,
+  passphrase: string,
+): Promise<void> {
+  const op = await loadOpSqlite();
+  assertSQLCipher(op);
+
+  const directory = resolveDatabaseDirectory(op);
+
+  // A staging file from an abandoned attempt would make ATTACH open THAT and
+  // fail to export into it — the same trap `exportBundle()` clears before it
+  // writes.
+  removeDatabaseFiles(directory.uri, STAGING_NAME);
+
+  // The live file's key, from the Keychain. Not held beyond this function, and
+  // for the same reason `openDatabase()` does not hold it.
+  const encryptionKey = await resolveDatabaseKey(databaseFileExists(directory.uri));
+
+  const bundle = openBundle(op, sourcePath, passphrase);
+  let attached = false;
+
+  try {
+    // The bound parameters here are the staging path and THIS DEVICE'S KEY.
+    // op-sqlite echoes both into any error it raises, which is why every catch
+    // below throws a fresh error and never attaches a cause. Same rule as
+    // `exportEncryptedCopy()`, same reason, different secret.
+    await bundle.execute(`ATTACH DATABASE ? AS ${RESTORE_ALIAS} KEY ?`, [
+      `${directory.path}/${STAGING_NAME}`,
+      encryptionKey,
+    ]);
+    attached = true;
+    // One-argument form: the source is this connection's `main`, which IS the
+    // bundle. The reverse of the export, which runs on the live connection.
+    await bundle.execute(`SELECT sqlcipher_export('${RESTORE_ALIAS}')`);
+  } catch {
+    logFailure('db.import.failed', new Error('stage'));
+    removeDatabaseFiles(directory.uri, STAGING_NAME);
+    throw new DatabaseInitError('The backup could not be prepared for restoring');
+  } finally {
+    if (attached) {
+      try {
+        await bundle.execute(`DETACH DATABASE ${RESTORE_ALIAS}`);
+      } catch {
+        logFailure('db.import.failed', new Error('detach'));
+      }
+    }
+    closeQuietly(bundle);
+  }
+
+  const staged = new File(directory.uri, STAGING_NAME);
+  if (!staged.exists || staged.size === 0) {
+    removeDatabaseFiles(directory.uri, STAGING_NAME);
+    throw new DatabaseInitError('The backup could not be prepared for restoring');
+  }
+
+  logOperation('db.import.stage');
+}
+
+/**
+ * Close the connection and move the staged copy into place, keeping the
+ * previous database until the caller has proved the new one opens.
+ *
+ * @throws {DatabaseInitError} if there is nothing staged, or a move failed. In
+ *         both cases the previous database is still the one at `keeply.db`.
+ */
+export async function swapInStagedCopy(): Promise<void> {
+  const op = await loadOpSqlite();
+  const directory = resolveDatabaseDirectory(op);
+
+  const staged = new File(directory.uri, STAGING_NAME);
+  if (!staged.exists) {
+    throw new DatabaseInitError('There is no prepared backup to restore');
+  }
+
+  await closeDatabase();
+
+  // Both files' sidecars. A `-wal` belonging to the outgoing database, left
+  // beside the incoming one, is corruption with a plausible-looking name.
+  for (const suffix of SIDECAR_SUFFIXES) {
+    deleteQuietly(directory.uri, `${DATABASE_NAME}${suffix}`);
+    deleteQuietly(directory.uri, `${STAGING_NAME}${suffix}`);
+  }
+  removeDatabaseFiles(directory.uri, PREVIOUS_NAME);
+
+  const live = new File(directory.uri, DATABASE_NAME);
+  try {
+    if (live.exists) live.moveSync(new File(directory.uri, PREVIOUS_NAME), { overwrite: true });
+    staged.moveSync(new File(directory.uri, DATABASE_NAME), { overwrite: true });
+  } catch (error) {
+    logFailure('db.import.failed', error);
+    // Whichever move succeeded, put it back. `recoverInterruptedRestore()`
+    // handles the case where this line is never reached.
+    restorePreviousDatabase(directory.uri);
+    throw new DatabaseInitError('The backup could not be moved into place');
+  }
+
+  logOperation('db.import.swap');
+}
+
+/**
+ * Put the previous database back. Safe to call when there is nothing to undo.
+ *
+ * Synchronous on purpose: it runs from a `catch` and from
+ * `recoverInterruptedRestore()`, and both want it finished before the next
+ * line, not scheduled.
+ */
+export async function rollBackStagedCopy(): Promise<void> {
+  const op = await loadOpSqlite();
+  restorePreviousDatabase(resolveDatabaseDirectory(op).uri);
+}
+
+/** The rollback itself. Synchronous, so a `catch` can finish it inline. */
+function restorePreviousDatabase(directoryUri: string): void {
+  const directory = { uri: directoryUri };
+  const previous = new File(directory.uri, PREVIOUS_NAME);
+  if (!previous.exists) return;
+
+  try {
+    // The half-restored file, if the swap got that far. It is a copy of the
+    // bundle and the bundle still exists; the previous database does not.
+    deleteQuietly(directory.uri, DATABASE_NAME);
+    for (const suffix of SIDECAR_SUFFIXES) {
+      deleteQuietly(directory.uri, `${DATABASE_NAME}${suffix}`);
+    }
+    previous.moveSync(new File(directory.uri, DATABASE_NAME), { overwrite: true });
+    logOperation('db.import.rollback');
+  } catch (error) {
+    logFailure('db.import.failed', error);
+  }
+}
+
+/**
+ * Delete the previous database and any staging leftovers.
+ *
+ * Called only once the restored database has opened, unlocked and migrated —
+ * that is the point of no return, and it is deliberately after the last thing
+ * that could fail rather than before it.
+ */
+export async function discardStagedCopy(): Promise<void> {
+  const op = await loadOpSqlite();
+  const directory = resolveDatabaseDirectory(op);
+  removeDatabaseFiles(directory.uri, PREVIOUS_NAME);
+  removeDatabaseFiles(directory.uri, STAGING_NAME);
+  logOperation('db.import.discard');
+}
+
+/**
+ * Repair a restore that was interrupted between the two renames.
+ *
+ * Runs at the top of `openDatabase()`, before anything reads the file. The
+ * only state that needs repairing is "there is no `keeply.db` but there is a
+ * `keeply.previous.db`": the app was killed in the sub-millisecond window
+ * between moving the old file aside and moving the new one in.
+ *
+ * Putting the previous file back means the worst outcome of a crash mid-restore
+ * is that the restore did not happen — which the user can see, and repeat. The
+ * outcome this exists to make impossible is an app that opens to no database
+ * at all and mints a fresh key over the top of it.
+ *
+ * A leftover staging file with a live database present is the other half: an
+ * attempt that failed before the swap. It is only a copy of a bundle the user
+ * still has, so it is deleted rather than kept.
+ */
+function recoverInterruptedRestore(directoryUri: string): void {
+  const live = new File(directoryUri, DATABASE_NAME);
+  const previous = new File(directoryUri, PREVIOUS_NAME);
+
+  if (!live.exists && previous.exists) {
+    try {
+      previous.moveSync(new File(directoryUri, DATABASE_NAME), { overwrite: true });
+      logOperation('db.import.recover');
+    } catch (error) {
+      logFailure('db.import.failed', error);
+    }
+    return;
+  }
+
+  if (live.exists && previous.exists) {
+    // The swap completed and the process died before `discardStagedCopy()`.
+    // The live file is the restored one; the previous is genuinely spent.
+    removeDatabaseFiles(directoryUri, PREVIOUS_NAME);
+  }
+
+  removeDatabaseFiles(directoryUri, STAGING_NAME);
+}
+
+/** A database file and its journal sidecars. Never throws. */
+function removeDatabaseFiles(directoryUri: string, name: string): void {
+  deleteQuietly(directoryUri, name);
+  for (const suffix of SIDECAR_SUFFIXES) {
+    deleteQuietly(directoryUri, `${name}${suffix}`);
+  }
+}
+
+function deleteQuietly(directoryUri: string, name: string): void {
+  try {
+    const file = new File(directoryUri, name);
+    if (file.exists) file.delete();
+  } catch (error) {
+    logFailure('db.import.failed', error);
+  }
 }

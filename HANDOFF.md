@@ -1,14 +1,14 @@
 # Keeply — Handoff
 
-**State at `bfefae8` (pushed to `origin/main`):** `tsc --noEmit` 0 · `eslint .` 0 errors ·
-`npm test` **858/858**. Runs on the iOS Simulator.
+**State: Phase 8c (restore) landed.** `tsc --noEmit` 0 · `eslint .` 0 errors ·
+`npm test` **878/878**. Runs on the iOS Simulator.
 
 | Phase | State |
 | --- | --- |
 | 1–4 Foundation · Subscriptions · Bills · Receipts | Complete **and rendered**. Bills has NO UI — see Known gaps. |
 | Onboarding | Complete |
 | 9 Expenses & Allowance | **Complete** |
-| 8 Backup | **Export done. Import (restore) is not built** — a bundle is currently a file the app cannot read back. |
+| 8 Backup | **Complete.** Export and restore, both verified on the device. |
 | 5 Maintenance *(was Vehicles)* | Schema, item data layer and screens done. **Costs, services and renewals have tables but no API.** |
 | 6 Documents · 7 Security | Not started |
 
@@ -24,7 +24,7 @@ A private, offline-first iOS app you can actually use:
   not `SQLite format 3`, and `sqlite3` refuses to open it. Key lives in the Keychain, device-only.
 - **Excluded from iCloud backup** by a config plugin, verified by `xattr`
   (`com.apple.metadata:com_apple_backup_excludeItem`). A restored phone opens a *clean* app rather than a
-  bricked one; portability is §20's encrypted export, which now EXISTS — but cannot yet be imported.
+  bricked one; portability is §20's encrypted export, **which now round-trips**.
 - **Offline cold boot** with Wi-Fi off, verified: boots to Home in ~300ms.
 - **Expenses & allowance (Phase 9).** Set an allowance daily / weekly / monthly; the card on Home, the
   Money tab and `/allowance` all read one `AllowanceStatus`, so they cannot disagree. Only day-to-day
@@ -36,8 +36,14 @@ A private, offline-first iOS app you can actually use:
   electronics. One `maintenance_items` table with a `kind`; the form CHANGES SHAPE with it, so an
   aircon never sees an odometer field. Add / list / detail / edit / delete all work and survive a cold
   boot. What you cannot yet record is the maintenance itself — see Known gaps.
-- **Encrypted export (Phase 8).** A backup IS a SQLCipher database, written by `sqlcipher_export()` and
-  keyed with a passphrase, then handed to the share sheet and deleted from the cache.
+- **Encrypted backup, both directions (Phase 8).** A backup IS a SQLCipher database, written by
+  `sqlcipher_export()` and keyed with a passphrase, then handed to the share sheet and deleted from the
+  cache. **Restore is the same thing backwards**: open the bundle under its passphrase, export it into a
+  staging file keyed to THIS device, swap it in, reopen, run migrations, and only then delete what was
+  there before. Verified end to end — a marker record added after the backup was gone afterwards, a
+  wrong passphrase and a tampered "newer" bundle were both refused, and a restore interrupted between
+  the two renames was repaired on the next launch with every record intact. `plan/phase8-backup.md`
+  §9–§10.
 - **Editable reminders.** `/reminders` sets lead times per record kind and the delivery hour, with a
   permission banner — without it every control on that screen is theatre.
 - **Subscriptions** — CRUD, anchored recurrence, SQL-side normalized totals, list/detail/form screens.
@@ -48,9 +54,10 @@ A private, offline-first iOS app you can actually use:
 - **Design system** — fully monochrome, deliberately de-decorated, full form layer, `ThemeLayout` spacing
   rules, measured contrast in both themes.
 
-209 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+210 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
-`21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance).
+`21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
+`27-` restore).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -64,38 +71,21 @@ A private, offline-first iOS app you can actually use:
 session that began before they existed cannot call them. Start a fresh session and they are available
 by name.
 
-**2. Build restore (Phase 8c). This is the one that matters most.**
-
-Export works; import does not. A backup is currently a file only a desktop `sqlcipher` can open, not
-the app — which is *worse than no backup*, because it invites the user to believe they are covered.
-Everything it needs already exists and is tested: `compareBundle()` refuses a `bundle-newer` file,
-`summariseBundle()` carries the photo caveat, and `tests/backup-policy.test.ts` covers both in 26
-tests (five mutations verified red against the suite). What is missing is opening the bundle,
-validating it, and writing the rows back.
-
-The format decision, before touching it: **a bundle IS a SQLCipher database**, written by SQLCipher's
-own `sqlcipher_export()` and keyed with the user's passphrase. No new dependency, no native rebuild,
-and the crypto is the same audited implementation protecting the live file — `expo-crypto` has hashing
-and random bytes and **no AES and no KDF**, so every other route meant hand-rolling one.
-`plan/phase8-backup.md` §5 has the step, §7 the device verification, §8 what the build found.
-
-Note before starting: **`allowances` must be in the bundle**, or a restore returns expenses without
-the budget they were measured against. `sqlcipher_export()` copies whole tables so this is already
-true — but the import summary and its test do not mention allowances yet.
-
-**3. Then: maintenance records (Phase 5c).** The tab is called Maintenance and you cannot record any.
+**2. Build maintenance records (Phase 5c). This is the one that matters most now.** The tab is called Maintenance and you cannot record any.
 Items exist; the thing you attach to them does not. `maintenance_costs`, `maintenance_services` and
 `maintenance_renewals` have tables, views and migration-level tests, but no API and no screens — so
 the detail screen honestly says "Nothing recorded against it yet" rather than stubbing a section.
 This is what turns a list of possessions into a history.
 
-**4. Then: Bills screens.** The largest amount of finished, tested work in this repo that nobody can
+**3. Then: Bills screens.** The largest amount of finished, tested work in this repo that nobody can
 reach — CRUD, payment history, overdue derivation, recurrence roll-forward, notifications, and zero
 UI. See Known gaps.
 
 **Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
 camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
-real device or `xcrun simctl keychain <udid> reset`.
+real device or `xcrun simctl keychain <udid> reset`. Also **the two taps inside the file picker** —
+`File.pickFileAsync` presents correctly and everything behind it is verified, but the Files sheet
+cannot be tapped from here (Simulator reports zero windows), so choosing a file by hand is untested.
 
 ---
 
@@ -153,6 +143,16 @@ real device or `xcrun simctl keychain <udid> reset`.
   then fails with `error in view <table>_live: no such table`. Every table here has a `*_live` view,
   so this applies to all of them. Drop and recreate the view around the rebuild by hand when it
   comes up — see `plan/phase5-maintenance.md` §9.
+- **expo-file-system 57 HAS a file picker.** `File.pickFileAsync({ mimeTypes: '*/*' })` — static, on
+  `File`. No `expo-document-picker`, no new dependency, no `prebuild`. It presents the iOS Files sheet
+  and hands back a temporary COPY of the chosen file, which is what a restore wants: the user's own
+  file is never opened or locked. Filter by MIME type and `.keeply` greys out — iOS has no UTI for it.
+- **`sqlcipher_export()` takes the target as its ONE argument and copies from that connection's
+  `main`.** So the reverse of the export is not a two-argument call: open the BUNDLE as its own
+  connection, ATTACH the destination to *it*, and export. Verified on device.
+- **Open a bundle with `open({ encryptionKey })`, never `ATTACH … KEY ?`.** Same passphrase leak as
+  §8 of the phase plan — op-sqlite echoes bound parameters into error messages, and `ATTACH` binds the
+  passphrase. `open()` takes it as an options field, so it is not reachable through an error at all.
 - **SQLite `date()` normalises rather than rejects**: `date('2026-02-30')` is `'2026-03-02'`. The CHECK that
   actually works is `col IS NULL OR date(col) IS col`.
 
@@ -191,6 +191,12 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   `'underline'` (a row of labels with a rule) is for **choosing which of the same things to look at** —
   a sort order, an active/paused filter. A form field styled as tabs says "switch view" when it means
   "choose a value".
+- **A restore swaps the FILE; it never copies rows into the current schema.** `drizzle/0002` DROPs
+  five tables, so a bundle can carry tables this build no longer has and lack tables it does. Copying
+  row-by-row means a second migration path that must agree with the real one forever. Swapping the
+  file and running the real migrations means there is one path, and it is the tested one.
+  `recoverInterruptedRestore()` at the top of `openDatabase()` is what makes the two-rename window
+  survivable — remove it and a kill mid-restore mints a fresh key over the user's data.
 - **A chip's label weight never changes with selection.** A chip is as wide as its own text, so bolding
   the chosen one reflows a wrapping row *as you tap it*. The fill carries the state. `SegmentedField`
   can bold safely because each segment is a fixed share of a fixed track; `ChipField` cannot.
@@ -199,7 +205,24 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 ## Recently closed (do not re-fix)
 
-### This session (`bfefae8`)
+### This session — Phase 8c
+
+- **Restore built.** `inspectBundle()` reads a bundle without writing anything; `restoreBundle()`
+  stages → swaps → opens → migrates → discards, in that order, so the previous database is still on
+  disk until the new one has proved it opens. `plan/phase8-backup.md` §9–§10 has the mechanism, the
+  rejected alternative, and every device check.
+- **`BundleCounts.vehicles` was stale** — the table has been `maintenance_items` since `0003`, so the
+  summary was reading a key nothing writes and would have reported "0 vehicles" forever. Renamed, and
+  the mapping from table name to user-facing word is now its own tested function
+  (`countsFromTables`), because `bill_payments` vs `billPayments` is a typo that silently drops a
+  whole record kind from the summary.
+- **`bundleIsEmpty()` had no test that every kind counts.** Found by mutation-verifying: dropping
+  `maintenanceItems` from its sum left the suite green. A backup holding only maintenance items would
+  have been refused as "empty". Test added; the mutation now fails.
+- **The handoff claimed allowances were missing from the export.** They were not — `sqlcipher_export`
+  copies whole tables, and `summariseBundle` already named them. Withdrawn.
+
+### Earlier this session (`bfefae8`)
 
 - **A lost setting.** `persist()` in `src/stores/settings-store.ts` was fire-and-forget, so two quick
   writes could complete out of order and the older one win. Observed on the device: toggling two
@@ -246,10 +269,7 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   `src/features/bills/ui` and no `src/app/bills`. The Money tab's "Coming next" is accurate, not stale.
   (This was mis-reported as a bug during Phase 9 and withdrawn.)
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
-  budgets, no rollover. `allowances` must be added to Phase 8's export bundle or a restore returns
-  expenses without the budget they were measured against.
-- **Restore does not exist.** Export ships; import does not. Until it does, the "excluded from iCloud"
-  decision is only half-covered — a user can make a backup and cannot use it. See Start here §2.
+  budgets, no rollover.
 - **Maintenance records do not exist.** `maintenance_costs`, `maintenance_services` and
   `maintenance_renewals` have tables, views and migration tests, but no API, no screens and no
   analytics (cost-per-km, fuel efficiency). Items can be added; what happens to them cannot.
@@ -299,7 +319,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 858 tests
+npm test                # node --test, 878 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 

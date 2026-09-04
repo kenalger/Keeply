@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 
 /**
- * The backup stack. Export today; restore joins it in 8c.
+ * The backup stack: export and restore.
  *
  * Headers are off because every screen draws its own `<ScreenHeader/>`.
  */

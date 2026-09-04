@@ -166,6 +166,7 @@ interface MoreRowInput {
   readonly cycleSampleDashboard: () => void;
   readonly openReminders: () => void;
   readonly openExport: () => void;
+  readonly openRestore: () => void;
   readonly openDesignSystem: () => void;
   readonly restartOnboarding: () => void;
   /** The user asked for an app lock during setup (`plan/onboarding.md` step 6). */
@@ -265,7 +266,8 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
       icon: 'upload',
       title: 'Restore from a backup',
       subtitle: 'Replaces everything currently stored on this device',
-      state: { kind: 'soon' },
+      state: { kind: 'none' },
+      onPress: input.openRestore,
     },
   ]);
 
@@ -356,6 +358,7 @@ export default function MoreScreen() {
 
   const openReminders = useCallback(() => router.push('/reminders'), [router]);
   const openExport = useCallback(() => router.push('/backup/export'), [router]);
+  const openRestore = useCallback(() => router.push('/backup/restore'), [router]);
   const openDesignSystem = useCallback(() => router.push('/ui-preview'), [router]);
 
   /**
@@ -383,6 +386,7 @@ export default function MoreScreen() {
       buildMoreRows({
         openReminders,
         openExport,
+        openRestore,
         themePreference: preference,
         cycleTheme,
         reminders,

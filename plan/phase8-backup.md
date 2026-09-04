@@ -1,6 +1,7 @@
 # Phase 8 — Backup / Restore
 
-**Status: 8a, 8b and 8d (export half) done. Import (8c) is the open half.** Written 2026-09-03, after Phase 9 put real records in the app.
+**Status: complete. 8a–8e done, export and import both, verified on the device.**
+Written 2026-09-03 after Phase 9 put real records in the app; 8c added 2026-09-04.
 
 Why now rather than last: the database is deliberately excluded from iCloud backup (§19, §A4), which is
 right for privacy and means a restored phone opens *clean* rather than bricked. The replacement safety
@@ -69,7 +70,7 @@ phone.
 
 | In | Out |
 | --- | --- |
-| Every table, via `sqlcipher_export` — subscriptions, bills, payments, receipts, allowances, vehicles, documents, notification and app settings | Receipt photos and document scans (the bytes in the sandbox) |
+| Every table, via `sqlcipher_export` — subscriptions, bills, payments, receipts, allowances, maintenance, documents, notification and app settings | Receipt photos and document scans (the bytes in the sandbox) |
 | Tombstones (`deleted_at` rows), because a sync queue will want them (§21) | The SQLCipher key. It never leaves the Keychain and is never in the bundle — the bundle has its own key, derived from the passphrase. |
 | `__drizzle_migrations`, so an import can tell whether the bundle is older, newer or the same | Anything derived. No cached totals, no computed status. |
 
@@ -103,7 +104,11 @@ Honest split, and it mirrors `src/db/client.ts` being untested by design.
 - Passphrase *policy* (length, whitespace, confirmation match) — pure functions.
 - Manifest / compatibility rules: given the bundle's migration list and the app's, decide
   `same` / `bundle-older` / `bundle-newer` / `not-keeply`.
-- The import summary arithmetic: row counts per table, how many photos will be missing.
+- The import summary arithmetic: row counts per table, how many photos will be missing, and how
+  many rows belong to a table this build has retired.
+- The table-name → user-facing-word mapping (`bill_payments` → "payments"), which is where a typo
+  silently omits a whole record kind from the summary.
+- The verdict itself (`judgeBundle`): what is refused, what is merely flagged, and what is said.
 
 **Not testable without a device**, because `node:sqlite` is plain SQLite with no SQLCipher:
 `ATTACH … KEY`, `sqlcipher_export()`, and opening the bundle back. Those get the same treatment
@@ -117,8 +122,8 @@ Honest split, and it mirrors `src/db/client.ts` being untested by design.
 | --- | --- | --- |
 | ~~**8a**~~ | Format decision, device verification, pure policy layer + tests | **Done** — verified above; `src/features/backup/` policy module, tests green and mutation-verified. |
 | ~~**8b**~~ | ~~`exportBundle(passphrase)` over `sqlcipher_export`~~ | **Done and verified on the device** — see §7. |
-| **8c** | `importBundle(uri, passphrase)`: open, validate, summarise, restore | A wiped app restores every record from a bundle. |
-| ~~**8d**~~ | ~~Export screen under More~~ | **Done** — passphrase twice with a reveal toggle, the three caveats, share sheet on success, staged copy deleted on the way out. `plan/screenshots/20-*`. The import screen waits on 8c. |
+| ~~**8c**~~ | ~~`inspectBundle` / `restoreBundle`: open, validate, summarise, restore~~ | **Done and verified on the device** — see §9 for the mechanism and §10 for the checks. |
+| ~~**8d**~~ | ~~Export screen under More~~ | **Done** — passphrase twice with a reveal toggle, the three caveats, share sheet on success, staged copy deleted on the way out. `plan/screenshots/20-*`. The restore screen is `src/app/backup/restore.tsx`, `plan/screenshots/27-*`. |
 | ~~**8e**~~ | ~~Share sheet~~ | **Done** — the bundle goes straight to `Share.share()`; it is written to the cache, never beside the live database. |
 
 ---
@@ -190,3 +195,91 @@ suppressing it needs `textContentType: 'oneTimeCode'` — which lies about the f
 Keeply never stores the passphrase, and a user who puts it in their own password manager has
 solved the likeliest way this feature fails them. The comment on `TextField`'s `passphrase`
 content type says so rather than claiming a suppression that does not happen.
+
+
+---
+
+## 9. How a restore works, and the alternative that was rejected
+
+A bundle is a whole SQLCipher database, so the restore is the export run backwards:
+
+| | |
+| --- | --- |
+| **1. stage** | Open the bundle under the user's passphrase as its OWN connection, `ATTACH` a staging file keyed with THIS DEVICE's key, `SELECT sqlcipher_export('keeply_restore')`. |
+| **2. swap** | Close the live connection, move `keeply.db` to `keeply.previous.db`, move the staging file in. |
+| **3. open** | Prove the new file opens and the device key unlocks it. |
+| **4. migrate** | `runMigrations()` brings an older bundle's schema forward with the real SQL. |
+| **5. discard** | Only now delete `keeply.previous.db`. |
+
+Everything expensive and everything likely to fail is in step 1, where failing costs nothing —
+nothing has moved yet. Steps 3 and 4 are the proof the restore worked, and until both have
+returned the previous database is still on disk and a failure puts it back. Step 5 is the point of
+no return and it is deliberately last.
+
+### Why not `DELETE` + `INSERT … SELECT` across an ATTACH
+
+That is one SQL transaction and it looks safer. It is not, and the reason is in `drizzle/0002`:
+
+```sql
+DROP TABLE `vehicle_expenses`;  DROP TABLE `vehicle_insurance`;  DROP TABLE `vehicles`;  …
+```
+
+**Schemas do not only gain columns.** A bundle written by an older build can carry tables this
+build has deleted, columns that were renamed, and none of the tables added since. Copying it
+row-by-row into the *current* schema means hand-writing, forever, a second migration path that has
+to agree with the real one — and every disagreement is silent data loss at the moment the user is
+relying on us most.
+
+Swapping the file means the restored database **is** the bundle, and the migrations that brought
+this device forward bring it forward too. Rows from a retired table are dropped by the same SQL
+that dropped them here. One migration path, and it is the tested one. `judgeBundle()` counts those
+rows and says so before the user commits — the outcome is correct, but it must not be a surprise.
+
+### The crash window, and the net under it
+
+The swap is two renames. A process death between them leaves no `keeply.db`, and the next launch
+would otherwise read that as "no database yet", mint a fresh key, and open a clean app over the
+user's data. `recoverInterruptedRestore()` runs at the TOP of `openDatabase()` — before
+`databaseFileExists()` is consulted — and moves `keeply.previous.db` back. The worst outcome of a
+crash mid-restore is therefore that the restore did not happen, which the user can see and repeat.
+
+### Why the bundle is opened as its own connection, not ATTACHed to the live one
+
+The export has to use `ATTACH … KEY ?`, and §8 is the leak that cost: op-sqlite echoes bound
+parameters into its error messages, and there the second parameter is the user's passphrase.
+`open({ encryptionKey })` takes the key as a field of an options object, so on the import path the
+passphrase is never a query parameter and is not reachable through an error at all. The one
+`ATTACH` that remains, in step 1, binds the *device* key — so that call site drops its `cause` for
+the same reason and says so.
+
+### The passphrase is used twice, deliberately
+
+`inspectBundle()` opens the file, reads it and closes it, writing nothing. `restoreBundle()` opens
+it again and commits. A restore replaces everything, and the only defensible way to ask "are you
+sure?" is with the contents of the actual file on screen — 12 expenses, 1 allowance, written by
+this version. That question cannot be asked while holding the file open.
+
+---
+
+## 10. Verified on the device (8c)
+
+Driven over CDP against the dev client on `BC119EA8`, on the database holding real test data.
+
+| Check | Result |
+| --- | --- |
+| Export, then inspect | 3 subscriptions · 3 bills · 10 expenses · 1 allowance · 4 maintenance items, 4 migration rows |
+| Photo caveat | 4 of 10 expenses name an image; the summary says so |
+| **Wrong passphrase** | `BackupUnreadableError` — the message offers both causes, never guesses one |
+| **A text file renamed `.keeply`** | Same error, same message. Indistinguishable, as it must be. |
+| **A bundle claiming a NEWER schema** | Fabricated by inserting `9999_from_the_future` into an opened bundle's `__drizzle_migrations`. `canRestore: false`, `refusal: 'bundle-newer'`, and `restoreBundle()` threw rather than proceeding. |
+| **The replace is real** | Added a marker expense (10 → 11), restored the 10-expense bundle, marker gone and every count back to the pre-marker value |
+| **Interrupted restore** | Terminated the app, renamed `keeply.db` to `keeply.previous.db` by hand, relaunched: the file was put back and all 21 records were intact. Without the recovery step this is a fresh key over the user's data. |
+| Disk after a restore | No `keeply.previous.db`, no `keeply.restoring.db` — `discardStagedCopy()` ran |
+| Backup exclusion survives | `xattr` on the directory still carries `com.apple.metadata:com_apple_backup_excludeItem` — the restore replaces a file *inside* the stamped directory, so the attribute is not disturbed |
+| Restored file is still encrypted | Header `b32f 07d1 055b 5f23 …` — random, not `SQLite format 3`; plain `sqlite3` returns `file is not a database (26)`; `strings` finds no merchant name |
+| The file picker | `File.pickFileAsync` presents the iOS Files sheet. **expo-file-system 57 has a picker** — no new dependency and no `prebuild`. |
+
+**Not verified:** choosing a file through the picker and completing a restore by hand. The
+simulator reports zero windows to System Events, so the sheet cannot be tapped from here (see the
+handoff). Everything behind the picker is verified above; what is untested is the two taps between
+`pickFileAsync` and the URI it returns.

@@ -34,12 +34,9 @@
  * instance handed to the callback.
  */
 import bundle from '../../drizzle/migrations';
-import { getRawConnection } from './client';
+import { MIGRATIONS_TABLE, getRawConnection } from './client';
 import { DatabaseInitError } from './errors';
 import { logFailure, logOperation } from './log';
-
-/** Same table name and column shape drizzle's own migrator uses. */
-const MIGRATIONS_TABLE = '__drizzle_migrations';
 
 const CREATE_MIGRATIONS_TABLE = `CREATE TABLE IF NOT EXISTS \`${MIGRATIONS_TABLE}\` (
   id SERIAL PRIMARY KEY,
@@ -49,6 +46,27 @@ const CREATE_MIGRATIONS_TABLE = `CREATE TABLE IF NOT EXISTS \`${MIGRATIONS_TABLE
 
 /** drizzle-kit writes this marker between statements when breakpoints are on. */
 const STATEMENT_BREAKPOINT = '--> statement-breakpoint';
+
+/**
+ * The schema versions THIS BUILD ships, oldest first.
+ *
+ * Read from the journal rather than from `__drizzle_migrations`, and the
+ * difference matters: the journal is what this binary knows how to apply, and
+ * that is the right thing to compare a bundle against. The applied table can
+ * only ever lag it by the length of one boot.
+ *
+ * `when` is drizzle-kit's own fixed timestamp for the migration folder —
+ * identical on every device that ships it — so it orders versions without
+ * depending on any clock.
+ */
+export function shippedSchemaVersions(): readonly {
+  readonly hash: string;
+  readonly createdAt: number;
+}[] {
+  return [...bundle.journal.entries]
+    .sort((a, b) => a.idx - b.idx)
+    .map((entry) => ({ hash: entry.tag, createdAt: entry.when }));
+}
 
 /**
  * Apply every pending migration.
