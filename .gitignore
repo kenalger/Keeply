@@ -41,3 +41,6 @@ example
 # generated native folders
 /ios
 /android
+
+# screenshots — 54MB of simulator captures, kept on disk only (see HANDOFF.md)
+/plan/screenshots/
