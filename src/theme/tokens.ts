@@ -50,6 +50,9 @@
  * clears 3:1 on every surface it is drawn on.
  */
 import { Platform, type TextStyle, type ViewStyle } from 'react-native';
+// The raw colour values live in their own module so `node --test` can measure
+// their contrast; this file cannot be loaded outside a bundler.
+import { darkColor, darkStatus, lightColor, lightStatus } from './palette';
 import type { Insets } from 'react-native';
 
 /* ------------------------------------------------------------------ *
@@ -397,41 +400,6 @@ function shadows(shadowColor: string, opacities: [number, number]): ThemeShadow 
  * Light
  * ------------------------------------------------------------------ */
 
-const lightColor: ThemeColor = {
-  // The canvas sits a clear step below `surface`, because the step IS the
-  // separation: a card gets no outline and no shadow, so if these two were
-  // close the grouping would disappear.
-  bg: '#F1F1F1',
-  bgElevated: '#FFFFFF',
-  bgSunken: '#E6E6E6',
-  surface: '#FFFFFF',
-  surfaceAlt: '#EBEBEB',
-  border: '#DCDCDC',
-  borderStrong: '#878787',
-  text: '#171717',
-  textSecondary: '#545454',
-  textTertiary: '#676767',
-  textInverse: '#FFFFFF',
-  // Not a brand colour: the ink. A primary button is black with white on it.
-  accent: '#1F1F1F',
-  accentMuted: '#E4E4E4',
-  onAccent: '#FFFFFF',
-  // The four "semantic" inks are neutral now, and only `danger` is set apart —
-  // it is pure black, one step past `accent`, so a destructive control and an
-  // error message outrank everything else on the screen by value alone.
-  success: '#2E2E2E',
-  successBg: '#EDEDED',
-  warning: '#2E2E2E',
-  warningBg: '#E6E6E6',
-  danger: '#000000',
-  dangerBg: '#DCDCDC',
-  info: '#2E2E2E',
-  infoBg: '#EAEAEA',
-  pressed: '#E4E4E4',
-  scrim: 'rgba(0, 0, 0, 0.45)',
-  skeleton: '#E2E2E2',
-  skeletonHighlight: '#EFEFEF',
-};
 
 /**
  * The nine states, as a ladder of fill weight plus one outlined pair.
@@ -444,17 +412,6 @@ const lightColor: ThemeColor = {
  *   outlined       paid, valid               — settled; nothing to do
  *   faint fill     inactive                  — deliberately switched off
  */
-const lightStatus: ThemeStatus = {
-  overdue: { fg: '#FFFFFF', bg: '#171717', label: 'Overdue' },
-  expired: { fg: '#FFFFFF', bg: '#171717', label: 'Expired' },
-  dueToday: { fg: '#101010', bg: '#B0B0B0', label: 'Due today' },
-  dueSoon: { fg: '#1F1F1F', bg: '#EDEDED', border: '#575757', label: 'Due soon' },
-  expiringSoon: { fg: '#1F1F1F', bg: '#EDEDED', border: '#575757', label: 'Expiring soon' },
-  upcoming: { fg: '#2E2E2E', bg: '#DCDCDC', label: 'Upcoming' },
-  paid: { fg: '#4A4A4A', bg: 'transparent', border: '#878787', label: 'Paid' },
-  valid: { fg: '#4A4A4A', bg: 'transparent', border: '#878787', label: 'Valid' },
-  inactive: { fg: '#676767', bg: '#EDEDED', label: 'Inactive' },
-};
 
 export const lightTheme: Theme = {
   mode: 'light',
@@ -474,49 +431,8 @@ export const lightTheme: Theme = {
  * Dark
  * ------------------------------------------------------------------ */
 
-const darkColor: ThemeColor = {
-  // Same reasoning as light, inverted: the canvas drops nearly to black so the
-  // surfaces above it read as raised without an outline to say so.
-  bg: '#0A0A0A',
-  bgElevated: '#232323',
-  bgSunken: '#000000',
-  surface: '#1B1B1B',
-  surfaceAlt: '#262626',
-  border: '#333333',
-  borderStrong: '#727272',
-  text: '#F2F2F2',
-  textSecondary: '#ABABAB',
-  textTertiary: '#909090',
-  textInverse: '#0E0E0E',
-  accent: '#EDEDED',
-  accentMuted: '#2A2A2A',
-  onAccent: '#0E0E0E',
-  success: '#DCDCDC',
-  successBg: '#1E1E1E',
-  warning: '#DCDCDC',
-  warningBg: '#242424',
-  danger: '#FFFFFF',
-  dangerBg: '#333333',
-  info: '#DCDCDC',
-  infoBg: '#202020',
-  pressed: '#2C2C2C',
-  scrim: 'rgba(0, 0, 0, 0.6)',
-  skeleton: '#262626',
-  skeletonHighlight: '#333333',
-};
 
 /** The same ladder, inverted. Solid means light-on-dark here. */
-const darkStatus: ThemeStatus = {
-  overdue: { fg: '#101010', bg: '#F2F2F2', label: 'Overdue' },
-  expired: { fg: '#101010', bg: '#F2F2F2', label: 'Expired' },
-  dueToday: { fg: '#0E0E0E', bg: '#949494', label: 'Due today' },
-  dueSoon: { fg: '#F2F2F2', bg: '#1F1F1F', border: '#A0A0A0', label: 'Due soon' },
-  expiringSoon: { fg: '#F2F2F2', bg: '#1F1F1F', border: '#A0A0A0', label: 'Expiring soon' },
-  upcoming: { fg: '#E0E0E0', bg: '#3A3A3A', label: 'Upcoming' },
-  paid: { fg: '#A8A8A8', bg: 'transparent', border: '#727272', label: 'Paid' },
-  valid: { fg: '#A8A8A8', bg: 'transparent', border: '#727272', label: 'Valid' },
-  inactive: { fg: '#8E8E8E', bg: '#1E1E1E', label: 'Inactive' },
-};
 
 export const darkTheme: Theme = {
   mode: 'dark',
@@ -549,3 +465,5 @@ export const STATUS_KEYS: readonly StatusKey[] = [
   'valid',
   'inactive',
 ];
+
+export { darkColor, darkStatus, lightColor, lightStatus } from './palette';

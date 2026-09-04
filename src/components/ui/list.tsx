@@ -175,6 +175,7 @@ const makeStyles = (t: Theme) =>
     /* Furniture for a flattened, section-per-run list — see `ListSectionHeader`. */
     /* Every one of these owns the gap ABOVE itself and none owns the gap
        below, so two adjacent blocks contribute one gap. See `ThemeLayout`. */
+    sectionTitle: { textTransform: 'uppercase' },
     sectionHeader: { paddingTop: t.layout.section, paddingBottom: t.layout.heading },
     note: { paddingTop: t.layout.caption },
     blockSection: { paddingTop: t.layout.section },
@@ -413,7 +414,15 @@ export function ListSectionHeader({ title, testID }: ListSectionHeaderProps): Re
   const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.sectionHeader} testID={testID}>
-      <Text variant="subheading" accessibilityRole="header">
+      {/* An eyebrow, matching `FormSection`'s. A list screen and a form screen
+          sitting one tap apart must label their sections the same way, or the
+          app reads as two apps — and the reason it is quiet is the same in
+          both: a signpost has to be quieter than what it points at. */}
+      <Text
+        variant="label"
+        color="textTertiary"
+        accessibilityRole="header"
+        style={styles.sectionTitle}>
         {title}
       </Text>
     </View>

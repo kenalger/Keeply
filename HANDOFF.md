@@ -1,7 +1,7 @@
 # Keeply — Handoff
 
 **State: Phase 8c (restore), Bills screens, and the reminders rework landed.**
-`tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **941/941**. Runs on the iOS Simulator.
+`tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **960/960**. Runs on the iOS Simulator.
 
 | Phase | State |
 | --- | --- |
@@ -61,13 +61,13 @@ A private, offline-first iOS app you can actually use:
 - **Local notifications** — six-state permission model, 60-slot rolling window, rebuilt on boot,
   foreground, and any reminder-affecting settings change.
 - **First-run wizard** — 6 steps, resumable, 56-entry Philippine catalogue, all importable.
-- **Design system** — fully monochrome, deliberately de-decorated, full form layer, `ThemeLayout` spacing
-  rules, measured contrast in both themes.
+- **Design system** — greyscale plus ONE accent, full form layer, `ThemeLayout` spacing rules, and
+  contrast that is now actually measured (`tests/theme-contrast.test.ts`) rather than claimed.
 
-221 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+224 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore, `28-31-` Bills, `32-38-` reminders).
+`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -215,6 +215,15 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 - **Status colours come from the tokens that already exist** — `overdue`, `dueToday`, `upcoming`,
   `paid`, `inactive`. Inventing a success/danger/warning vocabulary means a late bill and an expired
   document are different reds. `StatusPill` rejects unknown keys at the type level.
+- **Colour means "interactive or selected", and nothing else.** The app is greyscale apart from one
+  accent (`#175CD3` light / `#8AB4F8` dark), spent on the primary button, a chosen chip, the active
+  tab, a focused field and the caret. Status stays greyscale ON PURPOSE: the moment a hue also means
+  "overdue", it stops reliably meaning "tap this". `tests/theme-contrast.test.ts` enforces both
+  directions — every non-accent token must be greyscale, and the accent must not have drifted back
+  to grey.
+- **The palette lives in `src/theme/palette.ts`, not `tokens.ts`.** `tokens.ts` imports react-native
+  for `Platform.select`, so nothing in it can be loaded by `node --test`. The colours are pure data
+  and the one part of the theme with a property worth asserting, so they were extracted.
 - **A section title is an EYEBROW, not a heading.** `FormSection` rendered its title as
   `subheading` — 17pt semibold in the primary text colour, the same weight and colour as the
   content beneath it. That left two hierarchy levels (the 28pt page title, and everything else at
@@ -398,7 +407,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 941 tests
+npm test                # node --test, 960 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
