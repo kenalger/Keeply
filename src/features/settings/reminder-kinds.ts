@@ -1,5 +1,5 @@
 /**
- * The three things Keeply reminds about, as data rather than as three copies
+ * The four things Keeply reminds about, as data rather than as four copies
  * of a screen.
  *
  * ── WHY THIS IS A TABLE AND NOT THREE COMPONENTS ───────────────────────────
@@ -17,7 +17,7 @@
 import type { ReminderLeadTimeKey } from '@/stores/settings-store';
 
 /** The URL slug for one kind: `/reminders/bills`. */
-export type ReminderKindSlug = 'bills' | 'subscriptions' | 'documents';
+export type ReminderKindSlug = 'bills' | 'subscriptions' | 'documents' | 'maintenance';
 
 export interface ReminderKind {
   readonly slug: ReminderKindSlug;
@@ -72,6 +72,24 @@ export const REMINDER_KINDS: readonly ReminderKind[] = [
     previewNoun: 'document',
     eventLead: 'Expires',
     eventLabel: 'Document expires',
+  },
+  {
+    slug: 'maintenance',
+    settingKey: 'maintenanceReminderLeadTimes',
+    title: 'Maintenance',
+    // ONE kind covering two dated things — a service falling due and cover
+    // expiring. The copy has to cover both without naming either, because a
+    // user thinking "remind me about the car" is not thinking about which.
+    // Splitting it would mean five settings screens and a decision nobody
+    // wants to make. See `ReminderDefaults.maintenance`.
+    beforeWhat: 'a service or renewal is due',
+    previewNoun: 'service or renewal',
+    // NOT 'Due' — bills already own that, and `reminder-kinds.test.ts` refuses
+    // a shared verb for exactly the reason it refused one before: a preview
+    // the user cannot recognise is a preview they cannot check. "Next due" is
+    // also how a service interval is actually described.
+    eventLead: 'Next due',
+    eventLabel: 'Maintenance due',
   },
 ];
 

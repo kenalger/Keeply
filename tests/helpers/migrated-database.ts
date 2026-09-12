@@ -72,11 +72,30 @@ export function createMigratedDatabase(): DatabaseSync {
   return db;
 }
 
-/** The same database with foreign keys explicitly disabled (see the header). */
+/**
+ * The same database with foreign keys explicitly disabled (see the header).
+ *
+ * The pragma is set TWICE, and the second one is the load-bearing one. A
+ * migration that rebuilds a table — which is how SQLite changes a CHECK —
+ * carries drizzle's standard `PRAGMA foreign_keys=OFF … ON` wrapper, so
+ * applying the migrations turns them back ON. `0004` is the first migration in
+ * this project to do it, and it silently un-disabled them here: the vacuity
+ * guard that proves the cascade tests are not trivially true started passing
+ * for the wrong reason.
+ *
+ * Setting it once before the migrations is a stale assumption; setting it after
+ * is what the name of this function actually promises.
+ */
 export function createMigratedDatabaseWithoutForeignKeys(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = OFF');
   for (const statement of allMigrationStatements()) db.exec(statement);
+  db.exec('PRAGMA foreign_keys = OFF');
+
+  const foreignKeys = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
+  if (foreignKeys.foreign_keys !== 0) {
+    throw new Error('foreign keys are still ON — this helper would prove nothing');
+  }
   return db;
 }
 

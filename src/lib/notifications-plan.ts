@@ -49,7 +49,7 @@ import { addCalendarDays, formatMoney, parseCalendarDate } from '@/theme/format'
  * expiry (Phase 6, §14/§15) reach this module unchanged, and re-shaping the
  * entity twice later is how the copy and the lead-time defaults drift apart.
  */
-export type ReminderKind = 'subscription' | 'bill' | 'document';
+export type ReminderKind = 'subscription' | 'bill' | 'document' | 'maintenance';
 
 /**
  * The minimum a record has to expose to be remindable.
@@ -65,7 +65,14 @@ export type ReminderKind = 'subscription' | 'bill' | 'document';
  * { id, kind: 'bill',         title: 'Internet bill',     dateISO: '2026-10-15', amountMinor, currency }
  * // document (§15) — a deadline with no money attached
  * { id, kind: 'document',     title: "Driver's license",  dateISO: '2026-10-12' }
+ * // maintenance (Phase 5e) — a service due, or cover expiring
+ * { id, kind: 'maintenance',  title: 'Vios oil change',   dateISO: '2027-01-26' }
  * ```
+ *
+ * `id` for a maintenance reminder is the SERVICE or RENEWAL row's id, not the
+ * item's. An item can have a service due and three renewals expiring, and
+ * `cancelRemindersFor()` matches on this id — one id per item would make
+ * cancelling one of them cancel all four.
  */
 export interface ReminderEntity {
   /** The record's UUID. Also what `cancelRemindersFor()` matches on. */
@@ -104,6 +111,16 @@ export interface ReminderDefaults {
   subscription: readonly ReminderLeadTime[];
   bill: readonly ReminderLeadTime[];
   document: readonly ReminderLeadTime[];
+  /**
+   * Services falling due AND cover expiring, under one setting.
+   *
+   * One kind rather than two: a user thinking about "remind me about the car"
+   * is not thinking about whether the thing due is an oil change or an
+   * insurance renewal, and a settings screen with five kinds on it is a screen
+   * nobody finishes reading. The projector composes a title that reads under
+   * one verb — see `reminderBody`.
+   */
+  maintenance: readonly ReminderLeadTime[];
   /** Local hour of day (0–23) reminders are delivered at. */
   hour: number;
 }
@@ -115,6 +132,7 @@ export function reminderDefaultsFromSettings(
     | 'subscriptionReminderLeadTimes'
     | 'billReminderLeadTimes'
     | 'documentReminderLeadTimes'
+    | 'maintenanceReminderLeadTimes'
     | 'reminderHour'
   >,
 ): ReminderDefaults {
@@ -122,6 +140,7 @@ export function reminderDefaultsFromSettings(
     subscription: settings.subscriptionReminderLeadTimes,
     bill: settings.billReminderLeadTimes,
     document: settings.documentReminderLeadTimes,
+    maintenance: settings.maintenanceReminderLeadTimes,
     hour: settings.reminderHour,
   };
 }
@@ -299,6 +318,8 @@ export function reminderTitle(kind: ReminderKind): string {
       return 'Bill due';
     case 'document':
       return 'Document expiring';
+    case 'maintenance':
+      return 'Maintenance due';
   }
 }
 
@@ -324,6 +345,13 @@ export function reminderBody(entity: ReminderEntity, leadDays: number): string {
       return `${entity.title} is due ${when}${amountSuffix(entity)}`;
     case 'document':
       return `Your ${entity.title} expires ${when}.`;
+    case 'maintenance':
+      // ONE verb for two kinds of deadline. A service falls due and cover
+      // expires, but "due" covers both and the projector composes a title that
+      // reads under it — "Vios oil change is due in 3 days", "Vios insurance is
+      // due in 7 days". Two verbs would mean two reminder kinds, two settings
+      // rows, and a user deciding something they do not think about.
+      return `${entity.title} is due ${when}${amountSuffix(entity)}`;
   }
 }
 

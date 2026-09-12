@@ -336,6 +336,11 @@ export function createSettingsApi(deps: SettingsApiDeps): SettingsApi {
         APP_SETTINGS_KEYS.documentReminderLeadTimes,
         defaults.documentReminderLeadTimes,
       ),
+      maintenanceReminderLeadTimes: fromSnapshot(
+        snapshot,
+        APP_SETTINGS_KEYS.maintenanceReminderLeadTimes,
+        defaults.maintenanceReminderLeadTimes,
+      ),
       reminderHour: fromSnapshot(
         snapshot,
         APP_SETTINGS_KEYS.reminderHour,

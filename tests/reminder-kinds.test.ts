@@ -27,6 +27,7 @@ const EVERY_SETTING_KEY = [
   'billReminderLeadTimes',
   'subscriptionReminderLeadTimes',
   'documentReminderLeadTimes',
+  'maintenanceReminderLeadTimes',
 ] as const;
 
 describe('the reminder kinds', () => {

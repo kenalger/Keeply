@@ -88,6 +88,9 @@ export default function ReminderKindScreen() {
     (s) => s.subscriptionReminderLeadTimes,
   );
   const documentReminderLeadTimes = useSettingsStore((s) => s.documentReminderLeadTimes);
+  const maintenanceReminderLeadTimes = useSettingsStore(
+    (s) => s.maintenanceReminderLeadTimes,
+  );
   const reminderHour = useSettingsStore((s) => s.reminderHour);
   const toggleReminderLeadTime = useSettingsStore((s) => s.toggleReminderLeadTime);
 
@@ -102,6 +105,7 @@ export default function ReminderKindScreen() {
     billReminderLeadTimes,
     subscriptionReminderLeadTimes,
     documentReminderLeadTimes,
+    maintenanceReminderLeadTimes,
   };
 
   const defaults = useMemo(
@@ -110,12 +114,14 @@ export default function ReminderKindScreen() {
         billReminderLeadTimes,
         subscriptionReminderLeadTimes,
         documentReminderLeadTimes,
+        maintenanceReminderLeadTimes,
         reminderHour,
       }),
     [
       billReminderLeadTimes,
       subscriptionReminderLeadTimes,
       documentReminderLeadTimes,
+      maintenanceReminderLeadTimes,
       reminderHour,
     ],
   );

@@ -61,13 +61,19 @@ export default function RemindersScreen() {
     (s) => s.subscriptionReminderLeadTimes,
   );
   const documentReminderLeadTimes = useSettingsStore((s) => s.documentReminderLeadTimes);
+  const maintenanceReminderLeadTimes = useSettingsStore(
+    (s) => s.maintenanceReminderLeadTimes,
+  );
   const reminderHour = useSettingsStore((s) => s.reminderHour);
   const update = useSettingsStore((s) => s.update);
 
+  // Keyed by `settingKey`, so a kind added to `REMINDER_KINDS` without a
+  // setting behind it is a compile error here rather than a blank row.
   const chosen: Record<ReminderKind['settingKey'], readonly ReminderLeadTime[]> = {
     billReminderLeadTimes,
     subscriptionReminderLeadTimes,
     documentReminderLeadTimes,
+    maintenanceReminderLeadTimes,
   };
 
   const leave = useCallback(() => {

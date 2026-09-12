@@ -11,7 +11,7 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 
 import {
   allMigrationStatements,
@@ -19,6 +19,7 @@ import {
   createMigratedDatabase,
   createMigratedDatabaseWithoutForeignKeys,
   insertRow,
+  migrationStatements,
   migrationTags,
   nowMs,
   softDelete,
@@ -923,5 +924,103 @@ describe('maintenance — one ledger for anything that needs looking after', () 
     ).map((c) => c.name);
     assert.equal(columns.includes('amount_minor'), false, 'money lives on the ledger only');
     assert.equal(columns.includes('currency'), false);
+  });
+});
+
+describe('0004 — the entity_type rename, and the view it had to step around', () => {
+  test('the CHECK names the maintenance tables, not the deleted vehicle ones', () => {
+    const db = createMigratedDatabase();
+    const sql = (
+      db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notification_settings'",
+        )
+        .get() as { sql: string }
+    ).sql;
+
+    for (const gone of ['vehicle_insurance', 'vehicle_registration', 'vehicle_maintenance']) {
+      assert.ok(!sql.includes(gone), `${gone} is still in the CHECK`);
+    }
+    assert.ok(sql.includes('maintenance_service'));
+    assert.ok(sql.includes('maintenance_renewal'));
+  });
+
+  test('the dependent view survived the table rebuild', () => {
+    // The whole reason `0004` is hand-authored. drizzle-kit's generated version
+    // dropped the table out from under this view and the following RENAME
+    // failed with "error in view notification_settings_live: no such table" —
+    // observed, not theorised. If the DROP/CREATE pair around the rebuild is
+    // ever removed, the migration stops applying at all and every test in this
+    // file goes red; this one says why.
+    const db = createMigratedDatabase();
+    const view = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ?")
+      .get('notification_settings_live') as { sql: string } | undefined;
+
+    assert.ok(view !== undefined, 'notification_settings_live is gone');
+    assert.ok(view.sql.includes('deleted_at'), 'the view lost its live-rows predicate');
+    // And it is queryable, which a view over a dropped table is not.
+    assert.doesNotThrow(() => count(db, 'notification_settings_live'));
+  });
+
+  test('the new values are accepted and the old ones are refused', () => {
+    const db = createMigratedDatabase();
+    const row = (entityType: string) => ({
+      id: testId('ns'),
+      entity_type: entityType,
+      entity_id: testId('ent'),
+      days_before: 7,
+      enabled: 1,
+      created_at: nowMs(),
+      updated_at: nowMs(),
+    });
+
+    for (const accepted of ['global', 'subscription', 'bill', 'document', 'maintenance_service', 'maintenance_renewal']) {
+      assert.doesNotThrow(
+        () => insertRow(db, 'notification_settings', row(accepted)),
+        accepted,
+      );
+    }
+    for (const refused of ['vehicle_insurance', 'vehicle_registration', 'vehicle_maintenance']) {
+      assert.throws(
+        () => insertRow(db, 'notification_settings', row(refused)),
+        /CHECK constraint failed/,
+        refused,
+      );
+    }
+  });
+
+  test('an old row would have been mapped, not dropped', () => {
+    // No build ever wrote one — the table has no writer — so this exercises the
+    // CASE in the migration's INSERT…SELECT against a row planted the way a
+    // bundle restored from an older build could carry it. Without the CASE the
+    // copy hits the new CHECK and the whole migration fails, which on a device
+    // is an app that will not open.
+    const tags = migrationTags();
+    const rename = tags.find((tag) => tag.startsWith('0004'));
+    assert.ok(rename !== undefined, '0004 is missing from the journal');
+
+    // Everything BEFORE the rename, so the old CHECK is still in force.
+    const db = new DatabaseSync(':memory:');
+    for (const tag of tags.slice(0, tags.indexOf(rename))) {
+      for (const statement of migrationStatements(tag)) db.exec(statement);
+    }
+
+    insertRow(db, 'notification_settings', {
+      id: testId('ns'),
+      entity_type: 'vehicle_insurance',
+      entity_id: testId('ent'),
+      days_before: 7,
+      enabled: 1,
+      created_at: nowMs(),
+      updated_at: nowMs(),
+    });
+
+    for (const statement of migrationStatements(rename)) db.exec(statement);
+
+    const mapped = db
+      .prepare('SELECT entity_type FROM notification_settings')
+      .all() as { entity_type: string }[];
+    assert.deepEqual(mapped.map((r) => r.entity_type), ['maintenance_renewal']);
   });
 });

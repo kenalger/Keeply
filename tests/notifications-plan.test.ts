@@ -62,6 +62,7 @@ function defaults(overrides: Partial<ReminderDefaults> = {}): ReminderDefaults {
     subscription: ['1-day'],
     bill: ['3-days', '1-day'],
     document: ['30-days', '7-days'],
+    maintenance: ['7-days', '1-day'],
     hour: 9,
     ...overrides,
   };
@@ -90,6 +91,7 @@ describe('reminderDefaultsFromSettings', () => {
       subscription: DEFAULT_SETTINGS.subscriptionReminderLeadTimes,
       bill: DEFAULT_SETTINGS.billReminderLeadTimes,
       document: DEFAULT_SETTINGS.documentReminderLeadTimes,
+      maintenance: DEFAULT_SETTINGS.maintenanceReminderLeadTimes,
       hour: DEFAULT_SETTINGS.reminderHour,
     });
   });
@@ -100,6 +102,7 @@ describe('reminderDefaultsFromSettings', () => {
     assert.deepEqual([...DEFAULT_SETTINGS.subscriptionReminderLeadTimes], ['1-day']);
     assert.deepEqual([...DEFAULT_SETTINGS.billReminderLeadTimes], ['3-days', '1-day']);
     assert.deepEqual([...DEFAULT_SETTINGS.documentReminderLeadTimes], ['30-days', '7-days']);
+    assert.deepEqual([...DEFAULT_SETTINGS.maintenanceReminderLeadTimes], ['7-days', '1-day']);
   });
 });
 

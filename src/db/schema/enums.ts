@@ -211,19 +211,17 @@ export const NOTIFICATION_ENTITY_TYPE_VALUES = [
   'subscription',
   'bill',
   'document',
-  // These three still name the OLD vehicle tables. Renaming them to
-  // `maintenance_service` / `maintenance_renewal` changes a CHECK constraint,
-  // which SQLite can only do by rebuilding the table — and drizzle-kit's
-  // rebuild does not drop the dependent `notification_settings_live` view
-  // first, so the generated `ALTER TABLE … RENAME` fails with
-  // "error in view notification_settings_live: no such table".
+  // Renamed in 5e from `vehicle_insurance` / `vehicle_registration` /
+  // `vehicle_maintenance`, which named tables that stopped existing in
+  // migration `0002`. Two values, not three: `maintenance_renewals` already
+  // merged insurance and registration into one table with its own `kind`
+  // (`plan/phase5-maintenance.md` §3), so a third entity type here would have
+  // been a distinction the maintenance schema no longer makes.
   //
-  // No code reads these values yet (grep: zero hits outside this file), so the
-  // rename waits for step 5e, when reminders are actually wired and the view
-  // can be dropped and recreated around the rebuild in one deliberate change.
-  'vehicle_insurance',
-  'vehicle_registration',
-  'vehicle_maintenance',
+  // The migration that did it is `0004`, and it is HAND-AUTHORED — see the
+  // comment at the top of that file for why drizzle-kit cannot generate it.
+  'maintenance_service',
+  'maintenance_renewal',
 ] as const;
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPE_VALUES)[number];
 

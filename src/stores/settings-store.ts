@@ -126,6 +126,11 @@ export interface AppSettings {
   subscriptionReminderLeadTimes: readonly ReminderLeadTime[];
   /** Default reminders for document expiry (§15). */
   documentReminderLeadTimes: readonly ReminderLeadTime[];
+  /**
+   * Default reminders for maintenance — a service falling due, or cover
+   * expiring. One list for both: see `ReminderDefaults.maintenance`.
+   */
+  maintenanceReminderLeadTimes: readonly ReminderLeadTime[];
   /** Local hour of day (0–23) that reminders are delivered. */
   reminderHour: number;
 }
@@ -137,6 +142,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   billReminderLeadTimes: ['3-days', '1-day'],
   subscriptionReminderLeadTimes: ['1-day'],
   documentReminderLeadTimes: ['30-days', '7-days'],
+  // Longer than a bill's and shorter than a document's. Booking a service
+  // takes days, not the weeks a passport renewal does — and unlike a bill you
+  // cannot do it from the sofa at 9pm.
+  maintenanceReminderLeadTimes: ['7-days', '1-day'],
   reminderHour: 9,
 };
 
@@ -144,7 +153,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export type ReminderLeadTimeKey =
   | 'billReminderLeadTimes'
   | 'subscriptionReminderLeadTimes'
-  | 'documentReminderLeadTimes';
+  | 'documentReminderLeadTimes'
+  | 'maintenanceReminderLeadTimes';
 
 interface SettingsState extends AppSettings {
   /**
@@ -242,6 +252,7 @@ const REMINDER_AFFECTING_KEYS: readonly (keyof AppSettings)[] = [
   'billReminderLeadTimes',
   'subscriptionReminderLeadTimes',
   'documentReminderLeadTimes',
+  'maintenanceReminderLeadTimes',
   'reminderHour',
 ];
 
@@ -327,6 +338,7 @@ export const useReminderDefaults = (): Pick<
   | 'billReminderLeadTimes'
   | 'subscriptionReminderLeadTimes'
   | 'documentReminderLeadTimes'
+  | 'maintenanceReminderLeadTimes'
   | 'reminderHour'
 > =>
   useSettingsStore(
@@ -334,6 +346,7 @@ export const useReminderDefaults = (): Pick<
       billReminderLeadTimes: s.billReminderLeadTimes,
       subscriptionReminderLeadTimes: s.subscriptionReminderLeadTimes,
       documentReminderLeadTimes: s.documentReminderLeadTimes,
+      maintenanceReminderLeadTimes: s.maintenanceReminderLeadTimes,
       reminderHour: s.reminderHour,
     }))
   );

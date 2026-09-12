@@ -308,6 +308,13 @@ export const DOCUMENT_LEAD_TIMES = listSetting<ReminderLeadTime>(
   'reminder lead times',
 );
 
+/** Services falling due and cover expiring, under one setting (Phase 5e). */
+export const MAINTENANCE_LEAD_TIMES = listSetting<ReminderLeadTime>(
+  'notifications.maintenance_lead_times',
+  REMINDER_LEAD_TIMES,
+  'reminder lead times',
+);
+
 /**
  * The local hour of day reminders are delivered at, `0`–`23`.
  *
@@ -430,6 +437,7 @@ export const SETTING_REGISTRY: readonly RegisteredSetting[] = [
   registered(SUBSCRIPTION_LEAD_TIMES),
   registered(BILL_LEAD_TIMES),
   registered(DOCUMENT_LEAD_TIMES),
+  registered(MAINTENANCE_LEAD_TIMES),
   registered(REMINDER_HOUR),
   registered(APP_LOCK_ENABLED),
   registered(APP_LOCK_GRACE_SECONDS),
@@ -454,6 +462,7 @@ export const APP_SETTINGS_KEYS = {
   billReminderLeadTimes: BILL_LEAD_TIMES,
   subscriptionReminderLeadTimes: SUBSCRIPTION_LEAD_TIMES,
   documentReminderLeadTimes: DOCUMENT_LEAD_TIMES,
+  maintenanceReminderLeadTimes: MAINTENANCE_LEAD_TIMES,
   reminderHour: REMINDER_HOUR,
 } as const;
 
