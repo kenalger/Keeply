@@ -1145,6 +1145,7 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
           currency: currencyOr(primary?.currency, defaultCurrency),
           distanceKm,
           costPerKm: totalMinor / distanceKm,
+          costPerKmMinor: minorUnits(Math.round(totalMinor / distanceKm)) as MinorUnits,
           fromISO,
           toISO,
           readingCount,

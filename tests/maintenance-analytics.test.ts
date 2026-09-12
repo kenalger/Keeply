@@ -259,9 +259,41 @@ describe('cost per kilometre', () => {
     assert.equal(result.value.distanceKm, 2_000);
     assert.equal(result.value.totalMinor, 500_000);
     assert.equal(result.value.costPerKm, 250);
+    assert.equal(result.value.costPerKmMinor, 250);
     assert.equal(result.value.fromISO, '2026-07-01');
     assert.equal(result.value.toISO, '2026-08-01');
     assert.equal(result.value.readingCount, 2);
+  });
+
+  test('a fractional rate is rounded once, in the data layer', async () => {
+    const api = harness();
+    const item = await api.createItem({ name: 'Vios', kind: 'vehicle', vehicleType: 'car' });
+
+    await api.createCost({
+      itemId: item.id,
+      type: 'fuel',
+      amountMinor: 100_000,
+      costDate: '2026-07-01',
+      odometer: 40_000,
+    });
+    await api.createCost({
+      itemId: item.id,
+      type: 'fuel',
+      amountMinor: 100_000,
+      costDate: '2026-08-01',
+      odometer: 40_300,
+    });
+
+    const result = await api.costPerKilometre(item.id);
+    assert.equal(result.available, true);
+    if (!result.available) return;
+
+    // 200,000 centavos over 300 km is 666.67 — a rate, not money.
+    assert.ok(Math.abs(result.value.costPerKm - 2_000_000 / 3_000) < 1e-9);
+    // The renderable figure is a whole number of minor units, rounded here so
+    // that no screen has to cast past the `MinorUnits` brand to draw it.
+    assert.equal(result.value.costPerKmMinor, 667);
+    assert.ok(Number.isSafeInteger(result.value.costPerKmMinor));
   });
 
   test('a service recorded with an odometer widens the window', async () => {

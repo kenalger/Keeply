@@ -1,0 +1,124 @@
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useMemo } from 'react';
+
+import {
+  Amount,
+  EmptyState,
+  IconButton,
+  List,
+  ListNote,
+  Row,
+  Screen,
+  ScreenHeader,
+  amountLabel,
+} from '@/components/ui';
+import type { MaintenanceCostRecord } from '@/features/maintenance';
+import {
+  COST_TYPE_ICONS,
+  COST_TYPE_LABELS,
+  formatKilometres,
+  useItemCosts,
+  useMaintenanceItem,
+} from '@/features/maintenance/ui';
+import { formatDate } from '@/theme';
+
+/**
+ * One item's whole ledger (Phase 5c).
+ *
+ * A `<List/>`, not a scrolling stack of cards: this is the one maintenance
+ * screen with no bound on its length — four years of fill-ups is several
+ * hundred rows — and the detail screen's five-row preview exists precisely so
+ * that everything else can stay a `ScrollView`.
+ *
+ * ── NO TOTAL AT THE TOP ────────────────────────────────────────────────────
+ * The detail screen carries it, one tap away, computed by SQL over EVERY row.
+ * A figure here would have to either repeat that read or sum the page — and a
+ * total that quietly means "of the 40 rows loaded so far" is the kind of number
+ * people plan around.
+ */
+export default function MaintenanceCostsScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+
+  const item = useMaintenanceItem(id);
+  const costs = useItemCosts(id);
+
+  const leave = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace({ pathname: '/maintenance/[id]', params: { id } });
+  }, [router, id]);
+
+  const openCost = useCallback(
+    (costId: string) =>
+      router.push({ pathname: '/maintenance/[id]/cost', params: { id, costId } }),
+    [router, id],
+  );
+
+  const renderItem = useCallback(
+    ({ item: cost }: { item: MaintenanceCostRecord }) => (
+      <Row
+        icon={COST_TYPE_ICONS[cost.type]}
+        title={cost.description ?? COST_TYPE_LABELS[cost.type]}
+        subtitle={[
+          formatDate(cost.costDate),
+          cost.vendor,
+          cost.odometer === null ? null : formatKilometres(cost.odometer),
+        ]
+          .filter((part): part is string => part !== null)
+          .join(' · ')}
+        value={<Amount minor={cost.amountMinor} currency={cost.currency} size="sm" />}
+        valueLabel={amountLabel(cost.amountMinor, { currency: cost.currency })}
+        onPress={() => openCost(cost.id)}
+      />
+    ),
+    [openCost],
+  );
+
+  const keyExtractor = useCallback((cost: MaintenanceCostRecord) => cost.id, []);
+
+  const footer = useMemo(
+    () =>
+      costs.damagedCount === 0 ? null : (
+        <ListNote>{`${costs.damagedCount} could not be read.`}</ListNote>
+      ),
+    [costs.damagedCount],
+  );
+
+  return (
+    <Screen edges={['top']}>
+      <ScreenHeader
+        title="Ledger"
+        subtitle={item.value?.name}
+        onBack={leave}
+        right={
+          <IconButton
+            name="plus"
+            accessibilityLabel="Record a cost"
+            onPress={() =>
+              router.push({ pathname: '/maintenance/[id]/cost', params: { id } })
+            }
+            testID="costs-add"
+          />
+        }
+      />
+
+      {costs.status === 'ready' && costs.rows.length === 0 ? (
+        <EmptyState
+          icon="banknote"
+          title="Nothing recorded yet"
+          description="Fuel, repairs, parts, premiums — everything this item costs lands here."
+          actionLabel="Record a cost"
+          onAction={() => router.push({ pathname: '/maintenance/[id]/cost', params: { id } })}
+        />
+      ) : (
+        <List
+          data={costs.rows}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          surface="card"
+          footer={footer}
+        />
+      )}
+    </Screen>
+  );
+}

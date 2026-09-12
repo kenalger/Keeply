@@ -522,8 +522,18 @@ export interface CostPerKilometre {
   totalMinor: MinorUnits;
   currency: string;
   distanceKm: number;
-  /** Minor units per kilometre. NOT an integer — this is a rate, not money. */
+  /** Minor units per kilometre, EXACT. Not an integer — this is a rate. */
   costPerKm: number;
+  /**
+   * The same rate rounded to whole minor units, so it can be rendered as money.
+   *
+   * Rounded HERE rather than at the screen. `<Amount/>` takes `MinorUnits`, and
+   * a screen that reaches the rounding itself has to cast past the brand — which
+   * is the one thing the brand exists to prevent (§30). Where a fraction of a
+   * centavo per kilometre is dropped is a data decision, so it is made once, in
+   * the data layer, with a name.
+   */
+  costPerKmMinor: MinorUnits;
   fromISO: string;
   toISO: string;
   /** Cost rows carrying an odometer reading. Always at least 2. */

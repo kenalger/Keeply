@@ -98,6 +98,7 @@ export {
 } from './queries';
 export type { FuelFill, MaintenanceApi, MaintenanceApiDeps } from './queries';
 export type { MaintenanceStore, SqlStatement, SqlValue } from './store';
+export { formatLitresDraft, parseLitres } from './litres';
 export {
   validateCostPatch,
   validateItemPatch,

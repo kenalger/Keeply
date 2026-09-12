@@ -19,9 +19,14 @@
 import type { IconName, SelectOption } from '@/components/ui';
 
 import {
+  MAINTENANCE_COST_TYPES,
   MAINTENANCE_ITEM_KINDS,
+  MAINTENANCE_RENEWAL_KINDS,
   VEHICLE_TYPES,
+  type AnalyticsGap,
+  type MaintenanceCostType,
   type MaintenanceItemKind,
+  type MaintenanceRenewalKind,
   type VehicleType,
 } from '../types';
 
@@ -89,4 +94,116 @@ export function describeItem(item: {
     (part): part is string => part !== null && part.length > 0,
   );
   return parts.length === 0 ? KIND_LABELS[item.kind] : parts.join(' · ');
+}
+
+/* -------------------------------------------------------------------------- */
+/* The child records (Phase 5c)                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a cost was for.
+ *
+ * The words are the user's, not the schema's — `registration` is the enum,
+ * "Registration" is the label, and no screen ever prints the former. Being
+ * exhaustive over the union, adding a cost type to the schema is a compile
+ * error here rather than a lowercase slug on a ledger row.
+ */
+export const COST_TYPE_LABELS: Readonly<Record<MaintenanceCostType, string>> = {
+  fuel: 'Fuel',
+  service: 'Service',
+  repair: 'Repair',
+  parts: 'Parts',
+  insurance: 'Insurance',
+  registration: 'Registration',
+  other: 'Other',
+};
+
+/**
+ * One glyph each, and no repeats.
+ *
+ * The same rule `KIND_ICONS` follows and for the same reason: on a monochrome
+ * palette the symbol is the only thing separating two ledger rows at a glance.
+ * `bolt` is a literal bolt for `parts`; `gear` takes `repair` so that neither
+ * collides with `wrench`, which `service` has the better claim to.
+ */
+export const COST_TYPE_ICONS: Readonly<Record<MaintenanceCostType, IconName>> = {
+  fuel: 'fuel',
+  service: 'wrench',
+  repair: 'gear',
+  parts: 'bolt',
+  insurance: 'shield',
+  registration: 'doc',
+  other: 'tag',
+};
+
+export const COST_TYPE_OPTIONS: readonly SelectOption<MaintenanceCostType>[] =
+  MAINTENANCE_COST_TYPES.map((type) => ({
+    value: type,
+    label: COST_TYPE_LABELS[type],
+    icon: COST_TYPE_ICONS[type],
+  }));
+
+export const RENEWAL_KIND_LABELS: Readonly<Record<MaintenanceRenewalKind, string>> = {
+  insurance: 'Insurance',
+  registration: 'Registration',
+  warranty: 'Warranty',
+};
+
+/** What each kind of cover IS, so the picker does not assume the user knows. */
+export const RENEWAL_KIND_DESCRIPTIONS: Readonly<Record<MaintenanceRenewalKind, string>> = {
+  insurance: 'A policy that has to be renewed',
+  registration: 'LTO registration, a licence, a permit',
+  warranty: 'Cover the manufacturer or seller gave you',
+};
+
+export const RENEWAL_KIND_ICONS: Readonly<Record<MaintenanceRenewalKind, IconName>> = {
+  insurance: 'shield',
+  registration: 'doc',
+  warranty: 'checkCircle',
+};
+
+export const RENEWAL_KIND_OPTIONS: readonly SelectOption<MaintenanceRenewalKind>[] =
+  MAINTENANCE_RENEWAL_KINDS.map((kind) => ({
+    value: kind,
+    label: RENEWAL_KIND_LABELS[kind],
+    hint: RENEWAL_KIND_DESCRIPTIONS[kind],
+    icon: RENEWAL_KIND_ICONS[kind],
+  }));
+
+/**
+ * Why an analytic has nothing to show, as a sentence saying what to record.
+ *
+ * This is the whole reason `AnalyticsGap` is a named reason rather than a
+ * `null`. Every user is in one of these states for weeks, and a panel that
+ * just disappears cannot tell anyone what the missing ingredient is.
+ */
+export const ANALYTICS_GAP_MESSAGES: Readonly<Record<AnalyticsGap, string>> = {
+  'not-a-vehicle': 'Only vehicles track distance.',
+  'no-odometer': 'Record an odometer reading with a cost to start tracking this.',
+  'one-odometer': 'One reading so far. A second one gives Keeply a distance to work with.',
+  'no-distance': 'The readings so far are the same. Nothing to divide by yet.',
+  'no-fuel': 'Record a fill-up with its litres to start tracking this.',
+  'no-full-tank': 'Mark a fill-up as a full tank — that is what makes the maths work.',
+  'one-full-tank': 'One full tank so far. The next one completes the measurement.',
+};
+
+/**
+ * "41,200 km". Grouped, because six digits unbroken is a number nobody reads.
+ *
+ * `en-PH` explicitly rather than the device locale: every other number in this
+ * app is formatted by `formatMoney`, which pins the same locale, and an
+ * odometer that groups differently from the amount beside it looks like a bug.
+ */
+export function formatKilometres(km: number): string {
+  return `${km.toLocaleString('en-PH')} km`;
+}
+
+/** "10.4 km/L". One decimal — a second one is noise on a measured quantity. */
+export function formatEfficiency(kilometresPerLitre: number): string {
+  return `${kilometresPerLitre.toFixed(1)} km/L`;
+}
+
+/** Millilitres back to litres for display. "40.0 L". */
+export function formatLitres(milli: number): string {
+  return `${(milli / 1000).toFixed(1)} L`;
 }
