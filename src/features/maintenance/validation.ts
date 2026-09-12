@@ -20,18 +20,36 @@ import { isValidCalendarDate } from '@/theme/format';
 
 import {
   BRAND_MAX_LENGTH,
+  DESCRIPTION_MAX_LENGTH,
   IDENTIFIER_MAX_LENGTH,
+  MAX_FILL_MILLILITRES,
+  MAX_ODOMETER_KM,
   MIN_YEAR,
   MODEL_MAX_LENGTH,
   NAME_MAX_LENGTH,
   NOTES_MAX_LENGTH,
+  PROVIDER_MAX_LENGTH,
+  REFERENCE_MAX_LENGTH,
+  SERVICE_TYPE_MAX_LENGTH,
+  SHOP_MAX_LENGTH,
+  VENDOR_MAX_LENGTH,
   MaintenanceError,
+  isMaintenanceCostType,
   isMaintenanceItemKind,
+  isMaintenanceRenewalKind,
   isVehicle,
   isVehicleType,
+  type MaintenanceCostPatch,
+  type MaintenanceCostType,
   type MaintenanceItemKind,
   type MaintenanceItemPatch,
+  type MaintenanceRenewalKind,
+  type MaintenanceRenewalPatch,
+  type MaintenanceServicePatch,
+  type NewMaintenanceCostInput,
   type NewMaintenanceItemInput,
+  type NewMaintenanceRenewalInput,
+  type NewMaintenanceServiceInput,
   type VehicleType,
 } from './types';
 
@@ -227,6 +245,437 @@ export function validateItemPatch(
   }
 
   if ('isActive' in patch) out.isActive = patch.isActive ?? true;
+
+  return out;
+}
+
+/* ========================================================================== */
+/* THE CHILD RECORDS (Phase 5c)                                               */
+/*                                                                            */
+/* Same two rules as the item's: every message names a FIELD and never a      */
+/* VALUE, and a field that stops applying is NULLED rather than refused.      */
+/*                                                                            */
+/* The second rule earns its keep twice more here. An odometer belongs to a   */
+/* vehicle, so recording one against an aircon is a form that offered the     */
+/* wrong field — and the fuel columns belong to a fuel row, so changing a     */
+/* cost's type from `fuel` to `repair` must drop the litres rather than       */
+/* refuse the edit and strand the user on a screen they cannot leave.         */
+/* ========================================================================== */
+
+/** Money: a positive, whole number of minor units. `₱0` is not an event. */
+function amount(value: number | null | undefined, field: string): number {
+  if (value === null || value === undefined) {
+    throw new MaintenanceError('invalid-field', 'Enter an amount', field);
+  }
+  if (!Number.isSafeInteger(value)) {
+    // No value in the message — an amount is user data (§18).
+    throw new MaintenanceError('invalid-field', 'That amount is not a whole number', field);
+  }
+  if (value <= 0) {
+    throw new MaintenanceError('invalid-field', 'An amount must be more than zero', field);
+  }
+  return value;
+}
+
+/** The same, but absent is allowed — a service that cost nothing (§A3). */
+function optionalAmount(value: number | null | undefined, field: string): number | null {
+  if (value === null || value === undefined) return null;
+  return amount(value, field);
+}
+
+function requiredDate(value: string | null | undefined, field: string, label: string): string {
+  const date = calendarDate(value, field);
+  if (date === null) {
+    throw new MaintenanceError('invalid-field', label, field);
+  }
+  return date;
+}
+
+/** Currency: three letters, upper-cased. The CHECK constraint's readable half. */
+function currencyCode(value: string | null | undefined, fallback: string): string {
+  if (value === null || value === undefined || value.trim() === '') return fallback;
+  const code = value.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(code)) {
+    throw new MaintenanceError('invalid-field', 'That is not a currency code', 'currency');
+  }
+  return code;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Costs                                                                       */
+/* -------------------------------------------------------------------------- */
+
+export interface ValidatedCost {
+  type: MaintenanceCostType;
+  amountMinor: number;
+  currency: string;
+  costDate: string;
+  odometer: number | null;
+  description: string | null;
+  vendor: string | null;
+  notes: string | null;
+  fuelLitersMilli: number | null;
+  fuelPricePerLiterMinor: number | null;
+  isFullTank: boolean | null;
+}
+
+/**
+ * Check a cost row.
+ *
+ * `itemKind` decides whether the odometer survives, and `type` decides whether
+ * the fuel columns do. Both are NULLED rather than refused — see the banner.
+ *
+ * A cost date in the FUTURE is refused. Recording a cost is recording something
+ * that happened; a date ahead of today puts spend in a year that has not
+ * occurred, and silently widens the window cost-per-km is measured over.
+ */
+export function validateNewCost(
+  input: NewMaintenanceCostInput,
+  todayISO: string,
+  itemKind: MaintenanceItemKind,
+  defaultCurrency: string,
+): ValidatedCost {
+  if (!isMaintenanceCostType(input.type)) {
+    throw new MaintenanceError('invalid-field', 'Choose what this was for', 'type');
+  }
+
+  const costDate = requiredDate(input.costDate, 'costDate', 'Choose the date it was spent');
+  if (costDate > todayISO) {
+    throw new MaintenanceError(
+      'invalid-field',
+      'A cost cannot be dated in the future',
+      'costDate',
+    );
+  }
+
+  const vehicle = isVehicle(itemKind);
+  const fuel = input.type === 'fuel';
+
+  return {
+    type: input.type,
+    amountMinor: amount(input.amountMinor, 'amountMinor'),
+    currency: currencyCode(input.currency, defaultCurrency),
+    costDate,
+    odometer: vehicle ? counter(input.odometer, 'odometer', MAX_ODOMETER_KM) : null,
+    description: text(input.description, DESCRIPTION_MAX_LENGTH, 'description'),
+    vendor: text(input.vendor, VENDOR_MAX_LENGTH, 'vendor'),
+    notes: text(input.notes, NOTES_MAX_LENGTH, 'notes'),
+    // Fuel facts on a non-fuel row are a form that offered the wrong fields.
+    fuelLitersMilli: fuel
+      ? positiveCounter(input.fuelLitersMilli, 'fuelLitersMilli', MAX_FILL_MILLILITRES)
+      : null,
+    fuelPricePerLiterMinor: fuel
+      ? optionalAmount(input.fuelPricePerLiterMinor, 'fuelPricePerLiterMinor')
+      : null,
+    // `null` and `false` are different answers: `null` is "not a fuel row",
+    // `false` is "a fuel row that was not filled to full". Tank-to-tank
+    // efficiency reads the difference, so it is preserved rather than
+    // collapsed to a boolean with a default.
+    isFullTank: fuel ? (input.isFullTank ?? null) : null,
+  };
+}
+
+/** A whole number that must be above zero — a 0-litre fill is not a fill. */
+function positiveCounter(
+  value: number | null | undefined,
+  field: string,
+  max: number,
+): number | null {
+  const whole = counter(value, field, max);
+  if (whole !== null && whole === 0) {
+    throw new MaintenanceError('invalid-field', 'That must be more than zero', field);
+  }
+  return whole;
+}
+
+export function validateCostPatch(
+  patch: MaintenanceCostPatch,
+  todayISO: string,
+  itemKind: MaintenanceItemKind,
+  currentType: MaintenanceCostType,
+): Partial<ValidatedCost> {
+  const out: Partial<ValidatedCost> = {};
+
+  if ('type' in patch) {
+    if (!isMaintenanceCostType(patch.type)) {
+      throw new MaintenanceError('invalid-field', 'Choose what this was for', 'type');
+    }
+    out.type = patch.type;
+  }
+
+  // The type AFTER the patch applies, for the same reason the item's patch
+  // resolves the kind first: setting `type: 'fuel'` and litres in one call has
+  // to keep the litres.
+  const type = out.type ?? currentType;
+  const fuel = type === 'fuel';
+  const vehicle = isVehicle(itemKind);
+
+  if ('amountMinor' in patch) out.amountMinor = amount(patch.amountMinor, 'amountMinor');
+  if ('currency' in patch) {
+    // No fallback on a patch: `currency: null` means "leave it", not "reset it
+    // to the app default", and a patch that silently rewrote a USD row to PHP
+    // would restate a total by a factor of fifty.
+    if (patch.currency !== null && patch.currency !== undefined) {
+      out.currency = currencyCode(patch.currency, '');
+    }
+  }
+
+  if ('costDate' in patch) {
+    const date = requiredDate(patch.costDate, 'costDate', 'Choose the date it was spent');
+    if (date > todayISO) {
+      throw new MaintenanceError(
+        'invalid-field',
+        'A cost cannot be dated in the future',
+        'costDate',
+      );
+    }
+    out.costDate = date;
+  }
+
+  if ('odometer' in patch) {
+    out.odometer = vehicle ? counter(patch.odometer, 'odometer', MAX_ODOMETER_KM) : null;
+  }
+  if ('description' in patch) {
+    out.description = text(patch.description, DESCRIPTION_MAX_LENGTH, 'description');
+  }
+  if ('vendor' in patch) out.vendor = text(patch.vendor, VENDOR_MAX_LENGTH, 'vendor');
+  if ('notes' in patch) out.notes = text(patch.notes, NOTES_MAX_LENGTH, 'notes');
+
+  if ('fuelLitersMilli' in patch) {
+    out.fuelLitersMilli = fuel
+      ? positiveCounter(patch.fuelLitersMilli, 'fuelLitersMilli', MAX_FILL_MILLILITRES)
+      : null;
+  }
+  if ('fuelPricePerLiterMinor' in patch) {
+    out.fuelPricePerLiterMinor = fuel
+      ? optionalAmount(patch.fuelPricePerLiterMinor, 'fuelPricePerLiterMinor')
+      : null;
+  }
+  if ('isFullTank' in patch) out.isFullTank = fuel ? (patch.isFullTank ?? null) : null;
+
+  // Changing a cost AWAY from fuel clears the three columns that stop applying,
+  // even when the patch does not mention them — otherwise a repair row keeps
+  // 42 litres that no screen offers a way to edit, and `selectFuelFills`
+  // already excludes it, so the litres become unreachable rather than wrong.
+  if ('type' in patch && !fuel) {
+    out.fuelLitersMilli = null;
+    out.fuelPricePerLiterMinor = null;
+    out.isFullTank = null;
+  }
+
+  return out;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Services                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface ValidatedService {
+  serviceType: string;
+  serviceDate: string;
+  odometer: number | null;
+  nextServiceDate: string | null;
+  nextServiceMileage: number | null;
+  shop: string | null;
+  notes: string | null;
+}
+
+/**
+ * Check a service.
+ *
+ * The amount is NOT here: it becomes a `maintenance_costs` row, and
+ * `validateNewCost` checks it when that row is built. One rule for money, in
+ * one place, whatever screen it was typed on.
+ *
+ * `nextServiceDate` may be in the future — that is the whole point of it — but
+ * never BEFORE the service it follows, which the schema also checks. Caught
+ * here so the message names a field instead of a constraint.
+ */
+export function validateNewService(
+  input: NewMaintenanceServiceInput,
+  todayISO: string,
+  itemKind: MaintenanceItemKind,
+): ValidatedService {
+  const serviceType = text(input.serviceType, SERVICE_TYPE_MAX_LENGTH, 'serviceType');
+  if (serviceType === null) {
+    throw new MaintenanceError('invalid-field', 'Say what was done', 'serviceType');
+  }
+
+  const serviceDate = requiredDate(
+    input.serviceDate,
+    'serviceDate',
+    'Choose the date it was done',
+  );
+  if (serviceDate > todayISO) {
+    throw new MaintenanceError(
+      'invalid-field',
+      'A service cannot be dated in the future',
+      'serviceDate',
+    );
+  }
+
+  const nextServiceDate = calendarDate(input.nextServiceDate, 'nextServiceDate');
+  if (nextServiceDate !== null && nextServiceDate < serviceDate) {
+    throw new MaintenanceError(
+      'invalid-field',
+      'The next service cannot be due before this one happened',
+      'nextServiceDate',
+    );
+  }
+
+  const vehicle = isVehicle(itemKind);
+
+  return {
+    serviceType,
+    serviceDate,
+    odometer: vehicle ? counter(input.odometer, 'odometer', MAX_ODOMETER_KM) : null,
+    nextServiceDate,
+    nextServiceMileage: vehicle
+      ? counter(input.nextServiceMileage, 'nextServiceMileage', MAX_ODOMETER_KM)
+      : null,
+    shop: text(input.shop, SHOP_MAX_LENGTH, 'shop'),
+    notes: text(input.notes, NOTES_MAX_LENGTH, 'notes'),
+  };
+}
+
+export function validateServicePatch(
+  patch: MaintenanceServicePatch,
+  todayISO: string,
+  itemKind: MaintenanceItemKind,
+  currentServiceDate: string,
+): Partial<ValidatedService> {
+  const out: Partial<ValidatedService> = {};
+  const vehicle = isVehicle(itemKind);
+
+  if ('serviceType' in patch) {
+    const serviceType = text(patch.serviceType, SERVICE_TYPE_MAX_LENGTH, 'serviceType');
+    if (serviceType === null) {
+      throw new MaintenanceError('invalid-field', 'Say what was done', 'serviceType');
+    }
+    out.serviceType = serviceType;
+  }
+
+  if ('serviceDate' in patch) {
+    const date = requiredDate(patch.serviceDate, 'serviceDate', 'Choose the date it was done');
+    if (date > todayISO) {
+      throw new MaintenanceError(
+        'invalid-field',
+        'A service cannot be dated in the future',
+        'serviceDate',
+      );
+    }
+    out.serviceDate = date;
+  }
+
+  // The service date AFTER the patch — moving the service and its next-due date
+  // in one call must compare the two new values, not one new against one old.
+  const serviceDate = out.serviceDate ?? currentServiceDate;
+
+  if ('nextServiceDate' in patch) {
+    const date = calendarDate(patch.nextServiceDate, 'nextServiceDate');
+    if (date !== null && date < serviceDate) {
+      throw new MaintenanceError(
+        'invalid-field',
+        'The next service cannot be due before this one happened',
+        'nextServiceDate',
+      );
+    }
+    out.nextServiceDate = date;
+  }
+
+  if ('odometer' in patch) {
+    out.odometer = vehicle ? counter(patch.odometer, 'odometer', MAX_ODOMETER_KM) : null;
+  }
+  if ('nextServiceMileage' in patch) {
+    out.nextServiceMileage = vehicle
+      ? counter(patch.nextServiceMileage, 'nextServiceMileage', MAX_ODOMETER_KM)
+      : null;
+  }
+  if ('shop' in patch) out.shop = text(patch.shop, SHOP_MAX_LENGTH, 'shop');
+  if ('notes' in patch) out.notes = text(patch.notes, NOTES_MAX_LENGTH, 'notes');
+
+  return out;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Renewals                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface ValidatedRenewal {
+  kind: MaintenanceRenewalKind;
+  provider: string | null;
+  referenceNumber: string | null;
+  startDate: string | null;
+  expiryDate: string | null;
+  notes: string | null;
+}
+
+function renewalKindOf(value: unknown): MaintenanceRenewalKind {
+  if (!isMaintenanceRenewalKind(value)) {
+    throw new MaintenanceError('invalid-field', 'Choose what kind of cover this is', 'kind');
+  }
+  return value;
+}
+
+/**
+ * Check a renewal.
+ *
+ * NEITHER DATE IS BOUNDED BY TODAY. Unlike a cost or a service, a renewal is a
+ * promise about the future: a policy that starts next month and runs to 2029 is
+ * the ordinary case, and an expired one kept in the history is how you know
+ * what the last premium was. Only the ORDER is enforced — cover cannot expire
+ * before it starts.
+ */
+export function validateNewRenewal(input: NewMaintenanceRenewalInput): ValidatedRenewal {
+  const startDate = calendarDate(input.startDate, 'startDate');
+  const expiryDate = calendarDate(input.expiryDate, 'expiryDate');
+
+  if (startDate !== null && expiryDate !== null && expiryDate < startDate) {
+    throw new MaintenanceError(
+      'invalid-field',
+      'Cover cannot expire before it starts',
+      'expiryDate',
+    );
+  }
+
+  return {
+    kind: renewalKindOf(input.kind),
+    provider: text(input.provider, PROVIDER_MAX_LENGTH, 'provider'),
+    referenceNumber: text(input.referenceNumber, REFERENCE_MAX_LENGTH, 'referenceNumber'),
+    startDate,
+    expiryDate,
+    notes: text(input.notes, NOTES_MAX_LENGTH, 'notes'),
+  };
+}
+
+export function validateRenewalPatch(
+  patch: MaintenanceRenewalPatch,
+  currentStartDate: string | null,
+  currentExpiryDate: string | null,
+): Partial<ValidatedRenewal> {
+  const out: Partial<ValidatedRenewal> = {};
+
+  if ('kind' in patch) out.kind = renewalKindOf(patch.kind);
+  if ('provider' in patch) out.provider = text(patch.provider, PROVIDER_MAX_LENGTH, 'provider');
+  if ('referenceNumber' in patch) {
+    out.referenceNumber = text(patch.referenceNumber, REFERENCE_MAX_LENGTH, 'referenceNumber');
+  }
+  if ('notes' in patch) out.notes = text(patch.notes, NOTES_MAX_LENGTH, 'notes');
+  if ('startDate' in patch) out.startDate = calendarDate(patch.startDate, 'startDate');
+  if ('expiryDate' in patch) out.expiryDate = calendarDate(patch.expiryDate, 'expiryDate');
+
+  // Both dates AFTER the patch, for the reason the service patch resolves its
+  // own: moving a policy's whole term in one call compares new against new.
+  const startDate = 'startDate' in patch ? (out.startDate ?? null) : currentStartDate;
+  const expiryDate = 'expiryDate' in patch ? (out.expiryDate ?? null) : currentExpiryDate;
+
+  if (startDate !== null && expiryDate !== null && expiryDate < startDate) {
+    throw new MaintenanceError(
+      'invalid-field',
+      'Cover cannot expire before it starts',
+      'expiryDate',
+    );
+  }
 
   return out;
 }

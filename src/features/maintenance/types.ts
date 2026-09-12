@@ -105,6 +105,13 @@ export function isMaintenanceCostType(value: unknown): value is MaintenanceCostT
   );
 }
 
+export function isMaintenanceRenewalKind(value: unknown): value is MaintenanceRenewalKind {
+  return (
+    typeof value === 'string' &&
+    (MAINTENANCE_RENEWAL_KINDS as readonly string[]).includes(value)
+  );
+}
+
 /**
  * The one predicate that gates every vehicle-only field.
  *
@@ -161,22 +168,6 @@ export interface NewMaintenanceItemInput {
 /** A partial update. An explicit `null` clears an optional field. */
 export type MaintenanceItemPatch = Partial<NewMaintenanceItemInput>;
 
-/** One cost row. Money lives here and nowhere else (§A3). */
-export interface MaintenanceCostRecord {
-  id: string;
-  itemId: string;
-  type: MaintenanceCostType;
-  amountMinor: MinorUnits;
-  currency: string;
-  costDate: string;
-  odometer: number | null;
-  description: string | null;
-  vendor: string | null;
-  notes: string | null;
-  createdAt: number;
-  updatedAt: number;
-}
-
 /** Totals for one item, aggregated by SQLite. */
 export interface MaintenanceItemTotals {
   /** Every peso spent on this item, in its primary currency. */
@@ -225,6 +216,25 @@ export const MODEL_MAX_LENGTH = 60;
 export const IDENTIFIER_MAX_LENGTH = 40;
 export const NOTES_MAX_LENGTH = 2000;
 
+/** The child records' free-text fields. */
+export const SERVICE_TYPE_MAX_LENGTH = 80;
+export const SHOP_MAX_LENGTH = 60;
+export const VENDOR_MAX_LENGTH = 60;
+export const DESCRIPTION_MAX_LENGTH = 120;
+export const PROVIDER_MAX_LENGTH = 60;
+export const REFERENCE_MAX_LENGTH = 40;
+
+/**
+ * The largest odometer reading and fill this app will accept.
+ *
+ * Not arbitrary: a ten-million-kilometre car and a thousand-litre fill are
+ * both typos, and catching them at the boundary is how a single fat-fingered
+ * entry is stopped from making cost-per-km read ₱0.0004 forever. The CHECK
+ * constraints only reject negatives — a ceiling is a validation concern.
+ */
+export const MAX_ODOMETER_KM = 10_000_000;
+export const MAX_FILL_MILLILITRES = 1_000_000;
+
 /**
  * The earliest year an item may claim.
  *
@@ -233,6 +243,327 @@ export const NOTES_MAX_LENGTH = 2000;
  * nonsense at the boundary is cheaper than rendering "141 years old".
  */
 export const MIN_YEAR = 1900;
+
+/* -------------------------------------------------------------------------- */
+/* Costs — the one place money lands (§A3)                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One cost row. Money lives here and nowhere else (§A3).
+ *
+ * A service's price and a renewal's premium are BOTH rows in this table,
+ * reached through `cost_id`. That is what lets `itemTotals()` be a single
+ * `sum()` that cannot double-count — the alternative, an `amount_minor` on
+ * each detail table, is three places that can disagree about what an oil
+ * change cost.
+ *
+ * The fuel columns are NULL for every other type. They are not a separate
+ * table for the same reason `maintenance_items` is not five tables: a fill-up
+ * is a cost with two extra facts, not a different kind of thing.
+ */
+export interface MaintenanceCostRecord {
+  id: string;
+  itemId: string;
+  type: MaintenanceCostType;
+  amountMinor: MinorUnits;
+  currency: string;
+  /** `'YYYY-MM-DD'` — the day the money was spent, in the device's calendar. */
+  costDate: string;
+  /** Odometer at the time, whole km. Vehicles only; drives cost-per-km. */
+  odometer: number | null;
+  description: string | null;
+  vendor: string | null;
+  notes: string | null;
+  /** Litres pumped, as INTEGER millilitres. Fuel rows only. */
+  fuelLitersMilli: number | null;
+  /** Price per litre in minor units. Fuel rows only. */
+  fuelPricePerLiterMinor: MinorUnits | null;
+  /**
+   * Whether the tank was filled to full.
+   *
+   * `null` on a non-fuel row, and meaningfully `false` on a partial fill —
+   * tank-to-tank efficiency needs full tanks at both ends, so this is not a
+   * cosmetic flag. See {@link FuelEfficiency}.
+   */
+  isFullTank: boolean | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** What a caller supplies to record a cost. */
+export interface NewMaintenanceCostInput {
+  itemId: string;
+  type: MaintenanceCostType;
+  /** Integer minor units. Must be positive — a ₱0 cost is not an event. */
+  amountMinor: number;
+  currency?: string;
+  costDate: string;
+  odometer?: number | null;
+  description?: string | null;
+  vendor?: string | null;
+  notes?: string | null;
+  fuelLitersMilli?: number | null;
+  fuelPricePerLiterMinor?: number | null;
+  isFullTank?: boolean | null;
+}
+
+/**
+ * A partial update. An explicit `null` clears an optional field.
+ *
+ * `itemId` is absent by design: a cost belongs to the item it was recorded
+ * against, and moving one between items would silently restate two totals and
+ * two cost-per-km figures. Delete and re-record instead.
+ */
+export type MaintenanceCostPatch = Partial<Omit<NewMaintenanceCostInput, 'itemId'>>;
+
+/** §23-style filters for one item's ledger. */
+export interface MaintenanceCostFilter {
+  type?: MaintenanceCostType;
+  /** Inclusive `'YYYY-MM-DD'` bounds on `costDate`. */
+  fromISO?: string;
+  toISO?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MaintenanceCostPage {
+  rows: readonly MaintenanceCostRecord[];
+  damagedCount: number;
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Services — a job done, and when the next one is due                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One service, with the price it carries rather than a price of its own.
+ *
+ * `costMinor` is read through `cost_id` from `maintenance_costs_live`, so the
+ * history list can show "Oil change · ₱1,850" without an N+1 read and without
+ * a second column that could drift from the ledger.
+ */
+export interface MaintenanceServiceRecord {
+  id: string;
+  itemId: string;
+  /** The ledger row carrying what this cost, or `null` for a free service. */
+  costId: string | null;
+  /** Free text: "oil change", "aircon cleaning", "battery replacement". */
+  serviceType: string;
+  serviceDate: string;
+  odometer: number | null;
+  nextServiceDate: string | null;
+  nextServiceMileage: number | null;
+  shop: string | null;
+  notes: string | null;
+  /** From the linked cost row. `null` when there is none. */
+  costMinor: MinorUnits | null;
+  costCurrency: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * What a caller supplies to record a service.
+ *
+ * ── THE AMOUNT IS PART OF THE SERVICE, THE ROW IS NOT ──────────────────────
+ * `amountMinor` here does NOT become a column on `maintenance_services`. It
+ * writes a `maintenance_costs` row of type `'service'` and links it, inside one
+ * transaction. So a ₱1,850 oil change appears in the item's running total
+ * without the user recording it twice, and there is still exactly one ledger.
+ *
+ * Omit it (or pass `null`) for a service that cost nothing — a warranty job, or
+ * one whose receipt has not arrived. That is an ABSENT amount, not ₱0.
+ */
+export interface NewMaintenanceServiceInput {
+  itemId: string;
+  serviceType: string;
+  serviceDate: string;
+  odometer?: number | null;
+  nextServiceDate?: string | null;
+  nextServiceMileage?: number | null;
+  shop?: string | null;
+  notes?: string | null;
+  /** Writes a linked cost row. See the note above. */
+  amountMinor?: number | null;
+  currency?: string;
+}
+
+export type MaintenanceServicePatch = Partial<Omit<NewMaintenanceServiceInput, 'itemId'>>;
+
+export interface MaintenanceServiceFilter {
+  fromISO?: string;
+  toISO?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MaintenanceServicePage {
+  rows: readonly MaintenanceServiceRecord[];
+  damagedCount: number;
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Renewals — cover that expires                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Insurance, registration or warranty. One shape, three kinds (§3). */
+export interface MaintenanceRenewalRecord {
+  id: string;
+  itemId: string;
+  costId: string | null;
+  kind: MaintenanceRenewalKind;
+  provider: string | null;
+  /** SENSITIVE — a policy number, an OR/CR reference (§10). Mask, never log. */
+  referenceNumber: string | null;
+  startDate: string | null;
+  expiryDate: string | null;
+  notes: string | null;
+  costMinor: MinorUnits | null;
+  costCurrency: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** The premium writes a linked cost row, exactly as a service's does. */
+export interface NewMaintenanceRenewalInput {
+  itemId: string;
+  kind: MaintenanceRenewalKind;
+  provider?: string | null;
+  referenceNumber?: string | null;
+  startDate?: string | null;
+  expiryDate?: string | null;
+  notes?: string | null;
+  amountMinor?: number | null;
+  currency?: string;
+}
+
+export type MaintenanceRenewalPatch = Partial<Omit<NewMaintenanceRenewalInput, 'itemId'>>;
+
+export interface MaintenanceRenewalFilter {
+  kind?: MaintenanceRenewalKind;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MaintenanceRenewalPage {
+  rows: readonly MaintenanceRenewalRecord[];
+  damagedCount: number;
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Analytics                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** What one item cost in one calendar year. */
+export interface MaintenanceYearTotal {
+  /** `'2026'`. A four-character string, not a number — it is a label. */
+  year: string;
+  totalMinor: MinorUnits;
+  currency: string;
+  costCount: number;
+}
+
+/** What one item cost, split by what the money was for. */
+export interface MaintenanceTypeTotal {
+  type: MaintenanceCostType;
+  totalMinor: MinorUnits;
+  currency: string;
+  costCount: number;
+}
+
+/**
+ * Why an analytic has no value yet.
+ *
+ * A reason rather than a `null`, because "not enough data" is the state most
+ * users will be in for weeks and a blank panel does not tell them what to
+ * record next. The screen maps each of these to one sentence.
+ */
+export type AnalyticsGap =
+  | 'not-a-vehicle'
+  | 'no-odometer'
+  | 'one-odometer'
+  | 'no-distance'
+  | 'no-fuel'
+  | 'one-full-tank'
+  | 'no-full-tank';
+
+/** An analytic that may legitimately have nothing to say. */
+export type Analytic<T> =
+  | { readonly available: true; readonly value: T }
+  | { readonly available: false; readonly gap: AnalyticsGap };
+
+/**
+ * What a vehicle costs to run, per kilometre.
+ *
+ * ── THE WINDOW IS THE ODOMETER'S, NOT THE LEDGER'S ─────────────────────────
+ * The distance is `max(odometer) - min(odometer)` over the cost rows that
+ * CARRY one, and the numerator is every cost dated inside that same window.
+ * Dividing the all-time total by that distance would charge kilometres that
+ * were never measured with pesos that were — a figure that falls every time an
+ * odometer is recorded, for no reason the user did anything about.
+ *
+ * `fromISO`/`toISO` and `distanceKm` are returned so a screen can state the
+ * window rather than present the rate as a bare fact.
+ */
+export interface CostPerKilometre {
+  /** Cost inside the window. */
+  totalMinor: MinorUnits;
+  currency: string;
+  distanceKm: number;
+  /** Minor units per kilometre. NOT an integer — this is a rate, not money. */
+  costPerKm: number;
+  fromISO: string;
+  toISO: string;
+  /** Cost rows carrying an odometer reading. Always at least 2. */
+  readingCount: number;
+}
+
+/**
+ * Kilometres per litre, measured tank to tank.
+ *
+ * ── WHY FULL TANKS ONLY ────────────────────────────────────────────────────
+ * Efficiency is distance ÷ fuel burned, and the only moment the tank's level
+ * is known is when it is full. So the distance runs from one full tank to
+ * another, and the litres counted are every fill AFTER the first full tank up
+ * to and including the last — the fuel that was actually burned covering that
+ * distance. The first full tank's own litres are excluded: they went in before
+ * the measured distance began.
+ *
+ * A partial fill inside the window still counts its litres. A partial fill at
+ * either END cannot bound the window, which is what `isFullTank` is for.
+ */
+export interface FuelEfficiency {
+  kilometresPerLitre: number;
+  distanceKm: number;
+  /** Fuel burned across the window, in millilitres. */
+  litresMilli: number;
+  /** Fills counted in the window, including the closing full tank. */
+  fillCount: number;
+  fromISO: string;
+  toISO: string;
+}
+
+/** What is due next on one item — the detail screen's top line. */
+export interface MaintenanceDueNext {
+  /** The soonest `next_service_date` still ahead, or the newest overdue one. */
+  nextServiceDate: string | null;
+  nextServiceMileage: number | null;
+  /** The soonest renewal expiry. */
+  nextExpiryDate: string | null;
+  nextExpiryKind: MaintenanceRenewalKind | null;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Errors                                                                      */

@@ -56,15 +56,64 @@ export function maintenanceApiFor(store: MaintenanceStore) {
 
 const api = maintenanceApiFor(liveStore);
 
-export const { listItems, getItem, createItem, updateItem, deleteItem, itemTotals } = api;
+export const {
+  listItems,
+  getItem,
+  createItem,
+  updateItem,
+  deleteItem,
+  itemTotals,
+  // Phase 5c — what happens to an item, and what it adds up to.
+  listCosts,
+  getCost,
+  createCost,
+  updateCost,
+  deleteCost,
+  listServices,
+  getService,
+  createService,
+  updateService,
+  deleteService,
+  listRenewals,
+  getRenewal,
+  createRenewal,
+  updateRenewal,
+  deleteRenewal,
+  totalsByYear,
+  totalsByType,
+  costPerKilometre,
+  fuelEfficiency,
+  dueNext,
+} = api;
 
 export { liveStore as liveMaintenanceStore };
 
-export { createMaintenanceApi, mapItemRow } from './queries';
-export type { MaintenanceApi, MaintenanceApiDeps } from './queries';
+export {
+  computeFuelEfficiency,
+  createMaintenanceApi,
+  mapCostRow,
+  mapItemRow,
+  mapRenewalRow,
+  mapServiceRow,
+} from './queries';
+export type { FuelFill, MaintenanceApi, MaintenanceApiDeps } from './queries';
 export type { MaintenanceStore, SqlStatement, SqlValue } from './store';
-export { validateItemPatch, validateNewItem } from './validation';
-export type { ValidatedItem } from './validation';
+export {
+  validateCostPatch,
+  validateItemPatch,
+  validateNewCost,
+  validateNewItem,
+  validateNewRenewal,
+  validateNewService,
+  validateRenewalPatch,
+  validateServicePatch,
+} from './validation';
+export type {
+  ValidatedCost,
+  ValidatedItem,
+  ValidatedRenewal,
+  ValidatedService,
+} from './validation';
 export {
   DEFAULT_PAGE_SIZE,
   IDENTIFIER_MAX_LENGTH,
@@ -80,12 +129,29 @@ export {
   VEHICLE_TYPES,
   isMaintenanceCostType,
   isMaintenanceItemKind,
+  isMaintenanceRenewalKind,
   isVehicle,
   isVehicleType,
+  DESCRIPTION_MAX_LENGTH,
+  MAX_FILL_MILLILITRES,
+  MAX_ODOMETER_KM,
+  PROVIDER_MAX_LENGTH,
+  REFERENCE_MAX_LENGTH,
+  SERVICE_TYPE_MAX_LENGTH,
+  SHOP_MAX_LENGTH,
+  VENDOR_MAX_LENGTH,
 } from './types';
 export type {
+  Analytic,
+  AnalyticsGap,
+  CostPerKilometre,
+  FuelEfficiency,
+  MaintenanceCostFilter,
+  MaintenanceCostPage,
+  MaintenanceCostPatch,
   MaintenanceCostRecord,
   MaintenanceCostType,
+  MaintenanceDueNext,
   MaintenanceErrorCode,
   MaintenanceItemFilter,
   MaintenanceItemKind,
@@ -93,7 +159,20 @@ export type {
   MaintenanceItemPatch,
   MaintenanceItemRecord,
   MaintenanceItemTotals,
+  MaintenanceRenewalFilter,
   MaintenanceRenewalKind,
+  MaintenanceRenewalPage,
+  MaintenanceRenewalPatch,
+  MaintenanceRenewalRecord,
+  MaintenanceServiceFilter,
+  MaintenanceServicePage,
+  MaintenanceServicePatch,
+  MaintenanceServiceRecord,
+  MaintenanceTypeTotal,
+  MaintenanceYearTotal,
+  NewMaintenanceCostInput,
   NewMaintenanceItemInput,
+  NewMaintenanceRenewalInput,
+  NewMaintenanceServiceInput,
   VehicleType,
 } from './types';

@@ -16,7 +16,14 @@
  * is escaped for LIKE (see `escapeLike`) and then bound.
  */
 import type { SqlStatement, SqlValue } from './store';
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, type MaintenanceItemFilter } from './types';
+import {
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  type MaintenanceCostFilter,
+  type MaintenanceItemFilter,
+  type MaintenanceRenewalFilter,
+  type MaintenanceServiceFilter,
+} from './types';
 
 /** The only relations any read in this feature selects from. */
 export const ITEMS_LIVE_VIEW = 'maintenance_items_live';
@@ -82,11 +89,23 @@ function whereFor(filter: MaintenanceItemFilter): Clause {
   };
 }
 
-/** Rows per page, clamped so a caller cannot ask for the whole table. */
-function pageSize(limit: number | undefined): number {
+/**
+ * Rows per page, clamped so a caller cannot ask for the whole table.
+ *
+ * EXPORTED because the page a caller is handed back reports the limit that was
+ * actually used. Computing it twice — once here for the LIMIT, once in
+ * `queries.ts` for the reported value — is how a page says it holds 500 rows
+ * while the SQL fetched 200.
+ */
+export function resolvePageSize(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_PAGE_SIZE;
   if (!Number.isInteger(limit) || limit < 1) return DEFAULT_PAGE_SIZE;
   return Math.min(limit, MAX_PAGE_SIZE);
+}
+
+/** A non-negative whole offset. Anything else starts at the beginning. */
+export function resolveOffset(offset: number | undefined): number {
+  return Number.isInteger(offset) && offset! > 0 ? offset! : 0;
 }
 
 /**
@@ -100,8 +119,8 @@ function pageSize(limit: number | undefined): number {
  */
 export function selectItems(filter: MaintenanceItemFilter = {}): SqlStatement {
   const where = whereFor(filter);
-  const limit = pageSize(filter.limit);
-  const offset = Number.isInteger(filter.offset) && filter.offset! > 0 ? filter.offset! : 0;
+  const limit = resolvePageSize(filter.limit);
+  const offset = resolveOffset(filter.offset);
 
   return {
     text:
@@ -257,5 +276,647 @@ export function softDeleteItem(id: string, nowMs: number): SqlStatement {
       `UPDATE "${ITEMS_TABLE}" SET "deleted_at" = ?, "updated_at" = ?` +
       ' WHERE "id" = ? AND "deleted_at" IS NULL',
     params: [nowMs, nowMs, id],
+  };
+}
+
+/* ========================================================================== */
+/* THE CHILD RECORDS (Phase 5c)                                               */
+/*                                                                            */
+/* Costs, services and renewals. Everything above this line is about the item */
+/* itself; everything below is about what happens to it.                      */
+/*                                                                            */
+/* Each child view ALREADY requires a live parent — that rule is written into */
+/* `maintenance_costs_live` and its two siblings, not repeated in these        */
+/* statements. So soft-deleting an item hides its whole history with one       */
+/* UPDATE, and no query here can forget to check.                              */
+/* ========================================================================== */
+
+export const SERVICES_LIVE_VIEW = 'maintenance_services_live';
+export const RENEWALS_LIVE_VIEW = 'maintenance_renewals_live';
+export const SERVICES_TABLE = 'maintenance_services';
+export const RENEWALS_TABLE = 'maintenance_renewals';
+
+/** Table aliases, so a join can name a column without ambiguity. */
+const COST = 'c';
+const SERVICE = 's';
+const RENEWAL = 'r';
+
+const COST_COLUMNS =
+  '"id", "item_id", "type", "amount_minor", "currency", "cost_date", "odometer",' +
+  ' "description", "vendor", "notes", "fuel_liters_milli", "fuel_price_per_liter_minor",' +
+  ' "is_full_tank", "created_at", "updated_at"';
+
+/**
+ * A service or renewal SELECT carries its linked cost's amount.
+ *
+ * A LEFT JOIN, and onto the cost VIEW rather than the table: a cost that has
+ * been deleted must leave the service standing with no amount, which is
+ * exactly what a LEFT JOIN against a live-rows view produces. The alternative
+ * — an `amount_minor` column on each detail table — is a second place that can
+ * disagree with the ledger about what an oil change cost (§A3).
+ */
+const LINKED_COST_COLUMNS =
+  `"${COST}"."amount_minor" AS "cost_minor", "${COST}"."currency" AS "cost_currency"`;
+
+/** The damaged-row guard, applied to a column being summed. See `selectItemTotals`. */
+function sumOfIntegers(column: string): string {
+  return `sum(CASE WHEN typeof("${column}") = 'integer' THEN "${column}" ELSE 0 END)`;
+}
+
+function countOfNonIntegers(column: string): string {
+  return `sum(CASE WHEN typeof("${column}") = 'integer' THEN 0 ELSE 1 END)`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Costs                                                                       */
+/* -------------------------------------------------------------------------- */
+
+function costWhere(itemId: string, filter: MaintenanceCostFilter): Clause {
+  const parts = ['"item_id" = ?'];
+  const params: SqlValue[] = [itemId];
+
+  if (filter.type !== undefined) {
+    parts.push('"type" = ?');
+    params.push(filter.type);
+  }
+  if (filter.fromISO !== undefined) {
+    parts.push('"cost_date" >= ?');
+    params.push(filter.fromISO);
+  }
+  if (filter.toISO !== undefined) {
+    parts.push('"cost_date" <= ?');
+    params.push(filter.toISO);
+  }
+
+  return { text: ` WHERE ${parts.join(' AND ')}`, params };
+}
+
+/**
+ * One item's ledger, newest first.
+ *
+ * `id DESC` after the date so two costs recorded on the same day have a stable
+ * order — without it a page boundary can repeat or skip a row, and a ledger
+ * that reshuffles as you scroll reads as data loss.
+ */
+export function selectCosts(
+  itemId: string,
+  filter: MaintenanceCostFilter = {},
+): SqlStatement {
+  const where = costWhere(itemId, filter);
+  const limit = resolvePageSize(filter.limit);
+  const offset = resolveOffset(filter.offset);
+  return {
+    text:
+      `SELECT ${COST_COLUMNS} FROM "${COSTS_LIVE_VIEW}"${where.text}` +
+      ' ORDER BY "cost_date" DESC, "id" DESC LIMIT ? OFFSET ?',
+    params: [...where.params, limit, offset],
+  };
+}
+
+export function selectCostCount(
+  itemId: string,
+  filter: MaintenanceCostFilter = {},
+): SqlStatement {
+  const where = costWhere(itemId, filter);
+  return {
+    text: `SELECT count(*) AS "total" FROM "${COSTS_LIVE_VIEW}"${where.text}`,
+    params: where.params,
+  };
+}
+
+export function selectCost(id: string): SqlStatement {
+  return {
+    text: `SELECT ${COST_COLUMNS} FROM "${COSTS_LIVE_VIEW}" WHERE "id" = ? LIMIT 1`,
+    params: [id],
+  };
+}
+
+export interface InsertCostValues {
+  readonly id: string;
+  readonly itemId: string;
+  readonly type: string;
+  readonly amountMinor: number;
+  readonly currency: string;
+  readonly costDate: string;
+  readonly odometer: number | null;
+  readonly description: string | null;
+  readonly vendor: string | null;
+  readonly notes: string | null;
+  readonly fuelLitersMilli: number | null;
+  readonly fuelPricePerLiterMinor: number | null;
+  readonly isFullTank: boolean | null;
+  readonly nowMs: number;
+}
+
+export function insertCost(values: InsertCostValues): SqlStatement {
+  return {
+    text:
+      `INSERT INTO "${COSTS_TABLE}"` +
+      ' ("id", "item_id", "type", "amount_minor", "currency", "cost_date", "odometer",' +
+      ' "description", "vendor", "notes", "fuel_liters_milli", "fuel_price_per_liter_minor",' +
+      ' "is_full_tank", "created_at", "updated_at")' +
+      ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    params: [
+      values.id,
+      values.itemId,
+      values.type,
+      values.amountMinor,
+      values.currency,
+      values.costDate,
+      values.odometer,
+      values.description,
+      values.vendor,
+      values.notes,
+      values.fuelLitersMilli,
+      values.fuelPricePerLiterMinor,
+      // SQLite has no boolean. NULL stays NULL — a non-fuel row has no answer
+      // to "was the tank full?", and `0` would claim it was a partial fill.
+      values.isFullTank === null ? null : values.isFullTank ? 1 : 0,
+      values.nowMs,
+      values.nowMs,
+    ],
+  };
+}
+
+const COST_PATCH_COLUMNS: Readonly<Record<string, string>> = {
+  type: 'type',
+  amountMinor: 'amount_minor',
+  currency: 'currency',
+  costDate: 'cost_date',
+  odometer: 'odometer',
+  description: 'description',
+  vendor: 'vendor',
+  notes: 'notes',
+  fuelLitersMilli: 'fuel_liters_milli',
+  fuelPricePerLiterMinor: 'fuel_price_per_liter_minor',
+  isFullTank: 'is_full_tank',
+};
+
+/**
+ * Build an UPDATE from an allowlist of columns.
+ *
+ * Shared by all three child tables: identical logic, and three copies of it is
+ * three chances for one to gain a column the others forgot. `item_id` appears
+ * in NO allowlist — a child belongs to the item it was recorded against, and
+ * moving one would restate two items' totals without either screen saying so.
+ */
+function buildUpdate(
+  table: string,
+  columns: Readonly<Record<string, string>>,
+  id: string,
+  patch: Readonly<Record<string, SqlValue | boolean>>,
+  nowMs: number,
+): SqlStatement | null {
+  const sets: string[] = [];
+  const params: SqlValue[] = [];
+
+  for (const [field, column] of Object.entries(columns)) {
+    if (!(field in patch)) continue;
+    const value = patch[field];
+    sets.push(`"${column}" = ?`);
+    params.push(typeof value === 'boolean' ? (value ? 1 : 0) : value);
+  }
+
+  if (sets.length === 0) return null;
+
+  sets.push('"updated_at" = ?');
+  params.push(nowMs, id);
+
+  return {
+    text: `UPDATE "${table}" SET ${sets.join(', ')} WHERE "id" = ? AND "deleted_at" IS NULL`,
+    params,
+  };
+}
+
+export function updateCost(
+  id: string,
+  patch: Readonly<Record<string, SqlValue | boolean>>,
+  nowMs: number,
+): SqlStatement | null {
+  return buildUpdate(COSTS_TABLE, COST_PATCH_COLUMNS, id, patch, nowMs);
+}
+
+/** Soft delete, for the same §21 reason the item's is soft. */
+function buildSoftDelete(table: string, id: string, nowMs: number): SqlStatement {
+  return {
+    text:
+      `UPDATE "${table}" SET "deleted_at" = ?, "updated_at" = ?` +
+      ' WHERE "id" = ? AND "deleted_at" IS NULL',
+    params: [nowMs, nowMs, id],
+  };
+}
+
+export function softDeleteCost(id: string, nowMs: number): SqlStatement {
+  return buildSoftDelete(COSTS_TABLE, id, nowMs);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Services                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const SERVICE_COLUMNS =
+  `"${SERVICE}"."id", "${SERVICE}"."item_id", "${SERVICE}"."cost_id",` +
+  ` "${SERVICE}"."service_type", "${SERVICE}"."service_date", "${SERVICE}"."odometer",` +
+  ` "${SERVICE}"."next_service_date", "${SERVICE}"."next_service_mileage",` +
+  ` "${SERVICE}"."shop", "${SERVICE}"."notes",` +
+  ` "${SERVICE}"."created_at", "${SERVICE}"."updated_at"`;
+
+const SERVICE_FROM =
+  `FROM "${SERVICES_LIVE_VIEW}" "${SERVICE}"` +
+  ` LEFT JOIN "${COSTS_LIVE_VIEW}" "${COST}" ON "${COST}"."id" = "${SERVICE}"."cost_id"`;
+
+function serviceWhere(itemId: string, filter: MaintenanceServiceFilter): Clause {
+  const parts = [`"${SERVICE}"."item_id" = ?`];
+  const params: SqlValue[] = [itemId];
+
+  if (filter.fromISO !== undefined) {
+    parts.push(`"${SERVICE}"."service_date" >= ?`);
+    params.push(filter.fromISO);
+  }
+  if (filter.toISO !== undefined) {
+    parts.push(`"${SERVICE}"."service_date" <= ?`);
+    params.push(filter.toISO);
+  }
+
+  return { text: ` WHERE ${parts.join(' AND ')}`, params };
+}
+
+/** One item's service history, newest first. */
+export function selectServices(
+  itemId: string,
+  filter: MaintenanceServiceFilter = {},
+): SqlStatement {
+  const where = serviceWhere(itemId, filter);
+  const limit = resolvePageSize(filter.limit);
+  const offset = resolveOffset(filter.offset);
+  return {
+    text:
+      `SELECT ${SERVICE_COLUMNS}, ${LINKED_COST_COLUMNS} ${SERVICE_FROM}${where.text}` +
+      ` ORDER BY "${SERVICE}"."service_date" DESC, "${SERVICE}"."id" DESC LIMIT ? OFFSET ?`,
+    params: [...where.params, limit, offset],
+  };
+}
+
+export function selectServiceCount(
+  itemId: string,
+  filter: MaintenanceServiceFilter = {},
+): SqlStatement {
+  const where = serviceWhere(itemId, filter);
+  return {
+    // No join: a COUNT must not depend on whether the linked cost is live.
+    text:
+      `SELECT count(*) AS "total" FROM "${SERVICES_LIVE_VIEW}" "${SERVICE}"${where.text}`,
+    params: where.params,
+  };
+}
+
+export function selectService(id: string): SqlStatement {
+  return {
+    text:
+      `SELECT ${SERVICE_COLUMNS}, ${LINKED_COST_COLUMNS} ${SERVICE_FROM}` +
+      ` WHERE "${SERVICE}"."id" = ? LIMIT 1`,
+    params: [id],
+  };
+}
+
+export interface InsertServiceValues {
+  readonly id: string;
+  readonly itemId: string;
+  readonly costId: string | null;
+  readonly serviceType: string;
+  readonly serviceDate: string;
+  readonly odometer: number | null;
+  readonly nextServiceDate: string | null;
+  readonly nextServiceMileage: number | null;
+  readonly shop: string | null;
+  readonly notes: string | null;
+  readonly nowMs: number;
+}
+
+export function insertService(values: InsertServiceValues): SqlStatement {
+  return {
+    text:
+      `INSERT INTO "${SERVICES_TABLE}"` +
+      ' ("id", "item_id", "cost_id", "service_type", "service_date", "odometer",' +
+      ' "next_service_date", "next_service_mileage", "shop", "notes",' +
+      ' "created_at", "updated_at")' +
+      ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    params: [
+      values.id,
+      values.itemId,
+      values.costId,
+      values.serviceType,
+      values.serviceDate,
+      values.odometer,
+      values.nextServiceDate,
+      values.nextServiceMileage,
+      values.shop,
+      values.notes,
+      values.nowMs,
+      values.nowMs,
+    ],
+  };
+}
+
+const SERVICE_PATCH_COLUMNS: Readonly<Record<string, string>> = {
+  costId: 'cost_id',
+  serviceType: 'service_type',
+  serviceDate: 'service_date',
+  odometer: 'odometer',
+  nextServiceDate: 'next_service_date',
+  nextServiceMileage: 'next_service_mileage',
+  shop: 'shop',
+  notes: 'notes',
+};
+
+export function updateService(
+  id: string,
+  patch: Readonly<Record<string, SqlValue | boolean>>,
+  nowMs: number,
+): SqlStatement | null {
+  return buildUpdate(SERVICES_TABLE, SERVICE_PATCH_COLUMNS, id, patch, nowMs);
+}
+
+export function softDeleteService(id: string, nowMs: number): SqlStatement {
+  return buildSoftDelete(SERVICES_TABLE, id, nowMs);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Renewals                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const RENEWAL_COLUMNS =
+  `"${RENEWAL}"."id", "${RENEWAL}"."item_id", "${RENEWAL}"."cost_id", "${RENEWAL}"."kind",` +
+  ` "${RENEWAL}"."provider", "${RENEWAL}"."reference_number",` +
+  ` "${RENEWAL}"."start_date", "${RENEWAL}"."expiry_date", "${RENEWAL}"."notes",` +
+  ` "${RENEWAL}"."created_at", "${RENEWAL}"."updated_at"`;
+
+const RENEWAL_FROM =
+  `FROM "${RENEWALS_LIVE_VIEW}" "${RENEWAL}"` +
+  ` LEFT JOIN "${COSTS_LIVE_VIEW}" "${COST}" ON "${COST}"."id" = "${RENEWAL}"."cost_id"`;
+
+function renewalWhere(itemId: string, filter: MaintenanceRenewalFilter): Clause {
+  const parts = [`"${RENEWAL}"."item_id" = ?`];
+  const params: SqlValue[] = [itemId];
+
+  if (filter.kind !== undefined) {
+    parts.push(`"${RENEWAL}"."kind" = ?`);
+    params.push(filter.kind);
+  }
+
+  return { text: ` WHERE ${parts.join(' AND ')}`, params };
+}
+
+/**
+ * One item's renewals, soonest to expire first.
+ *
+ * NOT newest-recorded first, unlike the ledger and the service history: a
+ * renewal is read to answer "what runs out next", and a list sorted by entry
+ * date buries an insurance policy expiring on Friday under a warranty that
+ * runs to 2029. `expiry_date IS NULL` sorts last — SQLite orders NULL first
+ * ascending, so it is lifted out explicitly rather than left to surprise.
+ */
+export function selectRenewals(
+  itemId: string,
+  filter: MaintenanceRenewalFilter = {},
+): SqlStatement {
+  const where = renewalWhere(itemId, filter);
+  const limit = resolvePageSize(filter.limit);
+  const offset = resolveOffset(filter.offset);
+  return {
+    text:
+      `SELECT ${RENEWAL_COLUMNS}, ${LINKED_COST_COLUMNS} ${RENEWAL_FROM}${where.text}` +
+      ` ORDER BY "${RENEWAL}"."expiry_date" IS NULL ASC,` +
+      ` "${RENEWAL}"."expiry_date" ASC, "${RENEWAL}"."id" ASC LIMIT ? OFFSET ?`,
+    params: [...where.params, limit, offset],
+  };
+}
+
+export function selectRenewalCount(
+  itemId: string,
+  filter: MaintenanceRenewalFilter = {},
+): SqlStatement {
+  const where = renewalWhere(itemId, filter);
+  return {
+    text:
+      `SELECT count(*) AS "total" FROM "${RENEWALS_LIVE_VIEW}" "${RENEWAL}"${where.text}`,
+    params: where.params,
+  };
+}
+
+export function selectRenewal(id: string): SqlStatement {
+  return {
+    text:
+      `SELECT ${RENEWAL_COLUMNS}, ${LINKED_COST_COLUMNS} ${RENEWAL_FROM}` +
+      ` WHERE "${RENEWAL}"."id" = ? LIMIT 1`,
+    params: [id],
+  };
+}
+
+export interface InsertRenewalValues {
+  readonly id: string;
+  readonly itemId: string;
+  readonly costId: string | null;
+  readonly kind: string;
+  readonly provider: string | null;
+  readonly referenceNumber: string | null;
+  readonly startDate: string | null;
+  readonly expiryDate: string | null;
+  readonly notes: string | null;
+  readonly nowMs: number;
+}
+
+export function insertRenewal(values: InsertRenewalValues): SqlStatement {
+  return {
+    text:
+      `INSERT INTO "${RENEWALS_TABLE}"` +
+      ' ("id", "item_id", "cost_id", "kind", "provider", "reference_number",' +
+      ' "start_date", "expiry_date", "notes", "created_at", "updated_at")' +
+      ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    params: [
+      values.id,
+      values.itemId,
+      values.costId,
+      values.kind,
+      values.provider,
+      values.referenceNumber,
+      values.startDate,
+      values.expiryDate,
+      values.notes,
+      values.nowMs,
+      values.nowMs,
+    ],
+  };
+}
+
+const RENEWAL_PATCH_COLUMNS: Readonly<Record<string, string>> = {
+  costId: 'cost_id',
+  kind: 'kind',
+  provider: 'provider',
+  referenceNumber: 'reference_number',
+  startDate: 'start_date',
+  expiryDate: 'expiry_date',
+  notes: 'notes',
+};
+
+export function updateRenewal(
+  id: string,
+  patch: Readonly<Record<string, SqlValue | boolean>>,
+  nowMs: number,
+): SqlStatement | null {
+  return buildUpdate(RENEWALS_TABLE, RENEWAL_PATCH_COLUMNS, id, patch, nowMs);
+}
+
+export function softDeleteRenewal(id: string, nowMs: number): SqlStatement {
+  return buildSoftDelete(RENEWALS_TABLE, id, nowMs);
+}
+
+/* ========================================================================== */
+/* ANALYTICS (Phase 5c)                                                       */
+/*                                                                            */
+/* Everything that can be an AGGREGATE is one, and happens in SQLite. The one */
+/* exception is tank-to-tank fuel efficiency, which is a walk along an ordered */
+/* sequence rather than a fold over a set — `selectFuelFills` fetches the rows */
+/* and `queries.ts` walks them, where the algorithm can be read and tested.    */
+/* ========================================================================== */
+
+/**
+ * What one item cost, per calendar year.
+ *
+ * `substr("cost_date", 1, 4)` and NOT `strftime('%Y', …)`. The column is
+ * already a LOCAL calendar date, so the year is the first four characters and
+ * nothing needs parsing. strftime would take the round trip through a julian
+ * day — where one `'localtime'` modifier, added later by someone making an
+ * unrelated change, silently moves every 1 January cost into the previous year
+ * for a device in PH time. A string slice has no such dial to turn, and it
+ * returns a group for a value strftime would have answered NULL for.
+ */
+export function selectTotalsByYear(itemId: string): SqlStatement {
+  return {
+    text:
+      'SELECT substr("cost_date", 1, 4) AS "year", "currency",' +
+      ` ${sumOfIntegers('amount_minor')} AS "total_minor",` +
+      ' count(*) AS "cost_count",' +
+      ` ${countOfNonIntegers('amount_minor')} AS "damaged_count"` +
+      ` FROM "${COSTS_LIVE_VIEW}" WHERE "item_id" = ?` +
+      ' GROUP BY "year", "currency" ORDER BY "year" DESC, "total_minor" DESC',
+    params: [itemId],
+  };
+}
+
+/** What one item cost, split by what the money was for. */
+export function selectTotalsByType(itemId: string): SqlStatement {
+  return {
+    text:
+      'SELECT "type", "currency",' +
+      ` ${sumOfIntegers('amount_minor')} AS "total_minor",` +
+      ' count(*) AS "cost_count",' +
+      ` ${countOfNonIntegers('amount_minor')} AS "damaged_count"` +
+      ` FROM "${COSTS_LIVE_VIEW}" WHERE "item_id" = ?` +
+      ' GROUP BY "type", "currency" ORDER BY "total_minor" DESC, "type" ASC',
+    params: [itemId],
+  };
+}
+
+/**
+ * The span the odometer actually covers, and the dates at either end.
+ *
+ * `typeof("odometer") = 'integer'` for the same reason the sums carry it: a
+ * float sits happily past a `>= 0` CHECK, and one would make `max - min` a
+ * fractional distance that a `number` divides into an unrepeatable rate.
+ */
+export function selectOdometerWindow(itemId: string): SqlStatement {
+  return {
+    text:
+      'SELECT min("odometer") AS "min_odometer", max("odometer") AS "max_odometer",' +
+      ' min("cost_date") AS "from_date", max("cost_date") AS "to_date",' +
+      ' count(*) AS "reading_count"' +
+      ` FROM "${COSTS_LIVE_VIEW}"` +
+      ' WHERE "item_id" = ? AND "odometer" IS NOT NULL' +
+      " AND typeof(\"odometer\") = 'integer'",
+    params: [itemId],
+  };
+}
+
+/**
+ * Everything spent inside a date window, grouped by currency.
+ *
+ * The numerator of cost-per-km. Bounds are INCLUSIVE: a cost recorded on the
+ * same day as the closing odometer reading was spent covering that distance.
+ */
+export function selectTotalsInWindow(
+  itemId: string,
+  fromISO: string,
+  toISO: string,
+): SqlStatement {
+  return {
+    text:
+      'SELECT "currency",' +
+      ` ${sumOfIntegers('amount_minor')} AS "total_minor",` +
+      ' count(*) AS "cost_count"' +
+      ` FROM "${COSTS_LIVE_VIEW}"` +
+      ' WHERE "item_id" = ? AND "cost_date" >= ? AND "cost_date" <= ?' +
+      ' GROUP BY "currency" ORDER BY "total_minor" DESC, "currency" ASC',
+    params: [itemId, fromISO, toISO],
+  };
+}
+
+/**
+ * Every fill-up that can take part in a tank-to-tank measurement.
+ *
+ * ORDERED BY ODOMETER, not by date. The reading is what the distance is
+ * measured with, and a fill entered late — a receipt found in a glovebox —
+ * belongs where its odometer says it does, not where its entry date does.
+ * Rows without an odometer or without litres cannot contribute either
+ * quantity, so they are excluded here rather than skipped in the walk.
+ */
+export function selectFuelFills(itemId: string): SqlStatement {
+  return {
+    text:
+      'SELECT "id", "cost_date", "odometer", "fuel_liters_milli", "is_full_tank"' +
+      ` FROM "${COSTS_LIVE_VIEW}"` +
+      " WHERE \"item_id\" = ? AND \"type\" = 'fuel'" +
+      ' AND "odometer" IS NOT NULL AND "fuel_liters_milli" IS NOT NULL' +
+      " AND typeof(\"odometer\") = 'integer'" +
+      " AND typeof(\"fuel_liters_milli\") = 'integer'" +
+      ' ORDER BY "odometer" ASC, "cost_date" ASC, "id" ASC',
+    params: [itemId],
+  };
+}
+
+/**
+ * When the next service falls due.
+ *
+ * The LATEST service row's `next_service_date`, not the soonest across all of
+ * them. A service history is a chain: each job supersedes the one before it and
+ * restates when the next is due. Taking the minimum would resurrect a 2024
+ * interval that this year's oil change already answered.
+ */
+export function selectNextService(itemId: string): SqlStatement {
+  return {
+    text:
+      'SELECT "next_service_date", "next_service_mileage"' +
+      ` FROM "${SERVICES_LIVE_VIEW}" WHERE "item_id" = ?` +
+      ' ORDER BY "service_date" DESC, "id" DESC LIMIT 1',
+    params: [itemId],
+  };
+}
+
+/**
+ * Which cover runs out soonest.
+ *
+ * `max(expiry_date)` PER KIND first, then the soonest of those. Renewals
+ * accumulate — last year's insurance row stays in the history — so the minimum
+ * across every row is an expiry that was already renewed. The latest row of
+ * each kind is the one still in force.
+ */
+export function selectNextExpiry(itemId: string): SqlStatement {
+  return {
+    text:
+      'SELECT "kind", max("expiry_date") AS "expiry_date"' +
+      ` FROM "${RENEWALS_LIVE_VIEW}"` +
+      ' WHERE "item_id" = ? AND "expiry_date" IS NOT NULL' +
+      ' GROUP BY "kind" ORDER BY "expiry_date" ASC LIMIT 1',
+    params: [itemId],
   };
 }
