@@ -25,12 +25,14 @@ import {
   listItems,
   listRenewals,
   listServices,
+  remindableMaintenance,
   totalsByType,
   totalsByYear,
   type Analytic,
   type CostPerKilometre,
   type FuelEfficiency,
   type MaintenanceCostRecord,
+  type MaintenanceDue,
   type MaintenanceDueNext,
   type MaintenanceItemFilter,
   type MaintenanceItemKind,
@@ -328,4 +330,22 @@ export function useItemAnalytics(id: string): AsyncValue<ItemAnalytics> {
     ]);
     return { totals, byYear, byType, costPerKm, fuel };
   }, [id, revision]);
+}
+
+/**
+ * Everything due across every active item, soonest first (Phase 5e).
+ *
+ * What the reminder settings preview reads. Deliberately NOT scoped to one
+ * item: the question the screen asks is "what is my next service or renewal",
+ * and that is a question about the whole garage.
+ */
+export function useRemindableMaintenance(
+  withinDays: number,
+  limit?: number,
+): AsyncValue<readonly MaintenanceDue[]> {
+  const revision = useRevision('maintenance');
+  return useAsyncRead(
+    () => remindableMaintenance(withinDays, limit),
+    [withinDays, limit, revision],
+  );
 }

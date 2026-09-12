@@ -17,6 +17,8 @@ import {
 import { billReminderEntity, type BillRecord } from '@/features/bills';
 import { documentReminderEntity, type DocumentRecord } from '@/features/documents';
 import { useExpiringDocuments } from '@/features/documents/ui';
+import { maintenanceReminderEntity, type MaintenanceDue } from '@/features/maintenance';
+import { useRemindableMaintenance } from '@/features/maintenance/ui';
 import type { SubscriptionRecord } from '@/features/subscriptions';
 import { useUpcomingBills } from '@/features/bills/ui';
 import { reminderKindFor, type ReminderKind } from '@/features/settings';
@@ -94,12 +96,13 @@ export default function ReminderKindScreen() {
   const reminderHour = useSettingsStore((s) => s.reminderHour);
   const toggleReminderLeadTime = useSettingsStore((s) => s.toggleReminderLeadTime);
 
-  // All three reads run whatever the kind is — a hook cannot sit inside a
-  // branch. One row each, ordered by SQLite, so the unused two cost an indexed
-  // lookup apiece.
+  // All four reads run whatever the kind is — a hook cannot sit inside a
+  // branch. One row each, ordered by SQLite, so the unused three cost an
+  // indexed lookup apiece.
   const upcomingBills = useUpcomingBills(UPCOMING_WINDOW_DAYS, 1);
   const upcomingSubscriptions = useSubscriptionList(SUBSCRIPTION_NEXT_FILTER);
   const expiringDocuments = useExpiringDocuments(UPCOMING_WINDOW_DAYS, 1);
+  const dueMaintenance = useRemindableMaintenance(UPCOMING_WINDOW_DAYS, 1);
 
   const byKey: Record<ReminderLeadTimeKey, readonly ReminderLeadTime[]> = {
     billReminderLeadTimes,
@@ -131,6 +134,7 @@ export default function ReminderKindScreen() {
     upcomingBills.value,
     upcomingSubscriptions.rows,
     expiringDocuments.value,
+    dueMaintenance.value,
   );
 
   const plan: EntityPlan | null = useMemo(
@@ -263,6 +267,7 @@ function nextSubjectFor(
   bills: readonly BillRecord[] | null,
   subscriptions: readonly SubscriptionRecord[],
   documents: readonly DocumentRecord[] | null,
+  maintenance: readonly MaintenanceDue[] | null,
 ): PreviewSubject | null {
   if (kind === null) return null;
 
@@ -278,6 +283,16 @@ function nextSubjectFor(
     return record === undefined
       ? null
       : { name: record.name, entity: subscriptionReminderEntity(record) };
+  }
+
+  if (kind.slug === 'maintenance') {
+    const due = maintenance?.[0];
+    if (due === undefined) return null;
+    const entity = maintenanceReminderEntity(due);
+    // The entity's title is already "<what> for <which>" — the same string the
+    // notification will carry, so the preview names the record exactly as the
+    // lock screen will.
+    return { name: entity.title, entity };
   }
 
   const document = documents?.[0];
@@ -307,6 +322,11 @@ function emptyPreviewCopy(kind: ReminderKind, plan: EntityPlan | null): string {
     // expire. Naming the actual requirement is the difference between a
     // usable sentence and one that looks like the screen is broken.
     return 'Nothing to show yet. Add a document with an expiry date and its reminders will be listed here.';
+  }
+  if (kind.slug === 'maintenance') {
+    // Same reasoning: an item on its own reminds about nothing. What creates a
+    // deadline is a service with a next-due date, or cover with an expiry.
+    return 'Nothing to show yet. Record a service with a next-due date, or cover with an expiry date, and its reminders will be listed here.';
   }
   return `Nothing to show yet. Add ${
     kind.slug === 'bills' ? 'a bill' : 'a subscription'

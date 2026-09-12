@@ -891,12 +891,21 @@ export function selectFuelFills(itemId: string): SqlStatement {
  * them. A service history is a chain: each job supersedes the one before it and
  * restates when the next is due. Taking the minimum would resurrect a 2024
  * interval that this year's oil change already answered.
+ *
+ * ── "LATEST" MEANS LATEST THAT SAYS ANYTHING ───────────────────────────────
+ * `next_service_date IS NOT NULL` is load-bearing, and its absence was a bug.
+ * Not every job schedules the next one: fitting wiper blades is a service with
+ * no interval. Without this clause the newest row won — and if it happened to
+ * be the wiper blades, the oil change's "next due 1 March" vanished from the
+ * detail screen and from the reminder queue, because a chain link that says
+ * nothing is not the same as a chain that ends.
  */
 export function selectNextService(itemId: string): SqlStatement {
   return {
     text:
       'SELECT "next_service_date", "next_service_mileage"' +
       ` FROM "${SERVICES_LIVE_VIEW}" WHERE "item_id" = ?` +
+      ' AND "next_service_date" IS NOT NULL' +
       ' ORDER BY "service_date" DESC, "id" DESC LIMIT 1',
     params: [itemId],
   };
@@ -918,5 +927,101 @@ export function selectNextExpiry(itemId: string): SqlStatement {
       ' WHERE "item_id" = ? AND "expiry_date" IS NOT NULL' +
       ' GROUP BY "kind" ORDER BY "expiry_date" ASC LIMIT 1',
     params: [itemId],
+  };
+}
+
+/* ========================================================================== */
+/* WHAT NEEDS REMINDING (Phase 5e)                                            */
+/*                                                                            */
+/* Two dated things hang off an item: a service that falls due, and cover that */
+/* expires. They get one reminder KIND but they are separate rows, and the     */
+/* reminder identifier is built from the ROW's id — a car with a service due   */
+/* and three renewals expiring must not have cancelling one cancel all four.   */
+/*                                                                            */
+/* Both read through the `*_live` views, so a soft-deleted item takes its      */
+/* reminders with it, and both join the item for its NAME — a notification     */
+/* saying "Oil change is due" without saying what for is one the user cannot   */
+/* act on.                                                                     */
+/* ========================================================================== */
+
+/**
+ * Services with a next-due date inside the window.
+ *
+ * ── ONLY THE LATEST SERVICE OF EACH ITEM ───────────────────────────────────
+ * A service history is a chain: each job restates when the next is due, so an
+ * item with four oil changes on record has ONE next-due date, not four. The
+ * same rule `selectNextService` follows, applied across every item at once via
+ * a correlated subquery on `service_date`.
+ *
+ * Without it, a car serviced every six months for three years would schedule
+ * six reminders for intervals that were all answered years ago.
+ *
+ * ── A RETIRED ITEM DOES NOT REMIND ─────────────────────────────────────────
+ * `is_active` is the user saying they no longer look after this. The history
+ * stays — it is why they know the last one lasted three years — but a sold car
+ * must not keep asking to be serviced.
+ */
+export function selectRemindableServices(
+  todayISO: string,
+  withinDays: number,
+  limit: number,
+): SqlStatement {
+  return {
+    text:
+      `SELECT "${SERVICE}"."id" AS "id", "${SERVICE}"."item_id" AS "item_id",` +
+      ` "${SERVICE}"."service_type" AS "label",` +
+      ` "${SERVICE}"."next_service_date" AS "date_iso",` +
+      ' "i"."name" AS "item_name"' +
+      ` FROM "${SERVICES_LIVE_VIEW}" "${SERVICE}"` +
+      ` JOIN "${ITEMS_LIVE_VIEW}" "i" ON "i"."id" = "${SERVICE}"."item_id"` +
+      ` WHERE "${SERVICE}"."next_service_date" IS NOT NULL` +
+      ' AND "i"."is_active" = 1' +
+      ` AND "${SERVICE}"."next_service_date" <= date(?, ?)` +
+      // The chain rule: this row must be the item's latest service THAT NAMES
+      // A NEXT ONE. Comparing against the latest service outright loses the
+      // interval whenever a later job scheduled nothing — fitting wiper blades
+      // after an oil change would cancel the oil change's reminder.
+      ` AND "${SERVICE}"."service_date" = (` +
+      `SELECT max("s2"."service_date") FROM "${SERVICES_LIVE_VIEW}" "s2"` +
+      ` WHERE "s2"."item_id" = "${SERVICE}"."item_id"` +
+      ' AND "s2"."next_service_date" IS NOT NULL)' +
+      ` ORDER BY "${SERVICE}"."next_service_date" ASC, "${SERVICE}"."id" ASC LIMIT ?`,
+    params: [todayISO, `+${withinDays} days`, limit],
+  };
+}
+
+/**
+ * Renewals expiring inside the window.
+ *
+ * ── ONLY THE LATEST OF EACH KIND ───────────────────────────────────────────
+ * Renewals accumulate: last year's insurance row stays on file, and its expiry
+ * is a date that was already dealt with. `selectNextExpiry` takes the max per
+ * kind for one item; this does the same per (item, kind) across all of them.
+ *
+ * Reminding about a superseded policy is the single most annoying thing this
+ * feature could do — the user renewed it, and the app is still nagging.
+ */
+export function selectRemindableRenewals(
+  todayISO: string,
+  withinDays: number,
+  limit: number,
+): SqlStatement {
+  return {
+    text:
+      `SELECT "${RENEWAL}"."id" AS "id", "${RENEWAL}"."item_id" AS "item_id",` +
+      ` "${RENEWAL}"."kind" AS "label",` +
+      ` "${RENEWAL}"."expiry_date" AS "date_iso",` +
+      ' "i"."name" AS "item_name"' +
+      ` FROM "${RENEWALS_LIVE_VIEW}" "${RENEWAL}"` +
+      ` JOIN "${ITEMS_LIVE_VIEW}" "i" ON "i"."id" = "${RENEWAL}"."item_id"` +
+      ` WHERE "${RENEWAL}"."expiry_date" IS NOT NULL` +
+      ' AND "i"."is_active" = 1' +
+      ` AND "${RENEWAL}"."expiry_date" <= date(?, ?)` +
+      // The supersession rule: this row must be the latest of its kind.
+      ` AND "${RENEWAL}"."expiry_date" = (` +
+      `SELECT max("r2"."expiry_date") FROM "${RENEWALS_LIVE_VIEW}" "r2"` +
+      ` WHERE "r2"."item_id" = "${RENEWAL}"."item_id" AND "r2"."kind" = "${RENEWAL}"."kind")` +
+      ` ORDER BY "${RENEWAL}"."expiry_date" ASC, "${RENEWAL}"."id" ASC LIMIT ?`,
+    params: [todayISO, `+${withinDays} days`, limit],
   };
 }

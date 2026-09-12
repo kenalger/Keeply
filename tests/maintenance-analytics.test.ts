@@ -525,6 +525,31 @@ describe('what is due next', () => {
     assert.equal(due.nextServiceMileage, 46_000);
   });
 
+  test('a later service with no next date does not blank the card', async () => {
+    const api = harness();
+    const item = await api.createItem({ name: 'Vios', kind: 'vehicle', vehicleType: 'car' });
+
+    await api.createService({
+      itemId: item.id,
+      serviceType: 'Oil change',
+      serviceDate: '2026-03-01',
+      nextServiceDate: '2026-09-01',
+      nextServiceMileage: 46_000,
+    });
+    // Not every job schedules the next one. Taking the newest row outright made
+    // "Due next" disappear the moment anything was recorded after the oil
+    // change — the card vanished and the reminder with it.
+    await api.createService({
+      itemId: item.id,
+      serviceType: 'Wiper blades',
+      serviceDate: '2026-06-01',
+    });
+
+    const due = await api.dueNext(item.id);
+    assert.equal(due.nextServiceDate, '2026-09-01');
+    assert.equal(due.nextServiceMileage, 46_000);
+  });
+
   test('reads the latest renewal of each kind, then the soonest of those', async () => {
     const api = harness();
     const item = await api.createItem({ name: 'Vios', kind: 'vehicle', vehicleType: 'car' });

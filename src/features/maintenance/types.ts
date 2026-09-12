@@ -565,6 +565,31 @@ export interface FuelEfficiency {
   toISO: string;
 }
 
+/**
+ * One dated thing hanging off an item, ready to become a reminder (5e).
+ *
+ * A service falling due and cover expiring are ONE reminder kind but separate
+ * rows — `id` is the SERVICE or RENEWAL row's id, never the item's, because
+ * `cancelRemindersFor()` matches on it and a car with a service due plus three
+ * renewals expiring must not have cancelling one cancel all four.
+ */
+export interface MaintenanceDue {
+  /** The service or renewal row's id. */
+  id: string;
+  itemId: string;
+  itemName: string;
+  /** Which of the two this is — they differ only in how they are labelled. */
+  source: 'service' | 'renewal';
+  /**
+   * What is due: a service type as the user typed it ("Oil change"), or a
+   * renewal kind as the schema stores it (`insurance`). The UI layer turns the
+   * latter into a word; this layer does not invent one.
+   */
+  label: string;
+  /** `'YYYY-MM-DD'` — the next-service date, or the expiry date. */
+  dateISO: string;
+}
+
 /** What is due next on one item — the detail screen's top line. */
 export interface MaintenanceDueNext {
   /** The soonest `next_service_date` still ahead, or the newest overdue one. */

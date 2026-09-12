@@ -33,6 +33,7 @@ export {
   useItemServices,
   useItemTotals,
   useMaintenanceItem,
+  useRemindableMaintenance,
   useMaintenanceList,
   useRenewal,
   useService,

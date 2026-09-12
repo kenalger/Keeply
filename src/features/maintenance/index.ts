@@ -84,6 +84,7 @@ export const {
   costPerKilometre,
   fuelEfficiency,
   dueNext,
+  remindableMaintenance,
 } = api;
 
 export { liveStore as liveMaintenanceStore };
@@ -91,6 +92,7 @@ export { liveStore as liveMaintenanceStore };
 export {
   computeFuelEfficiency,
   createMaintenanceApi,
+  maintenanceReminderEntity,
   mapCostRow,
   mapItemRow,
   mapRenewalRow,
@@ -152,6 +154,7 @@ export type {
   MaintenanceCostPatch,
   MaintenanceCostRecord,
   MaintenanceCostType,
+  MaintenanceDue,
   MaintenanceDueNext,
   MaintenanceErrorCode,
   MaintenanceItemFilter,

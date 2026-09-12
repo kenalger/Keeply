@@ -28,6 +28,7 @@
  *    still a record they can remove.
  */
 import { minorUnits, type MinorUnits } from '@/db/money';
+import type { ReminderEntity } from '@/lib/notifications-plan';
 
 import {
   insertCost,
@@ -49,6 +50,8 @@ import {
   selectOdometerWindow,
   selectRenewal,
   selectRenewalCount,
+  selectRemindableRenewals,
+  selectRemindableServices,
   selectRenewals,
   selectService,
   selectServiceCount,
@@ -81,6 +84,7 @@ import {
   type MaintenanceCostPatch,
   type MaintenanceCostRecord,
   type MaintenanceCostType,
+  type MaintenanceDue,
   type MaintenanceDueNext,
   type MaintenanceItemFilter,
   type MaintenanceItemPage,
@@ -471,6 +475,98 @@ export function computeFuelEfficiency(
   };
 }
 
+/** A remindable row as the driver hands it back. */
+interface DueRow {
+  id: unknown;
+  item_id: unknown;
+  item_name: unknown;
+  label: unknown;
+  date_iso: unknown;
+}
+
+/**
+ * A due row to a record, or `null`.
+ *
+ * Returns `null` rather than throwing: the only callers are the reminder queue
+ * and the settings preview, neither of which has anywhere to report a damaged
+ * row — and a reminder silently missing beats a boot that fails because one
+ * service row has a bad column. The list screens are where `damagedCount` is
+ * surfaced.
+ */
+function mapDueRow(row: DueRow, source: 'service' | 'renewal'): MaintenanceDue | null {
+  if (
+    typeof row.id !== 'string' ||
+    typeof row.item_id !== 'string' ||
+    typeof row.item_name !== 'string' ||
+    typeof row.label !== 'string' ||
+    typeof row.date_iso !== 'string' ||
+    row.date_iso === ''
+  ) {
+    return null;
+  }
+  return {
+    id: row.id,
+    itemId: row.item_id,
+    itemName: row.item_name,
+    source,
+    label: row.label,
+    dateISO: row.date_iso,
+  };
+}
+
+/**
+ * What a renewal kind is called in a notification.
+ *
+ * Duplicated from `ui/labels.ts` on purpose: that module imports
+ * `@/components/ui` for its icon types, and this one is reached by
+ * `src/lib/reminders.ts` — the notification layer must not pull a React tree in
+ * behind it. Three words, and a `Record` over the union so a new renewal kind
+ * is a compile error rather than the enum's own spelling on a lock screen.
+ */
+const RENEWAL_REMINDER_LABELS: Readonly<Record<MaintenanceRenewalKind, string>> = {
+  insurance: 'Insurance',
+  registration: 'Registration',
+  warranty: 'Warranty',
+};
+
+/**
+ * Project a due service or renewal onto the shape the notification layer wants.
+ *
+ * ── WHY THIS LIVES HERE ────────────────────────────────────────────────────
+ * The same reason `billReminderEntity`, `subscriptionReminderEntity` and
+ * `documentReminderEntity` do: the scheduler that places the notification and
+ * the settings screen that PREVIEWS it must project a record identically, or
+ * the preview promises reminders the queue will never hold.
+ *
+ * ── "<WHAT> FOR <WHICH>" ───────────────────────────────────────────────────
+ * The body is `${title} is due ${when}`, so the title has to read as a subject:
+ *
+ *     "Oil change and filter for Vios is due in 3 days."
+ *     "Insurance for Vios is due in 7 days."
+ *
+ * Not `${itemName} ${label}` — "Vios Oil change and filter is due" reads like a
+ * typo, and the fix is NOT to lower-case the user's own words. §8's rule is
+ * that a record's title is interpolated exactly as typed: lower-casing turns
+ * "SSS ID" into "sss id" and "OR/CR" into something worse. Putting the item
+ * second sidesteps the capital entirely.
+ *
+ * ── NO AMOUNT, NO IDENTIFIER ───────────────────────────────────────────────
+ * A due service has no price yet — that is the whole point of it being due —
+ * and a plate, a serial or a policy number never goes near a lock screen (§10).
+ */
+export function maintenanceReminderEntity(due: MaintenanceDue): ReminderEntity {
+  const what =
+    due.source === 'renewal' && isMaintenanceRenewalKind(due.label)
+      ? RENEWAL_REMINDER_LABELS[due.label]
+      : due.label;
+  return {
+    id: due.id,
+    kind: 'maintenance',
+    title: `${what} for ${due.itemName}`,
+    dateISO: due.dateISO,
+  };
+}
+
 export interface MaintenanceApi {
   listItems(filter?: MaintenanceItemFilter): Promise<MaintenanceItemPage>;
   /** @throws {MaintenanceError} `not-found`, or `damaged-row`. */
@@ -530,6 +626,11 @@ export interface MaintenanceApi {
   fuelEfficiency(itemId: string): Promise<Analytic<FuelEfficiency>>;
   /** The next service and the soonest expiry — the detail screen's top line. */
   dueNext(itemId: string): Promise<MaintenanceDueNext>;
+  /**
+   * Everything across every ACTIVE item with a date inside the window,
+   * soonest first — what the reminder queue and its preview both read.
+   */
+  remindableMaintenance(withinDays: number, limit?: number): Promise<readonly MaintenanceDue[]>;
 }
 
 export interface MaintenanceApiDeps {
@@ -1212,6 +1313,35 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
         nextExpiryDate: typeof expiry?.expiry_date === 'string' ? expiry.expiry_date : null,
         nextExpiryKind: isMaintenanceRenewalKind(expiry?.kind) ? expiry.kind : null,
       };
+    },
+
+    async remindableMaintenance(withinDays, limit = 100) {
+      const today = todayISO();
+      // Both reads at once — independent, one connection. Each is bounded by
+      // `limit` on its own, so a hundred renewals cannot crowd out the
+      // services; the PLANNER decides which of the combined set survives the
+      // OS queue's ceiling, and it does that by fire time.
+      const [services, renewals] = await Promise.all([
+        store.all<DueRow>(selectRemindableServices(today, withinDays, limit)),
+        store.all<DueRow>(selectRemindableRenewals(today, withinDays, limit)),
+      ]);
+
+      const due: MaintenanceDue[] = [];
+      for (const row of services) {
+        const mapped = mapDueRow(row, 'service');
+        if (mapped !== null) due.push(mapped);
+      }
+      for (const row of renewals) {
+        const mapped = mapDueRow(row, 'renewal');
+        if (mapped !== null) due.push(mapped);
+      }
+
+      // Merged and re-sorted: two soonest-first lists concatenated are not one
+      // soonest-first list, and the preview shows the FIRST of these as "your
+      // next service or renewal".
+      return due.sort((a, b) =>
+        a.dateISO === b.dateISO ? a.id.localeCompare(b.id) : a.dateISO.localeCompare(b.dateISO),
+      );
     },
   };
 }
