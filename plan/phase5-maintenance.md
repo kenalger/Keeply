@@ -1,6 +1,6 @@
 # Phase 5 — Maintenance (replaces "Vehicles")
 
-**Status: 5a, 5b and 5d done — you can add, list, view, edit and delete an item. 5c (analytics) and 5e (reminders) outstanding.** Written 2026-09-03, from: *"instead of vehicles, make it maintenance. because
+**Status: 5a–5d done — you can record costs, services and renewals against an item, and see what it has cost. 5e (reminders) outstanding.** Written 2026-09-03, from: *"instead of vehicles, make it maintenance. because
 it's maintenance but not focus on 1 field. let's add more, like what more requires maintenance."*
 
 This supersedes `plan/phases.md` → "Phase 5 — Vehicles", and knowingly diverges from `goal.md`
@@ -95,8 +95,8 @@ same way.
 | Step | Work | Done when |
 | --- | --- | --- |
 | ~~**5a**~~ | ~~Schema + migrations, `*_live` views, enums, tests~~ | **Done.** Migrations `0002` (drops) + `0003` (creates) applied on the device and confirmed by querying `sqlite_master`: four tables, four views, every index, and zero `vehicle*` objects left. 55 migration tests, four mutations verified red. |
-| ~~**5b**~~ | ~~Data layer~~ | **Done for ITEMS** — store/types/sql/validation/queries, filters, per-item totals. Costs, services and renewals have tables and views but no API yet; they arrive with 5c. |
-| **5c** | Analytics: running totals per item and per year; cost-per-km and fuel efficiency for vehicles only, and only with enough data | Tested against fixtures, including the not-enough-data case |
+| ~~**5b**~~ | ~~Data layer~~ | **Done.** Items in 5b; costs, services and renewals in 5c. |
+| ~~**5c**~~ | ~~Costs, services and renewals: data layer, analytics and screens~~ | **Done.** 63 tests (30 records · 24 analytics · 9 litres), 20 mutations verified red. Rendered and driven on the device — see §11. |
 | ~~**5d**~~ | ~~Screens~~ | **Done** — the tab IS the list (grouped by kind, searchable, filterable), plus add / detail / edit. Verified on the device: one item of each kind added, survives a cold boot. `plan/screenshots/26-*`. |
 
 The **tab itself is already renamed** — label, wrench icon, empty state and the "what Keeply
@@ -192,8 +192,105 @@ filled in a car and then changed the kind. Verified on the device — an applian
   longer than a word or two … `SelectField` is the right control"*. Taking the design system's
   advice rather than shortening the word.
 
-### Still not addable
+### Still not addable *(closed by 5c — see §11)*
 
 Costs, services and renewals. The detail screen says "Nothing recorded against it yet" rather than
 showing a stubbed section — a "Coming soon" on a record someone just created is a promise made at
 the worst possible moment.
+
+---
+
+## 11. What 5c built, and the decisions inside it
+
+`4f48c95` (data layer) and `1924cd5` (screens). The tab called Maintenance can now record
+maintenance.
+
+### One ledger, written from three screens
+
+A service's price and a renewal's premium are **not** columns on those tables. They are
+`maintenance_costs` rows created in the same transaction and linked by `cost_id` — the §A3 rule the
+schema header already stated, now actually exercised. `itemTotals()` stays a single `sum()` that
+cannot double-count, and the user types the amount once, on the form they were already standing on.
+
+The consequence is deliberate: **the detail record owns its cost row.**
+
+| The user does | What happens to the ledger row |
+| --- | --- |
+| Types an amount on a service | Created, typed `service`, dated and shopped to match |
+| Moves the service's date, shop or odometer | Moved with it |
+| Clears the amount | Deleted — an ABSENT price, never ₱0 |
+| Deletes the service | Deleted with it |
+| Deletes the cost from the ledger itself | Survives as a service with no price |
+| Then types an amount again | A **new** row — see below |
+
+That last one is the trap. A soft delete cannot fire `ON DELETE SET NULL`, so `cost_id` still names
+a tombstone; `updateCost` carries `WHERE deleted_at IS NULL`, so updating it matches zero rows and
+the amount the user just typed vanishes with nothing failing. `liveCostId()` re-reads before
+deciding, which turns that into "there is no cost here, write a new one". All six rows were driven
+end to end on the device, not only under `node:sqlite`.
+
+### Cost-per-kilometre measures the odometer's window, not the ledger's
+
+The distance is `max(odometer) - min(odometer)` over the cost rows that carry one, and the numerator
+is every cost dated inside **that same window**. Dividing the all-time total by the measured distance
+was the obvious alternative and is wrong: it charges kilometres nobody measured with pesos somebody
+spent, so the rate falls every time a reading is recorded, for no reason the user did anything about.
+
+The window's dates and distance come back with the rate, so the screen states them rather than
+presenting a bare number. A service recorded with an odometer widens the window, because its linked
+cost row carries the reading — which is how a service contributes without being entered twice.
+
+`costPerKmMinor` sits beside the exact `costPerKm` because `<Amount/>` takes `MinorUnits`, and a
+screen that rounds it itself has to cast past the brand that exists to prevent exactly that (§30).
+
+### Fuel efficiency is the one analytic that is not SQL
+
+Every other analytic is a fold over a set, which SQLite does better. This one is a walk along an
+ordered sequence with a window whose ends are chosen by a predicate — expressible in SQL, and
+expressible as something nobody could review. It lives in `computeFuelEfficiency()` with four named
+ways to have nothing to say, driven by literal arrays.
+
+The measurement runs from the first full tank to the last and counts the fuel put in **after** the
+opening one. Including the opening tank's litres is the classic off-by-one that makes a car look
+thirstier by exactly one tankful; the fixture that catches it is four elements long, and the mutation
+was verified red.
+
+Rows are ordered by **odometer**, not date: the reading is what the distance is measured with, and a
+receipt found in a glovebox belongs where its odometer says it does.
+
+### A gap is a named reason, never a blank
+
+`AnalyticsGap` has seven values and `ANALYTICS_GAP_MESSAGES` turns each into one sentence saying what
+to record next. Every owner is in one of those states for weeks, and a panel that simply disappears
+cannot tell anyone what the missing ingredient is.
+
+### Litres, and a claim that was withdrawn
+
+`fuel_liters_milli` is an INTEGER a division reads, so a float there does not merely look wrong — the
+row fails `typeof = 'integer'` in `selectFuelFills`, silently leaves the measurement, and the km/L
+figure changes with nothing saying why. `parseLitres()` is digit-string arithmetic, like centavos.
+
+The header originally claimed `Math.round(x * 1000)` gives wrong answers. **It does not**, at this
+magnitude — a mutation swapping the methods survived the whole suite. The comment now says so, and
+gives the real reason: the rounding version is correct only *because* the accepted range is narrow,
+and a range is exactly the sort of thing a later change widens. Those bounds now have a test of their
+own, so widening them is a decision rather than a one-character edit.
+
+### Two things only the render found
+
+Neither was visible from the test suite.
+
+- **Every add form logged an error on open.** One route serves add and edit, keyed by an optional id,
+  and a hook cannot be called conditionally — so the add path read id `''`, failed as `not-found`,
+  and `log.error` counted it in LogBox. *An absent id means "adding", not "missing".*
+- **`<Section/>` is still a dashboard heading.** `4ecb864` made `FormSection` and `ListSectionHeader`
+  quiet eyebrows and left `Section` at 17pt primary — reasonably, since `Section` is the unit Home is
+  built from. A detail screen with six of them reads as six equally loud slabs, the exact failure that
+  commit describes. This screen uses `ListSectionHeader`, as bills' detail screen already did.
+  **Anything that is not a dashboard should do the same.**
+
+### Not in 5c
+
+Reminders (step 5e, which still drags the `notification_settings.entity_type` rename and its
+view-drop dance), Home and Money wiring, and per-item cost charts. The `dueNext()` read 5e needs is
+built and tested.

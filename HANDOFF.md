@@ -1,13 +1,14 @@
 # Keeply — Handoff
 
-**State at `a87182c`.** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **960/960**.
+**State at `1924cd5`.** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **1023/1023**.
 Runs on the iOS Simulator.
 
-> **Six commits are UNPUSHED** (`edda5d1..a87182c`). `git log origin/main..HEAD` to see them.
-> Nothing is half-finished — each one is green on its own — but `origin/main` is six behind.
+> **Nine commits are UNPUSHED** (`edda5d1..HEAD`). `git log origin/main..HEAD` to see them.
+> Nothing is half-finished — each one is green on its own — but `origin/main` is nine behind.
 
-This session: restore (Phase 8c), the Bills screens (Phase 3c), the reminders rework, and a
-design pass that reached the whole app.
+This session: **Phase 5c** — costs, services and renewals, the analytics over them, and the
+screens that record them. The previous session did restore (8c), the Bills screens (3c), the
+reminders rework and a design pass.
 
 | Phase | State |
 | --- | --- |
@@ -15,7 +16,7 @@ design pass that reached the whole app.
 | Onboarding | Complete |
 | 9 Expenses & Allowance | **Complete** |
 | 8 Backup | **Complete.** Export and restore, both verified on the device. |
-| 5 Maintenance *(was Vehicles)* | Schema, item data layer and screens done. **Costs, services and renewals have tables but no API.** |
+| 5 Maintenance *(was Vehicles)* | 5a–5d **complete**: items, costs, services, renewals, analytics, screens. **5e (reminders) outstanding.** |
 | 6 Documents · 7 Security | Not started |
 
 Read `CLAUDE.md` for conventions before touching anything. `plan/goal.md` is the product spec.
@@ -38,10 +39,19 @@ A private, offline-first iOS app you can actually use:
   allowance is a **history** table resolved by `effective_from`, so raising it in October cannot restate
   September. Receipts is now "Expenses" (routes `src/app/expenses`, table still `receipts`), the list is
   grouped by day with per-day totals, and the form opens on the amount.
-- **Maintenance (Phase 5).** Anything that needs looking after — vehicles, appliances, home,
-  electronics. One `maintenance_items` table with a `kind`; the form CHANGES SHAPE with it, so an
-  aircon never sees an odometer field. Add / list / detail / edit / delete all work and survive a cold
-  boot. What you cannot yet record is the maintenance itself — see Known gaps.
+- **Maintenance (Phase 5a–5d).** Anything that needs looking after — vehicles, appliances, home,
+  electronics. One `maintenance_items` table with a `kind`; every form CHANGES SHAPE with it, so an
+  aircon never sees an odometer field. You can now record **costs, services and renewals** against an
+  item, and the detail screen answers the four questions an item is for: what is due next, what it
+  has cost, what has been done to it, what cover it is under.
+  **One ledger.** A service's price and a renewal's premium are `maintenance_costs` rows written in
+  the same transaction and linked by `cost_id` (§A3) — so the amount is typed once, the running total
+  cannot double-count, and the detail record OWNS its cost row (clear the amount and it goes; delete
+  the service and it goes). `plan/phase5-maintenance.md` §11 has the whole contract and the tombstone
+  trap inside it.
+  **Analytics.** Totals per year and per type; cost-per-kilometre and tank-to-tank fuel efficiency for
+  vehicles only. Both report a NAMED gap rather than a blank when there is not enough data — every
+  owner is in that state for weeks, and a panel that disappears cannot say what to record next.
 - **Encrypted backup, both directions (Phase 8).** A backup IS a SQLCipher database, written by
   `sqlcipher_export()` and keyed with a passphrase, then handed to the share sheet and deleted from the
   cache. **Restore is the same thing backwards**: open the bundle under its passphrase, export it into a
@@ -70,10 +80,10 @@ A private, offline-first iOS app you can actually use:
 - **Design system** — greyscale plus ONE accent, full form layer, `ThemeLayout` spacing rules, and
   contrast that is now actually measured (`tests/theme-contrast.test.ts`) rather than claimed.
 
-224 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+240 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent).
+`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent, **`42-` Phase 5c**).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -87,24 +97,21 @@ A private, offline-first iOS app you can actually use:
 session that began before they existed cannot call them. Start a fresh session and they are available
 by name.
 
-**2. Build maintenance records (Phase 5c). The biggest hole in the product.** The tab is called
-Maintenance and you cannot record any maintenance. Items exist; the thing you attach to them does
-not. `maintenance_costs`, `maintenance_services` and `maintenance_renewals` have tables, views and
-migration-level tests, but no API and no screens — so the detail screen honestly says "Nothing
-recorded against it yet" rather than stubbing a section. This is what turns a list of possessions
-into a history, and it is the last domain where finished schema is unreachable.
+**2. Documents (Phase 6), the last unbuilt record kind.** Everything around it already exists and
+points at it — the tab, the reminder settings screen, `documentReminderLeadTimes`, the expiry status
+tokens. It is the only kind whose reminder preview says "arrives in a later update", and now the
+only domain with no screens at all.
 
-Note it drags **step 5e** with it: `notification_settings.entity_type` still names the old vehicle
-tables, and fixing that needs the drizzle-kit view-drop dance in Known gaps.
-
-**3. Then Documents (Phase 6), the last unbuilt record kind.** Everything around it already exists
-and points at it — the tab, the reminder settings screen, `documentReminderLeadTimes`, the expiry
-status tokens. It is the only kind whose reminder preview says "arrives in a later update".
+**3. Maintenance reminders (step 5e), and the rename it drags.** `dueNext()` is built and tested —
+it returns the next service date and the soonest renewal expiry per item — so the scheduler has its
+input. What is left is the reminder settings screen's fourth kind, Home and Money wiring, and the
+deferred `notification_settings.entity_type` rename, which still needs the drizzle-kit view-drop
+dance in Known gaps.
 
 **4. Small, high-value, any time.** Each is an hour or two and each closes something that currently
 reads as broken: a ledger row on the bill detail screen is not tappable (`saveBillPaymentEdit()` is
 wired and exported); bills are absent from Home (`useUpcomingBills()` exists for exactly that); and
-`useAsyncRead` is now copied into five features and wants extracting across all five at once.
+`useAsyncRead` is now copied into **six** features and wants extracting across all six at once.
 
 **Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
 camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
@@ -255,6 +262,22 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   file and running the real migrations means there is one path, and it is the tested one.
   `recoverInterruptedRestore()` at the top of `openDatabase()` is what makes the two-rename window
   survivable — remove it and a kill mid-restore mints a fresh key over the user's data.
+- **A detail record OWNS the ledger row that explains it.** A service's price and a renewal's
+  premium are `maintenance_costs` rows, not columns (§A3) — so clearing the amount DELETES that row
+  and deleting the service deletes it too. A ledger entry nothing on any screen explains is worse
+  than no entry. The trap: `cost_id` can point at a TOMBSTONE, because a soft delete never fires
+  `ON DELETE SET NULL`. `updateCost` carries `WHERE deleted_at IS NULL`, so writing to it matches
+  zero rows and the amount the user just typed vanishes with nothing failing. `liveCostId()`
+  re-reads before deciding. **Any future `*_id` link to a soft-deleted table has this same hole.**
+- **An absent id means "adding", not "missing".** One route serves add and edit keyed by an optional
+  id, and a hook cannot be called conditionally — so a naive `useCost(id ?? '')` reads `''`, fails as
+  `not-found`, and logs an error every time someone opens the add form. `useOptionalRecord` resolves
+  to `null` without a read. Found by opening the form and watching LogBox count it, not by any test.
+- **`<Section/>` is a DASHBOARD heading; a detail screen wants `ListSectionHeader`.** `4ecb864` made
+  `FormSection` and `ListSectionHeader` quiet eyebrows and reasonably left `Section` at 17pt primary,
+  because `Section` is the unit Home is built from. Six of them on one detail screen is six equally
+  loud slabs with no focal point — the exact failure that commit describes. Bills' detail screen
+  already used the eyebrow; maintenance now does too.
 - **A chip's label weight never changes with selection.** A chip is as wide as its own text, so bolding
   the chosen one reflows a wrapping row *as you tap it*. The fill carries the state. `SegmentedField`
   can bold safely because each segment is a fixed share of a fixed track; `ChipField` cannot.
@@ -265,6 +288,27 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 Newest first, labelled by the commit that closed them — "this session" stopped being a useful
 label four commits ago.
+
+### `4f48c95` + `1924cd5` · Phase 5c — maintenance records
+
+- **The tab called Maintenance can record maintenance.** Costs, services and renewals have an API,
+  analytics and screens. `plan/phase5-maintenance.md` §11 is the full account; the conventions above
+  carry the three rules worth remembering.
+- **Cost-per-kilometre measures the ODOMETER's window**, not the ledger's — the numerator is every
+  cost dated between the first and last odometer reading. Dividing the all-time total by the measured
+  distance charges kilometres nobody measured, and makes the rate fall every time a reading is
+  recorded for no reason the user did anything about.
+- **Tank-to-tank efficiency excludes the opening tank's litres.** They went in before the measured
+  distance began; counting them makes a car look thirstier by exactly one tankful. It is the one
+  analytic that is not SQL — a walk along an ordered sequence, in `computeFuelEfficiency()`, so a
+  four-element fixture can show the off-by-one.
+- **A claim was withdrawn.** `parseLitres`'s header said `Math.round(x * 1000)` gives wrong answers.
+  It does not at this magnitude — a mutation swapping the methods survived the whole suite. The
+  comment now says so and gives the real reason (the rounding version is correct only because the
+  accepted range is narrow, and ranges get widened), and the bounds have their own test.
+- **Rounding moved out of the screen.** `CostPerKilometre` carries `costPerKmMinor` beside the exact
+  rate, because the screen was casting `as never` past the `MinorUnits` brand to render it — and that
+  brand exists to make exactly that cast impossible (§30).
 
 ### `a87182c` · one accent colour, and contrast that is measured
 
@@ -393,14 +437,22 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   `deleteBillPayment()` are wired and exported and the `anchor-row` refusal has its sentence, but a
   ledger row on the bill detail screen is not tappable yet. The natural next slice.
 - **Bills are not on Home.** `useUpcomingBills()` exists and is exported for exactly that.
-- **`useAsyncRead` is duplicated FIVE times** (subscriptions, receipts, allowance, maintenance,
-  bills) — ~60 lines of subtle concurrency logic (generation counter, cancellation) copied per
-  feature. Worth extracting across all five at once; not worth smuggling into one of them.
+- **`useAsyncRead` is duplicated SIX times** (subscriptions, receipts, allowance, maintenance, bills,
+  and now maintenance's child records reuse the maintenance copy) — ~60 lines of subtle concurrency
+  logic (generation counter, cancellation) copied per feature. Worth extracting across all of them at
+  once; not worth smuggling into one. 5c deliberately reused the existing copy rather than adding a
+  seventh.
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
   budgets, no rollover.
-- **Maintenance records do not exist.** `maintenance_costs`, `maintenance_services` and
-  `maintenance_renewals` have tables, views and migration tests, but no API, no screens and no
-  analytics (cost-per-km, fuel efficiency). Items can be added; what happens to them cannot.
+- **Maintenance is not wired into reminders, Home or Money (step 5e).** `dueNext()` exists and is
+  tested — next service date, soonest renewal expiry per item — so the scheduler has its input, but
+  nothing calls it outside the item's own screen. No maintenance reminder is ever scheduled, and
+  `/reminders` still has three kinds.
+- **A maintenance item's odometer is not updated by a cost.** Recording a fill-up at 47,810 km leaves
+  `maintenance_items.current_mileage` wherever it was. Deliberate for now — "the latest reading" and
+  "what the user last told us" are different facts, and silently overwriting one with the other on
+  every fuel entry needs a decision, not a default. The analytics read the cost rows, so nothing is
+  wrong; the item's own Odometer row can just look stale.
 - **The `notification_settings.entity_type` enum still names the old vehicle tables**
   (`vehicle_insurance`, `vehicle_registration`, `vehicle_maintenance`). Renaming them changes a CHECK,
   which SQLite can only do by rebuilding the table — and drizzle-kit's rebuild does not drop the
@@ -441,13 +493,20 @@ are not available at all. Drive the app over CDP instead — it worked reliably 
   takes a drizzle `SQL`, not `{sql, params}`.
 - An unhandled rejection inside an eval raises a LogBox toast that `__expo_dev_resetErrors()` does not
   clear. Relaunch the app. Before blaming the app for a toast, check it is not yours.
+- **To SCREENSHOT A LONG SCREEN, scroll it through the React DevTools hook.** `simctl` cannot scroll
+  and there are no synthetic taps, so a tall screen used to be capturable only down to the fold.
+  `globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__` is present in any dev bundle: walk
+  `hook.getFiberRoots(id)` for a fiber whose `stateNode` has `scrollTo`, then call
+  `stateNode.scrollTo({ y, animated: false })` and shoot with `xcrun simctl io <udid> screenshot`.
+  One `ScrollView` is mounted at a time, so the first match is the right one. No app change, and the
+  render under test is the real one — this is how `plan/screenshots/42-detail-vios-{1..5}` were taken.
 
 ```bash
 npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 960 tests
+npm test                # node --test, 1023 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
@@ -457,7 +516,14 @@ still installed, so no rebuild is needed. Metro was left running on 8081; `npm s
 
 The app on that simulator holds real test data: an allowance, a month of expenses, four
 maintenance items (a Vios, an aircon, a water heater, a laptop), three subscriptions and three
-bills. **Meralco now carries two months of payment history** (₱4,120.75 and ₱2,980.50 against a
-₱3,500 estimate) and has rolled forward to November — added while verifying Phase 3c, and worth
-keeping: it is the only record in the database that renders a ledger. Useful for rendering passes, and
-worth knowing before you assume an empty database.
+bills. **Meralco carries two months of payment history** (₱4,120.75 and ₱2,980.50 against a ₱3,500
+estimate) and has rolled forward to November — it is the only bill that renders a ledger.
+
+**The Vios now carries a full maintenance history**, added while verifying 5c and worth keeping for
+the same reason: four fill-ups (three full tanks, odometer 46,200 → 47,810), two services with
+prices, wiper blades, and insurance + registration renewals. It totals ₱37,012.00 across 9 entries,
+₱5.04/km over 3,710 km, 14.8 km/L over 1,610 km on 3 fills — so every analytic on the detail screen
+has something to show. The aircon has one service and a Panasonic warranty, which is what proves the
+vehicle-only panels are ABSENT rather than greyed on a non-vehicle.
+
+Useful for rendering passes, and worth knowing before you assume an empty database.
