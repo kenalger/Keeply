@@ -170,9 +170,13 @@ export function useExpirySummary(): AsyncValue<DocumentExpirySummary> {
 export function useExpiringDocuments(
   withinDays: number,
   limit?: number,
+  excludeExpired = false,
 ): AsyncValue<readonly DocumentRecord[]> {
   const revision = useRevision('documents');
-  return useAsyncRead(() => expiringDocuments(withinDays, limit), [withinDays, limit, revision]);
+  return useAsyncRead(
+    () => expiringDocuments(withinDays, limit, excludeExpired),
+    [withinDays, limit, excludeExpired, revision],
+  );
 }
 
 /** The type filter's value, where `null` means "every type". */

@@ -342,10 +342,11 @@ export function useItemAnalytics(id: string): AsyncValue<ItemAnalytics> {
 export function useRemindableMaintenance(
   withinDays: number,
   limit?: number,
+  excludeOverdue = false,
 ): AsyncValue<readonly MaintenanceDue[]> {
   const revision = useRevision('maintenance');
   return useAsyncRead(
-    () => remindableMaintenance(withinDays, limit),
-    [withinDays, limit, revision],
+    () => remindableMaintenance(withinDays, limit, excludeOverdue),
+    [withinDays, limit, excludeOverdue, revision],
   );
 }

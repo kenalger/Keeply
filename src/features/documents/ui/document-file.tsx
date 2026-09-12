@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { Icon, Text } from '@/components/ui';
@@ -45,9 +45,22 @@ export function DocumentFile({ uri, mimeType, height = 420, testID }: DocumentFi
   // this through its `uri`.
   const exists = useMemo(() => documentFileExists(uri), [uri]);
 
+  // TWO checks, not one. `documentFileExists` is a stat — it cannot tell a
+  // truncated JPEG from a whole one, and a copy interrupted by a full disk or a
+  // PDF that a Files pick reported as an image both get past it. Without the
+  // decode failure the screen draws 420pt of empty surface, indistinguishable
+  // from a slow load, forever. Receipts documents exactly this and solves it
+  // the same way; documents kept the first check and dropped the second.
+  // The URI that failed, not a boolean. A boolean needs an effect to clear it
+  // when `uri` changes — which eslint rightly refuses, because setState in an
+  // effect body is a cascading render. Keying the failure to the value that
+  // caused it resets itself for free.
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const failed = failedUri !== null && failedUri === uri;
+
   if (uri === null) return null;
 
-  if (!exists) {
+  if (!exists || failed) {
     return (
       <View style={[styles.placeholder, { height }]} testID={testID}>
         <Icon name="errorCircle" size={28} color="textTertiary" />
@@ -55,7 +68,12 @@ export function DocumentFile({ uri, mimeType, height = 420, testID }: DocumentFi
           File unavailable
         </Text>
         <Text variant="caption" color="textTertiary" align="center">
-          The document’s details are safe. The scan itself is no longer on this device.
+          {/* Two different facts, and the user can act on only one of them:
+              a file that is GONE is gone, a file that will not DECODE is still
+              there and worth re-attaching from the original. */}
+          {failed
+            ? 'The file is on this device, but Keeply could not read it. The document’s details are safe — you can attach the scan again.'
+            : 'The document’s details are safe. The scan itself is no longer on this device.'}
         </Text>
       </View>
     );
@@ -78,9 +96,18 @@ export function DocumentFile({ uri, mimeType, height = 420, testID }: DocumentFi
       source={{ uri }}
       style={[styles.image, { height }]}
       contentFit="contain"
-      // The scan is the only copy and it never changes in place, so caching it
-      // by URI is safe and keeps a detail screen instant on the second visit.
-      cachePolicy="memory-disk"
+      // `memory`, NOT `memory-disk`. The bytes are already on disk in
+      // `…/Keeply/documents`; the disk half of the cache would write a SECOND
+      // copy under `Library/Caches`, outside the directory the backup exclusion
+      // is stamped on and outside anything `unlinkOrphanedFile` can reach — so
+      // deleting a document would leave a copy of the passport scan behind
+      // while the confirmation says "the scan goes with it". expo-image sets
+      // `storeCacheType` unconditionally; there is no local-file exemption.
+      //
+      // Receipts made the same call for the less sensitive file, and this one
+      // was the outlier. Found by audit.
+      cachePolicy="memory"
+      onError={() => setFailedUri(uri)}
       accessibilityIgnoresInvertColors
       testID={testID}
     />

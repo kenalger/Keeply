@@ -425,3 +425,51 @@ describe('projecting onto a reminder', () => {
     assert.equal('amountMinor' in entity, false);
   });
 });
+
+describe('the preview asks a different question from the queue', () => {
+  test('it can skip what is already overdue', async () => {
+    const api = harness();
+    const item = await vehicle(api);
+
+    const lapsed = await api.createRenewal({
+      itemId: item.id,
+      kind: 'registration',
+      expiryDate: '2026-01-01',
+    });
+    const upcoming = await api.createRenewal({
+      itemId: item.id,
+      kind: 'insurance',
+      expiryDate: '2026-11-02',
+    });
+
+    // The QUEUE wants the overdue one — dealing with it is the urgent thing.
+    assert.deepEqual(
+      (await api.remindableMaintenance(365)).map((d) => d.id),
+      [lapsed.id, upcoming.id],
+    );
+
+    // The PREVIEW does not: with `limit 1` it was handed the overdue row, whose
+    // every lead time has passed, and reported that as the state of the whole
+    // feature. The documents preview had the identical bug.
+    assert.deepEqual(
+      (await api.remindableMaintenance(365, 1, true)).map((d) => d.id),
+      [upcoming.id],
+    );
+  });
+
+  test('a service due TODAY is not "overdue"', async () => {
+    const api = harness();
+    const item = await vehicle(api);
+    const service = await api.createService({
+      itemId: item.id,
+      serviceType: 'Oil change',
+      serviceDate: '2026-03-01',
+      nextServiceDate: TODAY,
+    });
+    // The bound is `>= today`, not `> today`: something due today is still due.
+    assert.deepEqual(
+      (await api.remindableMaintenance(365, 10, true)).map((d) => d.id),
+      [service.id],
+    );
+  });
+});

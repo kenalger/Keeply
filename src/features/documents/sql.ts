@@ -190,13 +190,28 @@ export function selectExpiring(
   todayISO: string,
   withinDays: number,
   limit: number,
+  /**
+   * Drop anything that has ALREADY lapsed.
+   *
+   * Home and the reminder queue want the lapsed ones — renewing them is the
+   * most urgent thing on the list, so excluding them would hide the worst row
+   * there is. The reminder PREVIEW wants the opposite: it asks "what will my
+   * reminders look like", and an expired document answers "every lead time has
+   * already passed", which is true of that row and a lie about the feature.
+   * Found by audit.
+   */
+  excludeExpired = false,
 ): SqlStatement {
+  const lowerBound = excludeExpired ? ' AND "expiry_date" >= ?' : '';
   return {
     text:
       `SELECT ${DOCUMENT_COLUMNS} FROM "${DOCUMENTS_LIVE_VIEW}"` +
       ' WHERE "expiry_date" IS NOT NULL AND "expiry_date" <= date(?, ?)' +
+      `${lowerBound}` +
       ' ORDER BY "expiry_date" ASC, "name" COLLATE NOCASE ASC, "id" ASC LIMIT ?',
-    params: [todayISO, `+${withinDays} days`, limit],
+    params: excludeExpired
+      ? [todayISO, `+${withinDays} days`, todayISO, limit]
+      : [todayISO, `+${withinDays} days`, limit],
   };
 }
 

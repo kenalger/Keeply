@@ -630,7 +630,11 @@ export interface MaintenanceApi {
    * Everything across every ACTIVE item with a date inside the window,
    * soonest first — what the reminder queue and its preview both read.
    */
-  remindableMaintenance(withinDays: number, limit?: number): Promise<readonly MaintenanceDue[]>;
+  remindableMaintenance(
+    withinDays: number,
+    limit?: number,
+    excludeOverdue?: boolean,
+  ): Promise<readonly MaintenanceDue[]>;
 }
 
 export interface MaintenanceApiDeps {
@@ -1359,15 +1363,15 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
       };
     },
 
-    async remindableMaintenance(withinDays, limit = 100) {
+    async remindableMaintenance(withinDays, limit = 100, excludeOverdue = false) {
       const today = todayISO();
       // Both reads at once — independent, one connection. Each is bounded by
       // `limit` on its own, so a hundred renewals cannot crowd out the
       // services; the PLANNER decides which of the combined set survives the
       // OS queue's ceiling, and it does that by fire time.
       const [services, renewals] = await Promise.all([
-        store.all<DueRow>(selectRemindableServices(today, withinDays, limit)),
-        store.all<DueRow>(selectRemindableRenewals(today, withinDays, limit)),
+        store.all<DueRow>(selectRemindableServices(today, withinDays, limit, excludeOverdue)),
+        store.all<DueRow>(selectRemindableRenewals(today, withinDays, limit, excludeOverdue)),
       ]);
 
       const due: MaintenanceDue[] = [];

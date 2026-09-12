@@ -101,8 +101,13 @@ export default function ReminderKindScreen() {
   // indexed lookup apiece.
   const upcomingBills = useUpcomingBills(UPCOMING_WINDOW_DAYS, 1);
   const upcomingSubscriptions = useSubscriptionList(SUBSCRIPTION_NEXT_FILTER);
-  const expiringDocuments = useExpiringDocuments(UPCOMING_WINDOW_DAYS, 1);
-  const dueMaintenance = useRemindableMaintenance(UPCOMING_WINDOW_DAYS, 1);
+  // `true` — EXCLUDE what has already lapsed. `limit 1` over a
+  // soonest-first list would otherwise hand this screen the OLDEST EXPIRED
+  // record, whose every lead time has passed, and the preview would report
+  // "too close for these lead times" to someone whose real next deadline is
+  // six months out. Home and the queue still want the lapsed ones.
+  const expiringDocuments = useExpiringDocuments(UPCOMING_WINDOW_DAYS, 1, true);
+  const dueMaintenance = useRemindableMaintenance(UPCOMING_WINDOW_DAYS, 1, true);
 
   const byKey: Record<ReminderLeadTimeKey, readonly ReminderLeadTime[]> = {
     billReminderLeadTimes,

@@ -965,7 +965,21 @@ export function selectRemindableServices(
   todayISO: string,
   withinDays: number,
   limit: number,
+  /**
+   * Drop what is already overdue.
+   *
+   * The reminder QUEUE wants the overdue ones — dealing with them is the most
+   * urgent thing there is. The reminder PREVIEW does not: it asks "what will my
+   * reminders look like", and an overdue record answers "every lead time has
+   * already passed", which is true of that row and a lie about the feature.
+   * The documents preview had the identical bug; found by audit.
+   */
+  excludeOverdue = false,
 ): SqlStatement {
+  const lowerBound = excludeOverdue ? ` AND "${SERVICE}"."next_service_date" >= ?` : '';
+  const bounds = excludeOverdue
+    ? [todayISO, `+${withinDays} days`, todayISO, limit]
+    : [todayISO, `+${withinDays} days`, limit];
   return {
     text:
       `SELECT "${SERVICE}"."id" AS "id", "${SERVICE}"."item_id" AS "item_id",` +
@@ -977,6 +991,7 @@ export function selectRemindableServices(
       ` WHERE "${SERVICE}"."next_service_date" IS NOT NULL` +
       ' AND "i"."is_active" = 1' +
       ` AND "${SERVICE}"."next_service_date" <= date(?, ?)` +
+      lowerBound +
       // The chain rule: this row must be the item's latest service THAT NAMES
       // A NEXT ONE. Comparing against the latest service outright loses the
       // interval whenever a later job scheduled nothing — fitting wiper blades
@@ -986,7 +1001,7 @@ export function selectRemindableServices(
       ` WHERE "s2"."item_id" = "${SERVICE}"."item_id"` +
       ' AND "s2"."next_service_date" IS NOT NULL)' +
       ` ORDER BY "${SERVICE}"."next_service_date" ASC, "${SERVICE}"."id" ASC LIMIT ?`,
-    params: [todayISO, `+${withinDays} days`, limit],
+    params: bounds,
   };
 }
 
@@ -1005,7 +1020,21 @@ export function selectRemindableRenewals(
   todayISO: string,
   withinDays: number,
   limit: number,
+  /**
+   * Drop what is already overdue.
+   *
+   * The reminder QUEUE wants the overdue ones — dealing with them is the most
+   * urgent thing there is. The reminder PREVIEW does not: it asks "what will my
+   * reminders look like", and an overdue record answers "every lead time has
+   * already passed", which is true of that row and a lie about the feature.
+   * The documents preview had the identical bug; found by audit.
+   */
+  excludeOverdue = false,
 ): SqlStatement {
+  const lowerBound = excludeOverdue ? ` AND "${RENEWAL}"."expiry_date" >= ?` : '';
+  const bounds = excludeOverdue
+    ? [todayISO, `+${withinDays} days`, todayISO, limit]
+    : [todayISO, `+${withinDays} days`, limit];
   return {
     text:
       `SELECT "${RENEWAL}"."id" AS "id", "${RENEWAL}"."item_id" AS "item_id",` +
@@ -1017,11 +1046,12 @@ export function selectRemindableRenewals(
       ` WHERE "${RENEWAL}"."expiry_date" IS NOT NULL` +
       ' AND "i"."is_active" = 1' +
       ` AND "${RENEWAL}"."expiry_date" <= date(?, ?)` +
+      lowerBound +
       // The supersession rule: this row must be the latest of its kind.
       ` AND "${RENEWAL}"."expiry_date" = (` +
       `SELECT max("r2"."expiry_date") FROM "${RENEWALS_LIVE_VIEW}" "r2"` +
       ` WHERE "r2"."item_id" = "${RENEWAL}"."item_id" AND "r2"."kind" = "${RENEWAL}"."kind")` +
       ` ORDER BY "${RENEWAL}"."expiry_date" ASC, "${RENEWAL}"."id" ASC LIMIT ?`,
-    params: [todayISO, `+${withinDays} days`, limit],
+    params: bounds,
   };
 }

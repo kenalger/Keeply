@@ -178,8 +178,16 @@ export interface DocumentsApi {
   deleteDocument(id: string): Promise<{ orphanedUri: string | null }>;
   /** §15's ladder as counts, over every row. */
   expirySummary(): Promise<DocumentExpirySummary>;
-  /** Documents with a deadline inside the window, soonest first. */
-  expiringDocuments(withinDays: number, limit?: number): Promise<readonly DocumentRecord[]>;
+  /**
+   * Documents with a deadline inside the window, soonest first.
+   *
+   * `excludeExpired` drops what has already lapsed — see `selectExpiring`.
+   */
+  expiringDocuments(
+    withinDays: number,
+    limit?: number,
+    excludeExpired?: boolean,
+  ): Promise<readonly DocumentRecord[]>;
   /** Every live file URI — for finding bytes no row points at. */
   referencedFileUris(): Promise<readonly string[]>;
 }
@@ -316,9 +324,9 @@ export function createDocumentsApi(deps: DocumentsApiDeps): DocumentsApi {
       };
     },
 
-    async expiringDocuments(withinDays, limit = 50) {
+    async expiringDocuments(withinDays, limit = 50, excludeExpired = false) {
       const rows = await store.all<DocumentRow>(
-        selectExpiring(todayISO(), withinDays, limit),
+        selectExpiring(todayISO(), withinDays, limit, excludeExpired),
       );
       const mapped: DocumentRecord[] = [];
       for (const row of rows) {

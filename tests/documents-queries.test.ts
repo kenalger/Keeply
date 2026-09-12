@@ -426,6 +426,52 @@ describe('what the reminder queue and Home read', () => {
     assert.deepEqual(rows.map((r) => r.id), [soon.id, next.id]);
   });
 
+  test('the PREVIEW can exclude what has already lapsed', async () => {
+    const { api } = harness();
+    const lapsed = await api.createDocument({
+      name: 'Old licence',
+      type: 'drivers_license',
+      expiryDate: '2024-01-01',
+    });
+    const live = await api.createDocument({
+      name: 'Passport',
+      type: 'passport',
+      expiryDate: '2026-12-04',
+    });
+
+    // Home and the reminder queue want the lapsed one first — renewing it is
+    // the most urgent thing there is.
+    assert.deepEqual(
+      (await api.expiringDocuments(365)).map((d) => d.id),
+      [lapsed.id, live.id],
+    );
+
+    // The reminder PREVIEW does not. With `limit 1` over a soonest-first list
+    // it was handed the oldest expired document, every lead time had already
+    // passed for it, and the screen told a user with a passport six months out
+    // that their reminders were "too close for these lead times".
+    assert.deepEqual(
+      (await api.expiringDocuments(365, 1, true)).map((d) => d.id),
+      [live.id],
+    );
+  });
+
+  test('a document expiring TODAY is not "already lapsed"', async () => {
+    const { api } = harness();
+    const today = await api.createDocument({
+      name: 'Postal ID',
+      type: 'government_id',
+      expiryDate: TODAY,
+    });
+    // The bound is `>= today`, not `> today`. Something expiring today is the
+    // most urgent live deadline there is, and excluding it from the preview
+    // would skip exactly the record the user is most likely to be looking at.
+    assert.deepEqual(
+      (await api.expiringDocuments(365, 10, true)).map((d) => d.id),
+      [today.id],
+    );
+  });
+
   test('an already-expired document is still returned', async () => {
     const { api } = harness();
     const lapsed = await api.createDocument({
