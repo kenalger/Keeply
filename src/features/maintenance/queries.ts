@@ -810,6 +810,25 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
     return typeof rows[0]?.id === 'string' ? rows[0].id : null;
   }
 
+  /**
+   * The `cost_id` a service or renewal holds, WITHOUT mapping the rest of it.
+   *
+   * The delete paths read this instead of the full record, and that is the
+   * whole point. Mapping validates every column — so one damaged `updated_at`
+   * threw, the delete fell back to "no linked cost", and the price stayed in
+   * the ledger as an amount nothing on any screen explains. §11 says the detail
+   * record owns its cost row; this is what makes that true for the rows the
+   * T12 policy exists for.
+   *
+   * An audit caught it: the suite's damaged-service fixture had no linked cost,
+   * so the strand was invisible.
+   */
+  async function linkedCostIdOf(statement: SqlStatement): Promise<string | null> {
+    const rows = await store.all<{ cost_id: unknown }>(statement);
+    const costId = rows[0]?.cost_id;
+    return typeof costId === 'string' && costId.length > 0 ? costId : null;
+  }
+
   interface LinkedCostSpec {
     item: MaintenanceItemRecord;
     existingCostId: string | null;
@@ -820,6 +839,21 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
     odometer: number | null;
     description: string | null;
     vendor: string | null;
+    /**
+     * Whether this write may move an EXISTING cost row's date.
+     *
+     * A service owns its cost's date — moving the service to last Tuesday must
+     * move the receipt with it, and that is tested. A renewal does NOT, and
+     * assuming it did was a data-corruption bug an audit caught: `premiumDate`
+     * falls back to TODAY when the policy has no start date, so every later
+     * edit — fixing a typo in the provider's name — re-dated the premium to a
+     * new today and silently moved the spend into a different year, out of
+     * `totalsByYear` and out of the cost-per-km window.
+     *
+     * `false` means "keep whatever date the row already has". It has no effect
+     * on an insert, which must always date the row.
+     */
+    moveDate: boolean;
   }
 
   /**
@@ -869,10 +903,23 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
     );
 
     if (existing !== null) {
-      // Widened to the PARTIAL on purpose: `updateCost` takes a column
-      // allowlist keyed by field name, and an interface carries no implicit
-      // index signature where its mapped `Partial<>` does.
-      const patch: Partial<ValidatedCost> = validated;
+      // ONLY the fields the detail record owns. Passing the whole
+      // `ValidatedCost` was a data-loss bug an audit caught: the spec carries
+      // no `notes`, so `validateNewCost` produced `notes: null` and every
+      // service edit wiped notes the user had typed on the LEDGER screen —
+      // where the service form has no notes field of its own and gives no hint
+      // they are about to go.
+      //
+      // `costDate` is conditional for the reason `moveDate` documents.
+      const patch: Partial<ValidatedCost> = {
+        type: validated.type,
+        amountMinor: validated.amountMinor,
+        currency: validated.currency,
+        odometer: validated.odometer,
+        description: validated.description,
+        vendor: validated.vendor,
+        ...(spec.moveDate ? { costDate: validated.costDate } : {}),
+      };
       const statement = updateCostSql(existing, patch, nowMs());
       if (statement !== null) await tx.execute(statement);
       return existing;
@@ -1015,6 +1062,8 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
           odometer: validated.odometer,
           description: validated.serviceType,
           vendor: validated.shop,
+          // A service owns its cost's date: move the service, move the receipt.
+          moveDate: true,
         });
 
         await tx.execute(
@@ -1048,6 +1097,7 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
             odometer: 'odometer' in patch ? (validated.odometer ?? null) : current.odometer,
             description: validated.serviceType ?? current.serviceType,
             vendor: 'shop' in patch ? (validated.shop ?? null) : current.shop,
+            moveDate: true,
           });
           changes.costId = costId;
         }
@@ -1064,16 +1114,10 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
       // through nothing else, so leaving it behind would put an amount in the
       // ledger with nothing on any screen explaining what it bought.
       //
-      // Read first, but never map: `costId` is one column and a row damaged in
-      // some other column must still be deletable (T12). A service that cannot
-      // be read at all leaves its cost — a stranded amount is recoverable, a
-      // record the user cannot remove is not.
-      let costId: string | null = null;
-      try {
-        costId = (await readService(id)).costId;
-      } catch {
-        costId = null;
-      }
+      // Reads ONE COLUMN, unmapped. A row damaged in any other column must
+      // still surrender its `cost_id`, or deleting it leaves an amount in the
+      // ledger that nothing explains — see `linkedCostIdOf`.
+      const costId = await linkedCostIdOf(selectService(id));
 
       await store.atomically(async (tx) => {
         await tx.execute(softDeleteService(id, nowMs()));
@@ -1113,6 +1157,8 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
           odometer: null,
           description: RENEWAL_COST_DESCRIPTIONS[validated.kind],
           vendor: validated.provider,
+          // On CREATE the date has to be set; `moveDate` only governs updates.
+          moveDate: true,
         });
 
         await tx.execute(
@@ -1147,6 +1193,9 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
             odometer: null,
             description: RENEWAL_COST_DESCRIPTIONS[kind],
             vendor: 'provider' in patch ? (validated.provider ?? null) : current.provider,
+            // ONLY when the user actually moved the policy's start date. Any
+            // other edit leaves the premium where it was recorded.
+            moveDate: 'startDate' in patch,
           });
           changes.costId = costId;
         }
@@ -1159,12 +1208,7 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
     },
 
     async deleteRenewal(id) {
-      let costId: string | null = null;
-      try {
-        costId = (await readRenewal(id)).costId;
-      } catch {
-        costId = null;
-      }
+      const costId = await linkedCostIdOf(selectRenewal(id));
 
       await store.atomically(async (tx) => {
         await tx.execute(softDeleteRenewal(id, nowMs()));

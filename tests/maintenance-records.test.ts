@@ -740,3 +740,160 @@ describe('a damaged child row is skipped, counted, and still deletable', () => {
     assert.equal((await api.listServices(item.id)).damagedCount, 0);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* What an edit must NOT touch (found by audit)                                */
+/* -------------------------------------------------------------------------- */
+
+describe('the detail record owns its cost row — and only the parts it owns', () => {
+  test("editing a service leaves the ledger row's own notes alone", async () => {
+    const { api } = harness();
+    const item = await vehicle(api);
+    const service = await api.createService({
+      itemId: item.id,
+      serviceType: 'Oil change',
+      serviceDate: '2026-09-01',
+      shop: 'Toyota Shaw',
+      amountMinor: 185_000,
+    });
+
+    // The user opens the ledger row itself — the detail screen links to it —
+    // and adds a note. The SERVICE form has no notes field of its own, so this
+    // is the only place this text could have come from.
+    await api.updateCost(service.costId!, { notes: 'paid cash, OR 12345' });
+
+    // Then fixes the shop name on the service.
+    await api.updateService(service.id, { shop: 'Toyota Shaw (Pasig)' });
+
+    const cost = (await api.listCosts(item.id)).rows[0]!;
+    // Passing the whole validated cost as the patch wiped this, silently, with
+    // nothing on the service screen hinting it would.
+    assert.equal(cost.notes, 'paid cash, OR 12345');
+    // What the service DOES own still followed it.
+    assert.equal(cost.vendor, 'Toyota Shaw (Pasig)');
+  });
+
+  test('an unrelated renewal edit does not re-date the premium', async () => {
+    // A MOVING clock. The bug is "recompute the date as today", and with the
+    // suite's usual pinned `todayISO` today never changes, so the mutation that
+    // reintroduces it is invisible — which is exactly how this shipped.
+    let today = '2025-12-20';
+    const db = createMigratedDatabase();
+    const clocks = testClocks();
+    const api = createMaintenanceApi({
+      store: createMaintenanceStore(db),
+      newId: clocks.newId,
+      nowMs: clocks.nowMs,
+      todayISO: () => today,
+      defaultCurrency: 'PHP',
+    });
+
+    const item = await api.createItem({ name: 'Vios', kind: 'vehicle', vehicleType: 'car' });
+
+    // No start date typed, so the premium is dated "today" at creation.
+    const renewal = await api.createRenewal({
+      itemId: item.id,
+      kind: 'insurance',
+      provider: 'Malayn',
+      expiryDate: '2027-09-01',
+      amountMinor: 1_500_000,
+    });
+    assert.equal((await api.listCosts(item.id)).rows[0]!.costDate, '2025-12-20');
+    assert.deepEqual(
+      (await api.totalsByYear(item.id)).map((y) => y.year),
+      ['2025'],
+    );
+
+    // Nine months later the user fixes a typo in the provider's name. That is
+    // not a statement about when the money left.
+    today = '2026-09-12';
+    await api.updateRenewal(renewal.id, { provider: 'Malayan' });
+
+    const cost = (await api.listCosts(item.id)).rows[0]!;
+    assert.equal(cost.costDate, '2025-12-20');
+    assert.equal(cost.vendor, 'Malayan');
+    // The part that makes it data corruption rather than cosmetics: the spend
+    // moved out of 2025 entirely.
+    assert.deepEqual(
+      (await api.totalsByYear(item.id)).map((y) => y.year),
+      ['2025'],
+    );
+  });
+
+  test('moving a policy’s start date DOES move its premium', async () => {
+    const { api } = harness();
+    const item = await vehicle(api);
+    const renewal = await api.createRenewal({
+      itemId: item.id,
+      kind: 'insurance',
+      startDate: '2026-08-01',
+      expiryDate: '2027-08-01',
+      amountMinor: 1_500_000,
+    });
+    assert.equal((await api.listCosts(item.id)).rows[0]!.costDate, '2026-08-01');
+
+    // The one edit that IS a statement about when the money left.
+    await api.updateRenewal(renewal.id, { startDate: '2026-07-15' });
+    assert.equal((await api.listCosts(item.id)).rows[0]!.costDate, '2026-07-15');
+  });
+
+  test('moving a service still moves its cost — unchanged', async () => {
+    const { api } = harness();
+    const item = await vehicle(api);
+    const service = await api.createService({
+      itemId: item.id,
+      serviceType: 'Oil change',
+      serviceDate: '2026-09-01',
+      amountMinor: 185_000,
+    });
+    await api.updateService(service.id, { serviceDate: '2026-08-20' });
+    assert.equal((await api.listCosts(item.id)).rows[0]!.costDate, '2026-08-20');
+  });
+});
+
+describe('deleting a DAMAGED child still takes its cost with it', () => {
+  test('a service damaged in an unrelated column', async () => {
+    const { db, api } = harness();
+    const item = await vehicle(api);
+    const service = await api.createService({
+      itemId: item.id,
+      serviceType: 'Oil change',
+      serviceDate: '2026-09-01',
+      amountMinor: 185_000,
+    });
+
+    // A column the T12 policy exists for. `mapServiceRow` validates every
+    // column, so reading the whole record to find `cost_id` threw — and the
+    // delete fell back to "no linked cost", stranding ₱1,850 in the ledger.
+    db.prepare('UPDATE maintenance_services SET updated_at = ? WHERE id = ?').run(
+      'not-a-timestamp',
+      service.id,
+    );
+
+    await api.deleteService(service.id);
+
+    assert.equal((await api.listCosts(item.id)).total, 0);
+    assert.equal((await api.itemTotals(item.id)).totalMinor, 0);
+  });
+
+  test('a renewal damaged in an unrelated column', async () => {
+    const { db, api } = harness();
+    const item = await vehicle(api);
+    const renewal = await api.createRenewal({
+      itemId: item.id,
+      kind: 'insurance',
+      expiryDate: '2027-09-01',
+      amountMinor: 1_500_000,
+    });
+
+    db.prepare('UPDATE maintenance_renewals SET created_at = ? WHERE id = ?').run(
+      'not-a-timestamp',
+      renewal.id,
+    );
+
+    await api.deleteRenewal(renewal.id);
+
+    assert.equal((await api.listCosts(item.id)).total, 0);
+    assert.equal((await api.itemTotals(item.id)).totalMinor, 0);
+  });
+});
