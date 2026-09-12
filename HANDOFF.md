@@ -1,14 +1,18 @@
 # Keeply — Handoff
 
-**State at `1924cd5`.** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **1023/1023**.
+**State at `1237300`.** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **1092/1092**.
 Runs on the iOS Simulator.
 
-> **Nine commits are UNPUSHED** (`edda5d1..HEAD`). `git log origin/main..HEAD` to see them.
-> Nothing is half-finished — each one is green on its own — but `origin/main` is nine behind.
+> **Fifteen commits are UNPUSHED** (`edda5d1..HEAD`). `git log origin/main..HEAD` to see them.
+> Nothing is half-finished — each one is green on its own — but `origin/main` is fifteen behind.
 
-This session: **Phase 5c** — costs, services and renewals, the analytics over them, and the
-screens that record them. The previous session did restore (8c), the Bills screens (3c), the
-reminders rework and a design pass.
+This session: **Phase 5c** (maintenance records and their analytics) and **Phase 6** (Documents,
+complete — data layer, files, screens and wiring). The previous session did restore (8c), the
+Bills screens (3c), the reminders rework and a design pass.
+
+**Every record kind in the product now exists.** Subscriptions, bills, expenses, maintenance and
+documents all have a data layer, screens and reminders. Phase 7 (Security) is the only unbuilt
+phase left.
 
 | Phase | State |
 | --- | --- |
@@ -17,7 +21,8 @@ reminders rework and a design pass.
 | 9 Expenses & Allowance | **Complete** |
 | 8 Backup | **Complete.** Export and restore, both verified on the device. |
 | 5 Maintenance *(was Vehicles)* | 5a–5d **complete**: items, costs, services, renewals, analytics, screens. **5e (reminders) outstanding.** |
-| 6 Documents · 7 Security | Not started |
+| 6 Documents | **Complete.** CRUD, files, §15's ladder, expiry reminders, Home wiring. |
+| 7 Security | Not started |
 
 Read `CLAUDE.md` for conventions before touching anything. `plan/goal.md` is the product spec.
 
@@ -74,16 +79,26 @@ A private, offline-first iOS app you can actually use:
   OPTIONAL end to end (§7's variable bill), so every screen renders an em dash rather than ₱0.00 and
   the totals say how many bills they left out. Marking paid writes the ledger row, rolls the due
   date forward and says so in words; undo rewinds both. `plan/phase3-bills-ui.md`.
+- **Documents (Phase 6).** The last record kind. Passports, licences, IDs, policies, certificates —
+  §15's ladder (expired · today · 7 · 30 · 60 · 90 · later · none) is one pure function, and the tab
+  is GROUPED by it rather than filtered to one rung, because the ladder is the answer.
+  **An expiry date is optional.** A birth certificate does not expire; forcing a date would make
+  people invent one that then fires a notification. Such a document sorts last, is never "expiring",
+  and is never handed to the reminder queue.
+  **The number is §14 material**: masked on exactly one screen, and a predicate in no query — the
+  search box says so out loud.
+  **The scan stays on the device** in `Keeply/documents/`, inside the directory the iCloud backup
+  exclusion is stamped on, verified on disk. Real expiry reminders are in the OS queue.
 - **Local notifications** — six-state permission model, 60-slot rolling window, rebuilt on boot,
   foreground, and any reminder-affecting settings change.
 - **First-run wizard** — 6 steps, resumable, 56-entry Philippine catalogue, all importable.
 - **Design system** — greyscale plus ONE accent, full form layer, `ThemeLayout` spacing rules, and
   contrast that is now actually measured (`tests/theme-contrast.test.ts`) rather than claimed.
 
-240 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+253 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent, **`42-` Phase 5c**).
+`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent, **`42-` Phase 5c**, **`43-` Phase 6**).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -97,16 +112,19 @@ A private, offline-first iOS app you can actually use:
 session that began before they existed cannot call them. Start a fresh session and they are available
 by name.
 
-**2. Documents (Phase 6), the last unbuilt record kind.** Everything around it already exists and
-points at it — the tab, the reminder settings screen, `documentReminderLeadTimes`, the expiry status
-tokens. It is the only kind whose reminder preview says "arrives in a later update", and now the
-only domain with no screens at all.
+**2. Maintenance reminders (step 5e), and the rename it drags.** The last gap in a phase that is
+otherwise done, and now the ONLY record kind that cannot remind. `dueNext()` is built and tested —
+next service date, soonest renewal expiry per item — so the scheduler has its input, and Phase 6d is
+a worked example of exactly this wiring end to end (`documentReminderEntity` beside
+`billReminderEntity`, `syncAllReminders()` gathering a third kind, the settings screen's preview).
+What is left is a fourth `REMINDER_KINDS` entry, Home and Money wiring, and the deferred
+`notification_settings.entity_type` rename, which still needs the drizzle-kit view-drop dance in
+Known gaps.
 
-**3. Maintenance reminders (step 5e), and the rename it drags.** `dueNext()` is built and tested —
-it returns the next service date and the soonest renewal expiry per item — so the scheduler has its
-input. What is left is the reminder settings screen's fourth kind, Home and Money wiring, and the
-deferred `notification_settings.entity_type` rename, which still needs the drizzle-kit view-drop
-dance in Known gaps.
+**3. Phase 7 — Security.** The only unbuilt phase. Biometric app lock with passcode fallback,
+background-blur privacy screen, key rotation, a sensitive-field audit. The onboarding wizard already
+RECORDS that the user asked for an app lock and More says "Soon" — a stated promise with nothing
+behind it, and now the most visible one left.
 
 **4. Small, high-value, any time.** Each is an hour or two and each closes something that currently
 reads as broken: a ledger row on the bill detail screen is not tappable (`saveBillPaymentEdit()` is
@@ -262,6 +280,22 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   file and running the real migrations means there is one path, and it is the tested one.
   `recoverInterruptedRestore()` at the top of `openDatabase()` is what makes the two-rename window
   survivable — remove it and a kill mid-restore mints a fresh key over the user's data.
+- **`Library/Application Support/Keeply` is resolved in ONE place** —
+  `src/lib/private-directory.ts` — and both media features ask it for a subfolder. Every other
+  cross-feature duplication in this app is deliberate; this one cannot be, because the iOS backup
+  exclusion is a single attribute stamped on that exact path, it covers the subtree, and a folder
+  created anywhere else is backed up to iCloud with **no error, no log line and no screen that would
+  show it**. The folder name now appears in FOUR places that must match: here, `DATABASE_DIRECTORY`
+  in `src/db/client.ts`, `app.json`'s plugin prop, and CLAUDE.md's table.
+- **A sensitive field may be SELECTED; it must never be a PREDICATE.** §14's document number is
+  shown, masked, on one screen — so of course the query selects it. What turns a list into an oracle
+  for guessing one is matching on it. The test asserts on the statement TEXT, because an
+  `OR document_number LIKE ?` in the search builder passes every behavioural test there is.
+  The same rule already governs a plate and a serial in Maintenance.
+- **An optional date has THREE places to get quietly wrong, not one.** A document with no expiry
+  must sort LAST (SQLite orders NULL first ascending), must not count as "expiring within N days",
+  and must never reach the reminder queue. Each is a separate line of code and each has its own
+  test. The same shape as §7's bill with no amount.
 - **A detail record OWNS the ledger row that explains it.** A service's price and a renewal's
   premium are `maintenance_costs` rows, not columns (§A3) — so clearing the amount DELETES that row
   and deleting the service deletes it too. A ledger entry nothing on any screen explains is worse
@@ -288,6 +322,22 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 Newest first, labelled by the commit that closed them — "this session" stopped being a useful
 label four commits ago.
+
+### `9780019`…`1237300` · Phase 6 — Documents, complete
+
+- **The last record kind exists.** Data layer, file layer, screens and wiring; four placeholders
+  deleted, including `/reminders/documents`'s "arrives in a later update" and the dashboard's
+  `expiringDocuments: []`. `plan/phase6-documents.md` is the full account.
+- **§15's ladder is one pure function** swept across ten timezones at local 00:00 AND 23:59 — the
+  late-evening reading is where a naive countdown shows "Expired" for a licence still valid.
+- **Home looks 90 days ahead for an expiry, not 30.** A subscription charging in 40 days needs no
+  action today; a passport expiring in 80 does, because renewing one takes weeks.
+- **Two SQLite facts corrected.** `PRAGMA writable_schema` does NOT disable a CHECK —
+  `ignore_check_constraints` does, which means the constraints are a real backstop and a damaged-row
+  test has to work to get past them.
+- **Two tests were not testing what they claimed**, both found by mutation: a fixture whose ids
+  sorted into the order being asserted, and a reminder-projector fixture that never set both an
+  issue date and an expiry date, so reading the wrong one sailed through.
 
 ### `4f48c95` + `1924cd5` · Phase 5c — maintenance records
 
@@ -437,8 +487,8 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   `deleteBillPayment()` are wired and exported and the `anchor-row` refusal has its sentence, but a
   ledger row on the bill detail screen is not tappable yet. The natural next slice.
 - **Bills are not on Home.** `useUpcomingBills()` exists and is exported for exactly that.
-- **`useAsyncRead` is duplicated SIX times** (subscriptions, receipts, allowance, maintenance, bills,
-  and now maintenance's child records reuse the maintenance copy) — ~60 lines of subtle concurrency
+- **`useAsyncRead` is duplicated SEVEN times** (documents added one) (subscriptions, receipts, allowance, maintenance, bills,
+  and maintenance's child records reuse the maintenance copy) — ~60 lines of subtle concurrency
   logic (generation counter, cancellation) copied per feature. Worth extracting across all of them at
   once; not worth smuggling into one. 5c deliberately reused the existing copy rather than adding a
   seventh.
@@ -458,9 +508,16 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   which SQLite can only do by rebuilding the table — and drizzle-kit's rebuild does not drop the
   dependent `notification_settings_live` view first, so the generated RENAME fails. No code reads
   those values, so it waits for step 5e. The reason is written at the enum.
-- **Phases 6–7 not started**: Documents, Security (biometric lock). The onboarding wizard already
-  RECORDS that the user asked for an app lock, and More says "Soon" — a stated promise with nothing
-  behind it.
+- **Phase 7 not started**: Security (biometric lock). The onboarding wizard already RECORDS that the
+  user asked for an app lock, and More says "Soon" — a stated promise with nothing behind it, and now
+  the most visible one left.
+- **Nothing opens a PDF.** An attached PDF gets a mark and a sentence on the document detail screen.
+  Nothing installed can render one and adding a renderer is a native dependency.
+- **The document camera path is wired but unexercised.** `useDocumentAttach` exposes `requestCamera`
+  and `store`; no screen drives a viewfinder, because the simulator has no camera and receipts'
+  capture screen is receipt-shaped. Choosing a photo and choosing a file both work on the device.
+- **`strayDocumentFiles()` has no caller.** Deliberate: it is for a considered cleanup, not a launch
+  sweep — a sweep at boot can delete a file a half-finished form is about to reference.
 - **`app.json` needs the Android notification icon wired.** The asset exists at
   `assets/images/notification-icon.png` (96×96, white-on-transparent, verified legible at 24px). It must sit
   **before** `./plugins/with-local-only-notifications` so the entitlement strip runs last, and needs a
@@ -506,7 +563,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 1023 tests
+npm test                # node --test, 1092 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
@@ -519,7 +576,13 @@ maintenance items (a Vios, an aircon, a water heater, a laptop), three subscript
 bills. **Meralco carries two months of payment history** (₱4,120.75 and ₱2,980.50 against a ₱3,500
 estimate) and has rolled forward to November — it is the only bill that renders a ledger.
 
-**The Vios now carries a full maintenance history**, added while verifying 5c and worth keeping for
+**Nine documents cover every rung of §15's ladder** — an expired NBI clearance, a Postal ID expiring
+today, a licence at 6 days, car insurance at 23, a gym membership at 57, a passport at 83, a PRC
+licence in 2028, and a birth certificate and a diploma with no expiry at all. That is what makes the
+Documents tab render all eight sections and Home's expiring block show "+1 more item". Added while
+verifying Phase 6 and worth keeping for the same reason as the rest.
+
+**The Vios carries a full maintenance history**, added while verifying 5c and worth keeping for
 the same reason: four fill-ups (three full tanks, odometer 46,200 → 47,810), two services with
 prices, wiper blades, and insurance + registration renewals. It totals ₱37,012.00 across 9 entries,
 ₱5.04/km over 3,710 km, 14.8 km/L over 1,610 km on 3 fills — so every analytic on the detail screen
