@@ -30,6 +30,8 @@
  * THE ROW, so a record the user can see but not read is still one they can
  * remove.
  */
+import type { ReminderEntity } from '@/lib/notifications-plan';
+
 import {
   insertDocument,
   resolveOffset,
@@ -116,6 +118,40 @@ export function mapDocumentRow(row: DocumentRow): DocumentRecord {
     fileMimeType: optionalText(row.file_mime_type),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Project a document onto the shape the notification layer understands.
+ *
+ * ── WHY THIS LIVES HERE AND NOT IN `lib/reminders.ts` ──────────────────────
+ * The same reason `billReminderEntity()` and `subscriptionReminderEntity()`
+ * do. Two places construct one of these — the scheduler, which places the real
+ * notifications, and the reminders SETTINGS screen, which previews them. If
+ * they project a record differently the preview promises reminders the queue
+ * will never hold, which is worse than no preview at all.
+ *
+ * ── WHAT IS DELIBERATELY ABSENT ────────────────────────────────────────────
+ * No `amountMinor`: §15's reminder is a deadline, not money, and
+ * `reminderBody()` already renders a document without a money suffix.
+ *
+ * No document NUMBER, anywhere near it. A notification body lands on a lock
+ * screen, which is the least private surface this app can reach — §14 says do
+ * not display it unnecessarily, and a passport number on a lock screen is the
+ * definition of unnecessarily.
+ *
+ * ── AN UNDATED DOCUMENT CANNOT BE PROJECTED AT ALL ─────────────────────────
+ * `null`, not an entity with a made-up date. A birth certificate has no
+ * deadline, and a reminder about one is a notification the user can do nothing
+ * about and cannot turn off except by deleting a record they want to keep.
+ */
+export function documentReminderEntity(record: DocumentRecord): ReminderEntity | null {
+  if (record.expiryDate === null) return null;
+  return {
+    id: record.id,
+    kind: 'document',
+    title: record.name,
+    dateISO: record.expiryDate,
   };
 }
 

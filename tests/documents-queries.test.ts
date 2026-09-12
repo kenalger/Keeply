@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 
 import {
   createDocumentsApi,
+  documentReminderEntity,
   type DocumentsApi,
 } from '@/features/documents/queries';
 import * as statements from '@/features/documents/sql';
@@ -584,5 +585,75 @@ describe('a damaged row is skipped, counted, and still deletable', () => {
     assert.deepEqual(await api.deleteDocument(doc.id), {
       orphanedUri: 'file:///docs/p.jpg',
     });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* What the scheduler and the preview both project                             */
+/* -------------------------------------------------------------------------- */
+
+describe('projecting a document onto a reminder', () => {
+  test('carries the name and the EXPIRY date, and nothing else', async () => {
+    const { api } = harness();
+    const doc = await api.createDocument({
+      name: 'Passport',
+      type: 'passport',
+      documentNumber: 'P1234567',
+      // BOTH dates, deliberately. With only an expiry date set, a projector
+      // that reached for `issueDate ?? expiryDate` would be indistinguishable —
+      // and a reminder scheduled against the issue date fires years late or
+      // never, silently.
+      issueDate: '2016-12-04',
+      expiryDate: '2026-12-04',
+      notes: 'in the drawer',
+    });
+
+    const entity = documentReminderEntity(doc);
+    assert.deepEqual(entity, {
+      id: doc.id,
+      kind: 'document',
+      title: 'Passport',
+      dateISO: '2026-12-04',
+    });
+  });
+
+  test('the document NUMBER never reaches a notification — §14', async () => {
+    const { api } = harness();
+    const doc = await api.createDocument({
+      name: 'Passport',
+      type: 'passport',
+      documentNumber: 'ZZ9988776',
+    });
+    const withDate = await api.updateDocument(doc.id, { expiryDate: '2026-12-04' });
+
+    // A notification body lands on a LOCK SCREEN, which is the least private
+    // surface this app can reach. Serialised and searched rather than checked
+    // key by key, so a field added to the entity later cannot smuggle it in.
+    const entity = documentReminderEntity(withDate.record);
+    assert.ok(!JSON.stringify(entity).includes('ZZ9988776'));
+    assert.ok(!JSON.stringify(entity).includes('9988'));
+  });
+
+  test('an undated document projects to NOTHING, not to a made-up date', async () => {
+    const { api } = harness();
+    const doc = await api.createDocument({ name: 'Birth certificate', type: 'government_id' });
+
+    // The alternative — an entity carrying today, or the creation date — is a
+    // notification the user can do nothing about and cannot turn off except by
+    // deleting a record they want to keep.
+    assert.equal(documentReminderEntity(doc), null);
+  });
+
+  test('no amount is attached — an expiry is a deadline, not money', async () => {
+    const { api } = harness();
+    const doc = await api.createDocument({
+      name: 'Car insurance',
+      type: 'insurance',
+      expiryDate: '2026-10-05',
+    });
+    const entity = documentReminderEntity(doc);
+    assert.ok(entity !== null);
+    assert.equal('amountMinor' in entity, false);
+    assert.equal('currency' in entity, false);
   });
 });

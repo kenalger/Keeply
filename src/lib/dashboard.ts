@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { MinorUnits } from '@/db';
 import { billTotals, upcomingBills } from '@/features/bills';
+import { daysUntilExpiry, expiringDocuments } from '@/features/documents';
 import { recentReceipts, receiptTotals } from '@/features/receipts';
 import { subscriptionTotals, upcomingRenewals } from '@/features/subscriptions';
 import { recentSubscriptions } from '@/features/subscriptions/ui';
@@ -27,7 +28,7 @@ import { log } from '@/lib/log';
 import { useCurrency, type CurrencyCode } from '@/stores/settings-store';
 import { useRevision } from '@/stores/revision-store';
 import { useSampleDashboard, type SampleDashboardMode } from '@/stores/ui-store';
-import { statusForDue, type StatusKey } from '@/theme';
+import { statusForDue, statusForExpiry, type StatusKey } from '@/theme';
 
 /**
  * Mint minor units for the constants and fixtures *in this file only*.
@@ -323,6 +324,17 @@ export function busyDashboard(month: string = currentMonth()): DashboardData {
 export const UPCOMING_WINDOW_DAYS = 30;
 
 /**
+ * How far ahead Home looks for an expiry.
+ *
+ * NINETY, not thirty. A renewal and an expiry are different kinds of deadline:
+ * a subscription charging in 40 days needs no action today, but a passport
+ * expiring in 80 does — renewing one takes weeks, and §15's own ladder runs to
+ * 90 for exactly that reason. Home surfacing it a month out would be surfacing
+ * it too late to be useful.
+ */
+export const EXPIRY_WINDOW_DAYS = 90;
+
+/**
  * Candidate renewals read for that window.
  *
  * NOT five. Home shows five and says "+N more", and that count has to be true —
@@ -439,8 +451,16 @@ export function useDashboardData(): DashboardSnapshot {
 async function readDashboard(month: string, currency: CurrencyCode): Promise<DashboardData> {
   const bounds = monthBounds(month);
 
-  const [renewals, totals, recent, bills, billSums, receiptSums, recentReceiptRows] =
-    await Promise.all([
+  const [
+    renewals,
+    totals,
+    recent,
+    bills,
+    billSums,
+    receiptSums,
+    recentReceiptRows,
+    documents,
+  ] = await Promise.all([
     upcomingRenewals(UPCOMING_WINDOW_DAYS, { limit: RENEWAL_READ_LIMIT }),
     subscriptionTotals(),
     recentSubscriptions(RECENT_ACTIVITY_LIMIT),
@@ -454,7 +474,16 @@ async function readDashboard(month: string, currency: CurrencyCode): Promise<Das
     // row crosses into JavaScript to be summed here.
     receiptTotals({ fromISO: bounds.fromISO, toISO: bounds.toISO }),
     recentReceipts(RECENT_ACTIVITY_LIMIT),
+    // §15's expiring documents. The UNDATED are already excluded by the query:
+    // a document that never expires is never "approaching expiry", and putting
+    // one in this section would give a birth certificate a countdown.
+    expiringDocuments(EXPIRY_WINDOW_DAYS, RENEWAL_READ_LIMIT),
   ]);
+
+  // ONE clock reading for every countdown in this payload. Two would let a
+  // document's "expires in 3 days" and its status pill come from different
+  // moments across midnight.
+  const now = new Date();
 
   const subscriptionsMinor = totals.primary.monthlyMinor;
   // The expected cost of what is still unpaid — the figure §5's "Bills" line is
@@ -493,8 +522,26 @@ async function readDashboard(month: string, currency: CurrencyCode): Promise<Das
         dueDate: bill.dueDate,
       })),
 
-    // Documents are Phase 6; Home renders an empty section by not rendering it.
-    expiringDocuments: [],
+    expiringDocuments: documents.flatMap((document) => {
+      // The query guarantees a date; this narrows it for the type and skips
+      // anything that somehow arrived without one rather than rendering NaN.
+      const expiryDate = document.expiryDate;
+      if (expiryDate === null) return [];
+      const expiresInDays = daysUntilExpiry(expiryDate, now);
+      if (expiresInDays === null) return [];
+      return [
+        {
+          id: document.id,
+          title: document.name,
+          source: 'document' as const,
+          // The colour decision stays in the theme: a date in, a status key
+          // out. `statusForExpiry` uses §15's own 30-day "soon" threshold.
+          status: statusForExpiry(expiryDate, { now }),
+          expiresInDays,
+          expiryDate,
+        },
+      ];
+    }),
 
     upcomingSubscriptions: renewals.map((renewal) => ({
       id: renewal.id,

@@ -35,6 +35,7 @@
  * reminder that could not be placed must never break a screen or a boot.
  */
 import { billTotals, remindableBills } from '@/features/bills';
+import { documentReminderEntity, expiringDocuments } from '@/features/documents';
 import { upcomingRenewals } from '@/features/subscriptions';
 import { log } from '@/lib/log';
 import { rescheduleAll, type ScheduleResult } from '@/lib/notifications';
@@ -67,15 +68,16 @@ const GATHER_ROW_LIMIT = 200;
  * resulting queue is a function of the arguments, so calling it twice in a row
  * changes nothing.
  *
- * The two reads run together — they are independent and on one connection.
- * A failure in either is swallowed with a reason code: a boot must not fail
- * because a reminder could not be planned.
+ * The three reads run together — they are independent and on one connection.
+ * A failure in any of them is swallowed with a reason code: a boot must not
+ * fail because a reminder could not be planned.
  */
 export async function syncAllReminders(options: { now?: Date } = {}): Promise<ScheduleResult | null> {
   try {
-    const [renewals, bills] = await Promise.all([
+    const [renewals, bills, documents] = await Promise.all([
       upcomingRenewals(GATHER_WINDOW_DAYS, { limit: GATHER_ROW_LIMIT }),
       remindableBills(GATHER_ROW_LIMIT),
+      expiringDocuments(GATHER_WINDOW_DAYS, GATHER_ROW_LIMIT),
     ]);
 
     const entities: ReminderEntity[] = [];
@@ -109,6 +111,17 @@ export async function syncAllReminders(options: { now?: Date } = {}): Promise<Sc
       });
     }
 
+    for (const document of documents) {
+      // The feature's OWN projector, never an entity assembled here — the same
+      // rule bills and subscriptions follow. It returns `null` for an undated
+      // document, which `expiringDocuments()` already excludes anyway: two
+      // guards, because a reminder about a deadline that does not exist is one
+      // the user can do nothing about and cannot turn off except by deleting a
+      // record they want to keep.
+      const entity = documentReminderEntity(document);
+      if (entity !== null) entities.push(entity);
+    }
+
     const result = await rescheduleAll(entities, options);
 
     // Counts and a permission label only — never a record name, an amount or a
@@ -138,11 +151,12 @@ export async function syncAllReminders(options: { now?: Date } = {}): Promise<Sc
  */
 export async function hasRemindableRecords(): Promise<boolean> {
   try {
-    const [renewals, bills] = await Promise.all([
+    const [renewals, bills, documents] = await Promise.all([
       upcomingRenewals(GATHER_WINDOW_DAYS, { limit: 1 }),
       billTotals(),
+      expiringDocuments(GATHER_WINDOW_DAYS, 1),
     ]);
-    return renewals.length > 0 || bills.unpaidCount > 0;
+    return renewals.length > 0 || bills.unpaidCount > 0 || documents.length > 0;
   } catch (error) {
     log.error('reminders: remindable check failed', error, { stage: 'probe' });
     return false;

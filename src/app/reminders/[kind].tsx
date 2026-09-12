@@ -15,6 +15,8 @@ import {
   type ChipOption,
 } from '@/components/ui';
 import { billReminderEntity, type BillRecord } from '@/features/bills';
+import { documentReminderEntity, type DocumentRecord } from '@/features/documents';
+import { useExpiringDocuments } from '@/features/documents/ui';
 import type { SubscriptionRecord } from '@/features/subscriptions';
 import { useUpcomingBills } from '@/features/bills/ui';
 import { reminderKindFor, type ReminderKind } from '@/features/settings';
@@ -89,10 +91,12 @@ export default function ReminderKindScreen() {
   const reminderHour = useSettingsStore((s) => s.reminderHour);
   const toggleReminderLeadTime = useSettingsStore((s) => s.toggleReminderLeadTime);
 
-  // Both reads run whatever the kind is — a hook cannot sit inside a branch.
-  // One row each, ordered by SQLite, so the unused one costs an indexed lookup.
+  // All three reads run whatever the kind is — a hook cannot sit inside a
+  // branch. One row each, ordered by SQLite, so the unused two cost an indexed
+  // lookup apiece.
   const upcomingBills = useUpcomingBills(UPCOMING_WINDOW_DAYS, 1);
   const upcomingSubscriptions = useSubscriptionList(SUBSCRIPTION_NEXT_FILTER);
+  const expiringDocuments = useExpiringDocuments(UPCOMING_WINDOW_DAYS, 1);
 
   const byKey: Record<ReminderLeadTimeKey, readonly ReminderLeadTime[]> = {
     billReminderLeadTimes,
@@ -116,7 +120,12 @@ export default function ReminderKindScreen() {
     ],
   );
 
-  const subject = nextSubjectFor(kind, upcomingBills.value, upcomingSubscriptions.rows);
+  const subject = nextSubjectFor(
+    kind,
+    upcomingBills.value,
+    upcomingSubscriptions.rows,
+    expiringDocuments.value,
+  );
 
   const plan: EntityPlan | null = useMemo(
     () => (subject === null ? null : planRemindersFor(subject.entity, { defaults })),
@@ -247,6 +256,7 @@ function nextSubjectFor(
   kind: ReminderKind | null,
   bills: readonly BillRecord[] | null,
   subscriptions: readonly SubscriptionRecord[],
+  documents: readonly DocumentRecord[] | null,
 ): PreviewSubject | null {
   if (kind === null) return null;
 
@@ -264,9 +274,13 @@ function nextSubjectFor(
       : { name: record.name, entity: subscriptionReminderEntity(record) };
   }
 
-  // Documents: Phase 6. There is no data layer to read, and inventing a
-  // placeholder record would be the one thing a preview must never do.
-  return null;
+  const document = documents?.[0];
+  if (document === undefined) return null;
+  // `documentReminderEntity` returns `null` for an undated document. The query
+  // already excludes those, so this is the second of two guards — and the
+  // reason the preview cannot show a countdown for a birth certificate.
+  const entity = documentReminderEntity(document);
+  return entity === null ? null : { name: document.name, entity };
 }
 
 /**
@@ -279,11 +293,14 @@ function nextSubjectFor(
  * tomorrow wondering whether the setting took.
  */
 function emptyPreviewCopy(kind: ReminderKind, plan: EntityPlan | null): string {
-  if (kind.slug === 'documents') {
-    return 'Documents arrive in a later update. These settings are saved and will apply to the first one you add.';
-  }
   if (plan !== null && plan.skippedPast > 0) {
     return `Your next ${kind.previewNoun} is too close for these lead times — every one of them has already passed for it. Later ones will get the full set.`;
+  }
+  if (kind.slug === 'documents') {
+    // Not "add a document" — someone may have several, all of which never
+    // expire. Naming the actual requirement is the difference between a
+    // usable sentence and one that looks like the screen is broken.
+    return 'Nothing to show yet. Add a document with an expiry date and its reminders will be listed here.';
   }
   return `Nothing to show yet. Add ${
     kind.slug === 'bills' ? 'a bill' : 'a subscription'

@@ -68,7 +68,7 @@ export const {
 
 export { liveStore as liveDocumentStore };
 
-export { createDocumentsApi, mapDocumentRow } from './queries';
+export { createDocumentsApi, documentReminderEntity, mapDocumentRow } from './queries';
 export type { DocumentsApi, DocumentsApiDeps, DocumentWriteResult } from './queries';
 export type { DocumentStore, SqlStatement, SqlValue } from './store';
 export { validateDocumentPatch, validateNewDocument } from './validation';
