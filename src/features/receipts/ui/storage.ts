@@ -86,24 +86,16 @@
  * this file carries a reason code and nothing else — no uri, no filename, no
  * directory.
  */
-import { ANDROID_FILES_PATH, IOS_LIBRARY_PATH } from '@op-engineering/op-sqlite';
 import { Image } from 'expo-image';
 import { Directory, File } from 'expo-file-system';
-import { Platform } from 'react-native';
 
 import { newId } from '@/db';
 import { log } from '@/lib/log';
+import { privateMediaDirectory } from '@/lib/private-directory';
 
 /* -------------------------------------------------------------------------- */
 /* Location                                                                    */
 /* -------------------------------------------------------------------------- */
-
-/**
- * Must equal `DATABASE_DIRECTORY` in `src/db/client.ts` and the `directory`
- * prop given to `./plugins/with-database-backup-exclusion` in `app.json`.
- * See the header.
- */
-const MEDIA_ROOT = 'Keeply';
 
 /** Sub-folder, so receipt media never sits beside `keeply.db` itself. */
 const MEDIA_SUBDIRECTORY = 'receipts';
@@ -112,11 +104,11 @@ const MEDIA_SUBDIRECTORY = 'receipts';
 const THUMBNAIL_MAX_PIXELS = 320;
 
 /**
- * Raised when the platform has no private directory we are willing to write to.
+ * Raised when a receipt's bytes could not be written.
  *
- * Refusing beats falling back to a backed-up default: a receipt photo written
- * to `Documents` because a constant was missing is a §10 breach nothing later
- * would notice.
+ * "No private directory at all" is `PrivateDirectoryError`, raised by
+ * `@/lib/private-directory` — refusing beats falling back to a backed-up
+ * default, and that decision now lives in one place for both media features.
  */
 export class ReceiptStorageError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -128,52 +120,13 @@ export class ReceiptStorageError extends Error {
 /**
  * The directory receipt media lives in, created if it is not there yet.
  *
- * Resolved on every call rather than cached: the container path is stable
- * within a launch, but a cached `Directory` that was deleted underneath us
- * (an erase-all-data, a debugger) would keep reporting a path nothing can
- * write to.
+ * The backup-excluded root — and the reason it has to be that EXACT path — now
+ * live in `@/lib/private-directory`. Two copies of that resolution is one of
+ * them drifting, and the failure is a receipt photo reaching iCloud with no
+ * error, no log line and no screen that would show it.
  */
 function mediaDirectory(): Directory {
-  const base = platformPrivateDirectory();
-  const directory = new Directory(`file://${base.root}`, ...base.segments, MEDIA_SUBDIRECTORY);
-  try {
-    if (!directory.exists) directory.create({ intermediates: true, idempotent: true });
-  } catch (error) {
-    throw new ReceiptStorageError('Could not create the receipt media directory', {
-      cause: error,
-    });
-  }
-  return directory;
-}
-
-/** The app-support root and the segments under it, per platform. See the header. */
-function platformPrivateDirectory(): { root: string; segments: string[] } {
-  if (Platform.OS === 'ios') {
-    const library: unknown = IOS_LIBRARY_PATH;
-    if (typeof library !== 'string' || library.length === 0) {
-      throw new ReceiptStorageError('Could not determine the app support directory');
-    }
-    return { root: library, segments: ['Application Support', MEDIA_ROOT] };
-  }
-
-  if (Platform.OS === 'android') {
-    const files: unknown = ANDROID_FILES_PATH;
-    if (typeof files !== 'string' || files.length === 0) {
-      throw new ReceiptStorageError('Could not determine the app files directory');
-    }
-    // getFilesDir() is `<dataDir>/files`; getNoBackupFilesDir() is its sibling
-    // `<dataDir>/no_backup`. Take the parent rather than pattern-matching, the
-    // same way `src/db/client.ts` does.
-    const dataDir = files.slice(0, files.lastIndexOf('/'));
-    if (dataDir.length === 0) {
-      throw new ReceiptStorageError('Could not determine the app files directory');
-    }
-    return { root: dataDir, segments: ['no_backup', MEDIA_ROOT] };
-  }
-
-  throw new ReceiptStorageError(
-    `Keeply has no private storage location on ${Platform.OS}; it targets iOS and Android`,
-  );
+  return privateMediaDirectory(MEDIA_SUBDIRECTORY);
 }
 
 /* -------------------------------------------------------------------------- */

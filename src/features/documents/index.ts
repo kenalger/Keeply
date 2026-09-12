@@ -74,6 +74,15 @@ export type { DocumentStore, SqlStatement, SqlValue } from './store';
 export { validateDocumentPatch, validateNewDocument } from './validation';
 export type { ValidatedDocument } from './validation';
 export {
+  ACCEPTED_MIME_TYPES,
+  extensionForMimeType,
+  extensionOfUri,
+  isAcceptedMimeType,
+  isImageMimeType,
+  resolveDocumentMimeType,
+  type DocumentMimeType,
+} from './file-types';
+export {
   EXPIRY_BUCKETS,
   daysUntilExpiry,
   expiryBucket,
