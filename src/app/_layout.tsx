@@ -15,6 +15,14 @@ import { eraseLocalDataAndReboot, runBootSequence, useBootSnapshot } from '@/sto
 import { watchPermissionOnForeground } from '@/stores/notification-store';
 import { hydrateSettings } from '@/stores/settings-store';
 import { useThemePreferenceSync } from '@/stores/ui-store';
+import {
+  LockScreen,
+  PrivacyCover,
+  isUnlocked,
+  useLockState,
+  useLockStore,
+} from '@/features/security';
+import { useAppLockStore } from '@/stores/app-lock-store';
 import { ThemeProvider } from '@/theme';
 
 /**
@@ -83,6 +91,51 @@ function BootGate() {
   return (
     <AppErrorBoundary>
       <AfterBoot />
+      <LockGate />
+    </AppErrorBoundary>
+  );
+}
+
+/**
+ * Everything behind the app lock (§17).
+ *
+ * ── THE TREE IS NOT MOUNTED WHILE LOCKED ───────────────────────────────────
+ * `LockScreen` REPLACES the navigator rather than covering it. A modal over a
+ * live tree leaks content behind its scrim, in the app-switcher snapshot, and
+ * on any mis-tap that dismisses it — and "mostly covered" is not a security
+ * property. It also means no screen runs a query, or a reminder sync, while
+ * nobody has proved they are allowed to see the answer.
+ *
+ * ── THE COVER IS OUTSIDE THE LOCK, AND LAST ────────────────────────────────
+ * `PrivacyCover` renders after both branches and absolutely fills the window,
+ * because it is up whenever the app is not ACTIVE — whether or not app lock is
+ * enabled. Every user's app-switcher snapshot stays private (§19), not only the
+ * ones who opted in. Last in the tree because anything mounted after it would
+ * draw on top of it.
+ */
+function LockGate() {
+  const state = useLockState();
+  const initialise = useLockStore((s) => s.initialise);
+  const watch = useLockStore((s) => s.watch);
+
+  useEffect(() => {
+    // Seeded once the capability check has run, so the preference and what the
+    // device can actually do are decided together — see `initialLockState`.
+    void useAppLockStore.getState().check().then(initialise);
+    return watch();
+  }, [initialise, watch]);
+
+  return (
+    <>
+      {isUnlocked(state) ? <AppStack /> : <LockScreen />}
+      <PrivacyCover />
+    </>
+  );
+}
+
+function AppStack() {
+  return (
+    <>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="subscriptions" />
@@ -104,7 +157,7 @@ function BootGate() {
         />
         <Stack.Screen name="+not-found" />
       </Stack>
-    </AppErrorBoundary>
+    </>
   );
 }
 

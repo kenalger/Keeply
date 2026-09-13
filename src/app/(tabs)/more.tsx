@@ -166,6 +166,7 @@ interface MoreRowInput {
   readonly sampleDashboard: SampleDashboardMode;
   readonly cycleSampleDashboard: () => void;
   readonly openReminders: () => void;
+  readonly openSecurity: () => void;
   readonly openReminderKind: (slug: ReminderKindSlug) => void;
   readonly openExport: () => void;
   readonly openRestore: () => void;
@@ -254,13 +255,17 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
       key: 'applock',
       icon: 'faceid',
       title: 'App lock',
-      // The wizard's protect step writes this preference before the lock screen
-      // itself exists (Phase 7). Saying "Soon" while silently holding the user's
-      // answer would read as the app having forgotten it.
+      // Real as of Phase 7. The subtitle states the SCOPE rather than repeating
+      // the title: someone reading a lock icon is being invited to believe it
+      // protects the data, and the encryption is what does that.
       subtitle: input.appLockChosen
-        ? 'You asked for it during setup — the unlock screen arrives with the security update'
-        : 'Require Face ID, Touch ID or your passcode to open Keeply',
-      state: { kind: 'soon' },
+        ? 'Asks for Face ID, Touch ID or your passcode before Keeply opens'
+        : 'Off — your data is encrypted on this device either way',
+      state: input.appLockChosen
+        ? { kind: 'on', label: 'On' }
+        : { kind: 'text', label: 'Off' },
+      onPress: input.openSecurity,
+      hint: 'Opens security settings',
     },
   ]);
 
@@ -369,6 +374,7 @@ export default function MoreScreen() {
   }, [preference, setThemePreference]);
 
   const openReminders = useCallback(() => router.push('/reminders'), [router]);
+  const openSecurity = useCallback(() => router.push('/security'), [router]);
   const openReminderKind = useCallback(
     (kind: ReminderKindSlug) =>
       router.push({ pathname: '/reminders/[kind]', params: { kind } }),
@@ -402,6 +408,7 @@ export default function MoreScreen() {
     () =>
       buildMoreRows({
         openReminders,
+        openSecurity,
         openReminderKind,
         openExport,
         openRestore,

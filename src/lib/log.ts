@@ -68,6 +68,18 @@ const SAFE_KEYS: ReadonlySet<string> = new Set([
   'code',
   'componentstack',
   'count',
+  // Reminder-queue counts and flags. Structural in exactly the way `count` is
+  // — each describes HOW MANY reminders were placed or dropped, never which
+  // record or when. They are here because without them `reminders: queue
+  // rebuilt` printed six `[redacted]` placeholders and one real value: the one
+  // log line that would explain why reminders are wrong explained nothing.
+  // `log.info` is a no-op in production, so this adds no release-build output.
+  'cancelled',
+  'deferred',
+  'degraded',
+  'entities',
+  'scheduled',
+  'skippedpast',
   'direction',
   'durationms',
   'elapsedms',
@@ -224,6 +236,28 @@ const MAX_STRING_LENGTH = 240;
  * ones get a chance at it. All patterns are Hermes-safe (no lookbehind).
  */
 const VALUE_PATTERNS: readonly (readonly [RegExp, string])[] = [
+  // 0. EVERYTHING op-sqlite appended after `params:`.
+  //
+  //    The driver echoes bound parameters into its error messages
+  //    (`Failed query: … params: [uuid, Passport, P1234567, …]`), and those
+  //    parameters are the row — a document number, a plate, a policy
+  //    reference, a file URI. This bit Phase 8 once already, where the bound
+  //    value was the user's BACKUP PASSPHRASE, and `exportEncryptedCopy()` was
+  //    fixed by throwing without a `cause`.
+  //
+  //    That fix was per-call-site. This one is general, and it is here because
+  //    the per-pattern rules below cannot be relied on for it: an audit proved
+  //    that `P1234567` and `ZZ9988776` are caught by rule 7, but a SHORT
+  //    alphanumeric number — `AB12CD`, and real membership numbers look like
+  //    that — matches nothing and came through intact. A long statement was
+  //    saved only by `MAX_STRING_LENGTH`, which is truncation, not redaction,
+  //    and is not a property to depend on.
+  //
+  //    Widening the identifier heuristics instead would have started redacting
+  //    ordinary words. Dropping the driver's parameter list wholesale loses
+  //    nothing worth keeping: the statement text, which is what actually says
+  //    what went wrong, is BEFORE the marker and survives.
+  [/\bparams:\s*[\s\S]*$/i, 'params: [redacted]'],
   // 1. Scheme URIs that point at on-device media (§18: never expose local paths).
   [/\b(?:file|content|asset|assets-library|ph|ipod-library|data):\/*[^\s'"]*/gi, '[uri]'],
   // 2. Any other URL.
@@ -306,6 +340,19 @@ export function redactMeta(meta: LogMeta | undefined): Record<string, string | n
  * Turn an unknown thrown value into a short, redacted, single-line descriptor.
  * Stack traces are never emitted in production; in development they are
  * scrubbed (they are full of absolute paths) and length-capped.
+ *
+ * ⚠ IT DOES NOT WALK `cause`, AND THAT IS LOAD-BEARING.
+ *
+ * `DocumentStorageError` and `PrivateDirectoryError` attach the native error as
+ * a `cause`, and those carry absolute container paths — the directory holding
+ * somebody's passport scan (§16). Reading only `error.message` is what keeps
+ * them out of the console.
+ *
+ * This was found by the §18 audit (`plan/phase7-security.md` §6) as an
+ * UNDOCUMENTED property that the code happened to have. Adding cause-walking
+ * "for better diagnostics" would start printing every one of those paths, in
+ * release builds, where `log.error` is not a no-op. If you need the cause,
+ * redact it deliberately — do not chain into it here.
  */
 export function describeError(error: unknown): string {
   if (error instanceof Error) {

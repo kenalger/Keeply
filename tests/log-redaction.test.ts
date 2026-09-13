@@ -261,3 +261,110 @@ describe('production level gating', () => {
     assert.deepEqual(Object.keys(log).sort(), ['debug', 'error', 'info', 'warn']);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* op-sqlite echoes bound parameters (found by audit, Phase 7d)                */
+/* -------------------------------------------------------------------------- */
+
+describe('the driver\u2019s echoed parameters', () => {
+  /** What op-sqlite actually produces on a failed write. */
+  const failedQuery = (params: string) =>
+    'Failed query: INSERT INTO "documents" ("id", "name", "document_number") ' +
+    `VALUES (?, ?, ?) params: ${params}`;
+
+  test('everything after `params:` is dropped', () => {
+    const out = redactText(failedQuery('[a1b2, Passport, P1234567]'));
+    assert.ok(!out.includes('P1234567'));
+    assert.ok(out.includes('params: [redacted]'));
+  });
+
+  test('a SHORT alphanumeric number is dropped too', () => {
+    // The one the per-pattern rules miss: two letters, two digits, two
+    // letters matches no identifier heuristic, and real membership numbers
+    // look like this. Before this rule it came through intact in any message
+    // short enough to escape `MAX_STRING_LENGTH` — which is truncation, not
+    // redaction, and not a property to depend on.
+    for (const number of ['AB12CD', 'X1Y2Z3', 'M4N5']) {
+      const out = redactText(`params: [id, name, ${number}]`);
+      assert.ok(!out.includes(number), number);
+    }
+  });
+
+  test('a plate, a policy reference and a file URI are all dropped', () => {
+    for (const value of [
+      'ABC-1234',
+      'POL-99887766',
+      'file:///var/mobile/Keeply/documents/scan.jpg',
+    ]) {
+      const out = redactText(failedQuery(`[id, name, ${value}]`));
+      assert.ok(!out.includes(value), value);
+    }
+  });
+
+  test('the STATEMENT survives, because it is what says what went wrong', () => {
+    const out = redactText(failedQuery('[a1b2, Passport, P1234567]'));
+    assert.ok(out.includes('Failed query'));
+    assert.ok(out.includes('INSERT INTO'));
+    assert.ok(out.includes('document_number'), 'the column NAME is not sensitive');
+  });
+
+  test('an ordinary message with no marker is untouched', () => {
+    assert.equal(redactText('Could not open the database'), 'Could not open the database');
+  });
+});
+
+describe('the reminder queue\u2019s own diagnostic', () => {
+  test('its counts survive, because they are counts', () => {
+    // Found by the §18 audit: of the seven keys on `reminders: queue rebuilt`,
+    // only `permission` was allowlisted, so the one line that would explain why
+    // reminders are wrong printed six `[redacted]` placeholders. Each of these
+    // describes HOW MANY reminders were placed or dropped — never which record,
+    // never when.
+    const out = redactMeta({
+      entities: 14,
+      scheduled: 12,
+      cancelled: 3,
+      deferred: 0,
+      skippedPast: 7,
+      permission: 'granted',
+      degraded: false,
+    });
+    assert.deepEqual(out, {
+      entities: 14,
+      scheduled: 12,
+      cancelled: 3,
+      deferred: 0,
+      skippedPast: 7,
+      permission: 'granted',
+      degraded: false,
+    });
+  });
+
+  test('allowing a count through does not allow a NAME through', () => {
+    // The allowlist is per-key, and a string on a safe key is still scrubbed.
+    const out = redactMeta({ scheduled: 3, name: 'Passport', title: 'Driver licence' });
+    assert.equal(out?.scheduled, 3);
+    assert.notEqual(out?.name, 'Passport');
+    assert.notEqual(out?.title, 'Driver licence');
+  });
+});
+
+describe('an error\u2019s `cause` never reaches the console', () => {
+  test('a native path attached as a cause is not printed', () => {
+    // `DocumentStorageError` and `PrivateDirectoryError` both attach the native
+    // error as a cause, and those carry the absolute container path — the
+    // directory holding somebody's passport scan. `describeError` reading only
+    // `message` is what keeps them out, and until the §18 audit that was an
+    // accident rather than a decision. This test makes it a decision.
+    const native = new Error(
+      'ENOENT: /Users/someone/Library/Developer/CoreSimulator/Devices/ABC/data/' +
+        'Containers/Data/Application/XYZ/Library/Application Support/Keeply/documents/scan.jpg',
+    );
+    const wrapper = new Error('Could not copy the file into Keeply', { cause: native });
+
+    const out = describeError(wrapper);
+    assert.ok(out.includes('Could not copy the file into Keeply'));
+    assert.ok(!out.includes('scan.jpg'), 'the cause leaked into the log');
+    assert.ok(!out.includes('Application Support'), 'the container path leaked');
+  });
+});
