@@ -107,6 +107,13 @@ function whereFor(filter: DocumentFilter, todayISO: string): Clause {
  * SQLite sorts NULL first ascending, so that is lifted out explicitly rather
  * than left to surprise. `id` breaks every final tie so paging can never repeat
  * or skip a row.
+ *
+ * The tiebreak cannot be proved by a test and is not optional. SQLite does not
+ * guarantee a stable order for equal keys; it merely happens to give one for
+ * small in-memory fixtures, so a mutation that deletes `id ASC` stays green.
+ * Ten documents expiring on the same day is an ordinary library, and without a
+ * TOTAL order `LIMIT`/`OFFSET` is free to show one of them twice and another
+ * never — which reads as data loss and cannot be reproduced on demand.
  */
 function orderFor(filter: DocumentFilter): string {
   switch (filter.sort) {

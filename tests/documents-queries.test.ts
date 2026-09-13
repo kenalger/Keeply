@@ -703,3 +703,149 @@ describe('projecting a document onto a reminder', () => {
     assert.equal('currency' in entity, false);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Paging (the gap that let a 50-row cap ship)                                 */
+/* -------------------------------------------------------------------------- */
+
+describe('paging', () => {
+  /** `count` documents, expiring on consecutive days so the order is total. */
+  async function seed(api: DocumentsApi, count: number): Promise<void> {
+    for (let index = 0; index < count; index += 1) {
+      const day = String((index % 28) + 1).padStart(2, '0');
+      const month = String((index % 12) + 1).padStart(2, '0');
+      await api.createDocument({
+        name: `Doc ${String(index).padStart(3, '0')}`,
+        type: 'other',
+        expiryDate: `2027-${month}-${day}`,
+      });
+    }
+  }
+
+  test('reports hasMore and a total larger than the page', async () => {
+    const { api } = harness();
+    await seed(api, 60);
+
+    const page = await api.listDocuments({ limit: 50, offset: 0 });
+    // The data layer always had this right; nothing consumed it, which is how
+    // 10 of these 60 became unreachable with no footer and no hint.
+    assert.equal(page.rows.length, 50);
+    assert.equal(page.total, 60);
+    assert.equal(page.hasMore, true);
+  });
+
+  test('the last page says there is nothing after it', async () => {
+    const { api } = harness();
+    await seed(api, 60);
+
+    const page = await api.listDocuments({ limit: 50, offset: 50 });
+    assert.equal(page.rows.length, 10);
+    assert.equal(page.total, 60);
+    assert.equal(page.hasMore, false);
+  });
+
+  test('walking the pages visits every document exactly once', async () => {
+    const { api } = harness();
+    await seed(api, 95);
+
+    const seen: string[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = await api.listDocuments({ limit: 40, offset });
+      seen.push(...page.rows.map((row) => row.id));
+      if (!page.hasMore) break;
+      offset += 40;
+      assert.ok(offset < 400, 'paging did not terminate');
+    }
+
+    // No repeats and no gaps — which is what the `id ASC` final tiebreak on
+    // every sort is there to guarantee.
+    assert.equal(seen.length, 95);
+    assert.equal(new Set(seen).size, 95);
+  });
+
+  test('every sort order pages without repeating or skipping', async () => {
+    const { api } = harness();
+    await seed(api, 50);
+
+    for (const sort of ['expiry', 'name', 'recent'] as const) {
+      const first = await api.listDocuments({ sort, limit: 20, offset: 0 });
+      const second = await api.listDocuments({ sort, limit: 20, offset: 20 });
+      const third = await api.listDocuments({ sort, limit: 20, offset: 40 });
+
+      const ids = [...first.rows, ...second.rows, ...third.rows].map((r) => r.id);
+      assert.equal(ids.length, 50, sort);
+      assert.equal(new Set(ids).size, 50, sort);
+      assert.equal(first.hasMore, true, sort);
+      assert.equal(third.hasMore, false, sort);
+    }
+  });
+
+  test('a page of entirely damaged rows still reports more behind it', async () => {
+    const { db, api } = harness();
+    await seed(api, 30);
+
+    // Corrupt the whole first page's worth.
+    const ids = (await api.listDocuments({ limit: 10, offset: 0 })).rows.map((r) => r.id);
+    db.exec('PRAGMA ignore_check_constraints = ON');
+    for (const id of ids) {
+      db.prepare('UPDATE documents SET type = ? WHERE id = ?').run('unheard_of', id);
+    }
+    db.exec('PRAGMA ignore_check_constraints = OFF');
+
+    const page = await api.listDocuments({ limit: 10, offset: 0 });
+    assert.equal(page.rows.length, 0);
+    assert.equal(page.damagedCount, 10);
+    // From the COUNT and the pre-mapping row count, never from `rows.length` —
+    // otherwise a page of damaged rows looks like the end of the list.
+    assert.equal(page.hasMore, true);
+    assert.equal(page.total, 30);
+  });
+
+  test('a LAST page of damaged rows does not claim there is more', async () => {
+    const { db, api } = harness();
+    await seed(api, 10);
+
+    db.exec('PRAGMA ignore_check_constraints = ON');
+    db.prepare("UPDATE documents SET type = 'unheard_of'").run();
+    db.exec('PRAGMA ignore_check_constraints = OFF');
+
+    const page = await api.listDocuments({ limit: 10, offset: 0 });
+    assert.equal(page.rows.length, 0);
+    assert.equal(page.damagedCount, 10);
+    // Counting MAPPED rows here says `0 + 0 < 10` — "there is more" — and the
+    // screen scrolls for a next page forever, fetching the same ten broken
+    // rows each time. The count has to be of rows the query RETURNED.
+    assert.equal(page.hasMore, false);
+  });
+
+  test('rows sharing a sort key page without repeating or skipping', async () => {
+    const { api } = harness();
+    // Fifteen documents expiring on the SAME DAY — the shape that needs the
+    // `id ASC` final tiebreak, because SQLite does not PROMISE a stable order
+    // for equal keys and a row could land on both pages or on neither.
+    //
+    // ⚠ This test does not prove the tiebreak is load-bearing: removing it
+    // leaves this green, because this SQLite build happens to return equal keys
+    // in a consistent order for a fixture this small. Verified by mutation.
+    // What it does prove is the OUTCOME — that paging over a degenerate sort
+    // key visits every row once — which is the property that would break if the
+    // order ever stopped being stable.
+    for (let index = 0; index < 15; index += 1) {
+      await api.createDocument({
+        name: `Same day ${index}`,
+        type: 'other',
+        expiryDate: '2027-03-01',
+      });
+    }
+
+    const first = await api.listDocuments({ limit: 5, offset: 0 });
+    const second = await api.listDocuments({ limit: 5, offset: 5 });
+    const third = await api.listDocuments({ limit: 5, offset: 10 });
+
+    const ids = [...first.rows, ...second.rows, ...third.rows].map((r) => r.id);
+    assert.equal(ids.length, 15);
+    assert.equal(new Set(ids).size, 15);
+    assert.equal(third.hasMore, false);
+  });
+});

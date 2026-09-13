@@ -897,3 +897,59 @@ describe('deleting a DAMAGED child still takes its cost with it', () => {
     assert.equal((await api.itemTotals(item.id)).totalMinor, 0);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Paging the full-history screens                                             */
+/* -------------------------------------------------------------------------- */
+
+describe('a long ledger pages', () => {
+  test('"See all 45" has 45 to walk to', async () => {
+    const { api } = harness();
+    const item = await vehicle(api);
+    for (let index = 0; index < 45; index += 1) {
+      await api.createCost({
+        itemId: item.id,
+        type: 'fuel',
+        amountMinor: 100_000 + index,
+        costDate: `2026-0${(index % 8) + 1}-${String((index % 28) + 1).padStart(2, '0')}`,
+      });
+    }
+
+    // The detail screen's row reads "See all 45" off `total`, and the screen it
+    // opens read one default page of 40 with no footer. The count was right and
+    // the list was short — the label was the thing that lied.
+    const first = await api.listCosts(item.id, { limit: 40, offset: 0 });
+    assert.equal(first.rows.length, 40);
+    assert.equal(first.total, 45);
+    assert.equal(first.hasMore, true);
+
+    const second = await api.listCosts(item.id, { limit: 40, offset: 40 });
+    assert.equal(second.rows.length, 5);
+    assert.equal(second.hasMore, false);
+
+    const ids = [...first.rows, ...second.rows].map((row) => row.id);
+    assert.equal(new Set(ids).size, 45);
+  });
+
+  test('a service history pages the same way', async () => {
+    const { api } = harness();
+    const item = await vehicle(api);
+    for (let index = 0; index < 45; index += 1) {
+      await api.createService({
+        itemId: item.id,
+        serviceType: `Service ${index}`,
+        serviceDate: `2026-0${(index % 8) + 1}-${String((index % 28) + 1).padStart(2, '0')}`,
+      });
+    }
+
+    const first = await api.listServices(item.id, { limit: 40, offset: 0 });
+    const second = await api.listServices(item.id, { limit: 40, offset: 40 });
+    assert.equal(first.total, 45);
+    assert.equal(first.hasMore, true);
+    assert.equal(second.hasMore, false);
+    assert.equal(
+      new Set([...first.rows, ...second.rows].map((row) => row.id)).size,
+      45,
+    );
+  });
+});

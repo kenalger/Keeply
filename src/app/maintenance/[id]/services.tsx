@@ -76,13 +76,19 @@ export default function MaintenanceServicesScreen() {
 
   const keyExtractor = useCallback((service: MaintenanceServiceRecord) => service.id, []);
 
-  const footer = useMemo(
-    () =>
-      services.damagedCount === 0 ? null : (
-        <ListNote>{`${services.damagedCount} could not be read.`}</ListNote>
-      ),
-    [services.damagedCount],
-  );
+  const footer = useMemo(() => {
+    // Two different things to say, and both can be true at once. Without the
+    // first, "See all {n}" opened a screen showing forty with nothing to
+    // explain the gap — which is the row's own label being wrong.
+    const notes: string[] = [];
+    if (services.hasMore) {
+      notes.push(`Showing ${services.rows.length} of ${services.total}. Scroll for more.`);
+    }
+    if (services.damagedCount > 0) {
+      notes.push(`${services.damagedCount} could not be read.`);
+    }
+    return notes.length === 0 ? null : <ListNote>{notes.join(' ')}</ListNote>;
+  }, [services.hasMore, services.rows.length, services.total, services.damagedCount]);
 
   return (
     <Screen edges={['top']}>
@@ -119,6 +125,7 @@ export default function MaintenanceServicesScreen() {
           keyExtractor={keyExtractor}
           surface="card"
           footer={footer}
+          onEndReached={services.hasMore ? services.loadMore : undefined}
         />
       )}
     </Screen>

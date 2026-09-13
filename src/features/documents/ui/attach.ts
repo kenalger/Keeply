@@ -32,7 +32,10 @@ import { log } from '@/lib/log';
 import {
   describeCameraPermission,
   describeLibraryPermission,
+  openAppSettings,
   permissionAllows,
+  permissionCopy,
+  permissionNeedsSettings,
   type MediaPermission,
 } from '@/features/receipts/ui/permissions';
 import { ACCEPTED_MIME_TYPES, resolveDocumentMimeType } from '../file-types';
@@ -57,6 +60,16 @@ export interface DocumentAttach {
   busy: boolean;
   /** Set only by a real failure. Cleared by the next attempt. */
   error: string | null;
+  /**
+   * The refusal can only be undone in Settings.
+   *
+   * Distinct from `error`, because the two call for different UI: an error is a
+   * sentence, this is a sentence AND a button. iOS shows no dialog at all once
+   * a permission is blocked, so without a route out the screen is a wall.
+   */
+  needsSettings: boolean;
+  /** Take the user to Keeply's page in the system Settings app. */
+  openSettings: () => Promise<boolean>;
 
   requestCamera: () => Promise<boolean>;
   /** Ask for the library if needed, open the picker, store what comes back. */
@@ -72,6 +85,7 @@ export function useDocumentAttach(): DocumentAttach {
   const [libraryResponse, requestLibraryPermission] = ImagePicker.useMediaLibraryPermissions();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsSettings, setNeedsSettings] = useState(false);
 
   const camera = describeCameraPermission(cameraResponse);
   const library = describeLibraryPermission(libraryResponse);
@@ -92,6 +106,7 @@ export function useDocumentAttach(): DocumentAttach {
   const store = useCallback(async (sourceUri: string, mimeType: string | null) => {
     setBusy(true);
     setError(null);
+    setNeedsSettings(false);
     try {
       return await storeDocumentFile(sourceUri, mimeType);
     } catch (writeError) {
@@ -108,10 +123,26 @@ export function useDocumentAttach(): DocumentAttach {
   const pickFromLibrary = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setNeedsSettings(false);
     try {
       if (!permissionAllows(describeLibraryPermission(libraryResponse))) {
         const next = await requestLibraryPermission();
-        if (!permissionAllows(describeLibraryPermission(next))) return null;
+        const state = describeLibraryPermission(next);
+        if (!permissionAllows(state)) {
+          // A BLOCKED permission never shows a dialog: iOS resolves the request
+          // immediately with the same refusal, so the button appeared to do
+          // nothing — forever, with no message and no route to Settings. §26
+          // says a denial is never a dead end, and `permissionCopy` has had the
+          // exact sentence for this the whole time, unused. Found by audit.
+          const copy = permissionCopy('library', state);
+          setError(
+            copy === null
+              ? 'Keeply cannot reach your photos. You can still add the document without one.'
+              : `${copy.body} You can still add the document without a photo.`,
+          );
+          setNeedsSettings(permissionNeedsSettings(state));
+          return null;
+        }
       }
 
       const picked = await ImagePicker.launchImageLibraryAsync({
@@ -136,6 +167,7 @@ export function useDocumentAttach(): DocumentAttach {
   const pickFile = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setNeedsSettings(false);
     try {
       // Filtering by the allowlist rather than `*/*`: a picker that offers
       // types this app refuses is a picker that ends in an error message the
@@ -159,5 +191,16 @@ export function useDocumentAttach(): DocumentAttach {
     }
   }, []);
 
-  return { camera, library, busy, error, requestCamera, pickFromLibrary, pickFile, store };
+  return {
+    camera,
+    library,
+    busy,
+    error,
+    needsSettings,
+    openSettings: openAppSettings,
+    requestCamera,
+    pickFromLibrary,
+    pickFile,
+    store,
+  };
 }

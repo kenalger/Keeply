@@ -80,6 +80,7 @@ interface PromiseItem {
 
 type DocumentListRow =
   | { kind: 'controls'; key: string }
+  | { kind: 'error'; key: string }
   | { kind: 'empty'; key: string }
   | { kind: 'sectionHeader'; key: string; title: string }
   | { kind: 'note'; key: string; text: string }
@@ -152,15 +153,32 @@ export default function DocumentsScreen() {
   const list = useDocumentList({ search, sort });
   const summary = useExpirySummary();
 
+  const retry = useCallback(() => {
+    list.reload();
+    summary.reload();
+  }, [list, summary]);
+
   const add = useCallback(() => router.push('/documents/new'), [router]);
   const open = useCallback(
     (id: string) => router.push({ pathname: '/documents/[id]', params: { id } }),
     [router],
   );
 
+  // A FAILED read is not an empty library. Checked before `hasAny`, because
+  // `summary.value` is null both when there is nothing and when the read threw
+  // — and rendering the onboarding block over somebody's intact documents is
+  // the app telling them their data is gone. Found by audit.
+  // Both halves must have nothing to show: `useAsyncRead` keeps the last good
+  // value through a failed refresh, and a screen that blanks itself because a
+  // background reload failed is worse than one showing slightly stale rows.
+  const failed =
+    (summary.status === 'error' && summary.value === null) ||
+    (list.status === 'error' && list.rows.length === 0);
+
   const hasAny = summary.value !== null && summary.value.total > 0;
 
   const rows = useMemo<readonly DocumentListRow[]>(() => {
+    if (failed) return [{ kind: 'error', key: 'error' }];
     if (!hasAny) return promiseRows(leadTimes);
 
     const built: DocumentListRow[] = [{ kind: 'controls', key: 'controls' }];
@@ -170,12 +188,20 @@ export default function DocumentsScreen() {
         key: 'no-match',
         text: search.trim() === '' ? 'Nothing here yet.' : 'Nothing matches that search.',
       });
+      // NOT an early return. When every row on the page is damaged the list is
+      // empty AND `damagedCount` is the only signal the user gets — returning
+      // here threw it away, and the header meanwhile said how many documents
+      // there were. That is the data layer's stated bargain broken in exactly
+      // the case it exists for.
+      if (list.damagedCount > 0) {
+        built.push({
+          kind: 'note',
+          key: 'damaged',
+          text: `${list.damagedCount} could not be read.`,
+        });
+      }
       return built;
     }
-    // ONE clock reading for the whole bucketing pass. Taken here rather than
-    // held in state: two readings would let a row's countdown and the section
-    // it sits in disagree by a day across midnight, and a `now` in a dependency
-    // array is either stale or a new object every render.
     // ONE clock reading for the whole bucketing pass. Two would let a row's
     // countdown and the section it sits in disagree by a day across midnight.
     const now = new Date();
@@ -194,6 +220,13 @@ export default function DocumentsScreen() {
         }),
       );
     }
+    if (list.hasMore) {
+      built.push({
+        kind: 'note',
+        key: 'more',
+        text: `Showing ${list.rows.length} of ${list.total}. Scroll for more.`,
+      });
+    }
     if (list.damagedCount > 0) {
       built.push({
         kind: 'note',
@@ -202,7 +235,16 @@ export default function DocumentsScreen() {
       });
     }
     return built;
-  }, [hasAny, leadTimes, list.rows, list.damagedCount, search]);
+  }, [
+    failed,
+    hasAny,
+    leadTimes,
+    list.rows,
+    list.damagedCount,
+    list.hasMore,
+    list.total,
+    search,
+  ]);
 
   const renderRow = useCallback(
     ({ item }: ListRenderItemInfo<DocumentListRow>) => (
@@ -214,9 +256,10 @@ export default function DocumentsScreen() {
         onSort={setSort}
         onAdd={add}
         onOpen={open}
+        onRetry={retry}
       />
     ),
-    [search, sort, add, open],
+    [search, sort, add, open, retry],
   );
 
   return (
@@ -245,6 +288,7 @@ export default function DocumentsScreen() {
             }
           />
         }
+        onEndReached={list.hasMore ? list.loadMore : undefined}
         contentContainerStyle={contentStyle}
         accessibilityLabel="Documents"
         testID="documents-screen"
@@ -303,6 +347,7 @@ interface RowViewProps {
   onSort: (value: DocumentSort) => void;
   onAdd: () => void;
   onOpen: (id: string) => void;
+  onRetry: () => void;
 }
 
 const DocumentListRowView = memo(function DocumentListRowView({
@@ -313,6 +358,7 @@ const DocumentListRowView = memo(function DocumentListRowView({
   onSort,
   onAdd,
   onOpen,
+  onRetry,
 }: RowViewProps) {
   switch (row.kind) {
     case 'controls':
@@ -343,6 +389,22 @@ const DocumentListRowView = memo(function DocumentListRowView({
             testID="documents-sort"
           />
           </ControlsBlock>
+        </ListBlock>
+      );
+
+    case 'error':
+      return (
+        <ListBlock>
+          <EmptyState
+            icon="errorCircle"
+            title="Keeply could not read your documents"
+            // The database is on the device, so "check your connection" would
+            // send the user to fix something that is not broken.
+            description="The database is on this device, so this is not a connection problem. Try again, and if it keeps happening a restore from a backup will rebuild it."
+            actionLabel="Try again"
+            onAction={onRetry}
+            fill={false}
+          />
         </ListBlock>
       );
 

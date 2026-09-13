@@ -190,6 +190,9 @@ const NO_COSTS: readonly MaintenanceCostRecord[] = [];
 const NO_SERVICES: readonly MaintenanceServiceRecord[] = [];
 const NO_RENEWALS: readonly MaintenanceRenewalRecord[] = [];
 
+/** Rows per fetch for the full-history screens. */
+export const CHILD_PAGE_SIZE = 40;
+
 export interface ChildListView<T> {
   status: AsyncStatus;
   rows: readonly T[];
@@ -197,8 +200,112 @@ export interface ChildListView<T> {
   total: number;
   /** Rows the query matched but could not map. The screen says so out loud. */
   damagedCount: number;
+  /** More rows exist than are being shown. Drives the footer and the fetch. */
+  hasMore: boolean;
   error: unknown;
   reload: () => void;
+  /** Ask for one more page. Harmless to call when there is nothing more. */
+  loadMore: () => void;
+}
+
+interface ChildSlice<T> {
+  rows: readonly T[];
+  total: number;
+  damagedCount: number;
+  hasMore: boolean;
+}
+
+/**
+ * Read `pages` pages of one item's children as ONE answer.
+ *
+ * Every page from the first, for the reason `useBillList` gives: appending a
+ * freshly-fetched tail to rows read minutes ago lets a row edited in between
+ * appear twice or vanish.
+ *
+ * The DETAIL screen still asks for a fixed preview (three services, five
+ * costs) and never pages — `preview` is what tells these two apart.
+ */
+async function readChildPages<T>(
+  read: (filter: { limit: number; offset: number }) => Promise<{
+    rows: readonly T[];
+    total: number;
+    damagedCount: number;
+    hasMore: boolean;
+  }>,
+  pages: number,
+): Promise<ChildSlice<T>> {
+  const rows: T[] = [];
+  let damaged = 0;
+  let page = await read({ limit: CHILD_PAGE_SIZE, offset: 0 });
+  rows.push(...page.rows);
+  damaged += page.damagedCount;
+
+  for (let index = 1; index < pages && page.hasMore; index += 1) {
+    page = await read({ limit: CHILD_PAGE_SIZE, offset: index * CHILD_PAGE_SIZE });
+    rows.push(...page.rows);
+    damaged += page.damagedCount;
+  }
+
+  return { rows, total: page.total, damagedCount: damaged, hasMore: page.hasMore };
+}
+
+/**
+ * The paging half of a child list, shared by costs and services.
+ *
+ * `preview` is the detail screen's fixed window: it asks for N rows once and
+ * never grows. Without the distinction, "See all 45" opened a screen showing
+ * 40 with no footer and no way to reach the rest — which is what an audit
+ * found, on a row whose own label promised otherwise.
+ */
+function useChildList<T>(
+  itemId: string,
+  read: (filter: { limit: number; offset: number }) => Promise<{
+    rows: readonly T[];
+    total: number;
+    damagedCount: number;
+    hasMore: boolean;
+  }>,
+  preview: number | undefined,
+  empty: readonly T[],
+): ChildListView<T> {
+  const revision = useRevision('maintenance');
+  const [pages, setPages] = useState(1);
+  const [pagesFor, setPagesFor] = useState(itemId);
+
+  if (pagesFor !== itemId) {
+    setPagesFor(itemId);
+    setPages(1);
+  }
+  const requested = pagesFor === itemId ? pages : 1;
+
+  const slice = useAsyncRead<ChildSlice<T>>(
+    async () =>
+      preview === undefined
+        ? readChildPages(read, requested)
+        : ((p) => ({
+            rows: p.rows,
+            total: p.total,
+            damagedCount: p.damagedCount,
+            hasMore: p.hasMore,
+          }))(await read({ limit: preview, offset: 0 })),
+    [itemId, preview, revision, requested],
+  );
+
+  const loadMore = useCallback(() => setPages((current) => current + 1), []);
+
+  return {
+    status: slice.status,
+    rows: slice.value?.rows ?? empty,
+    total: slice.value?.total ?? 0,
+    damagedCount: slice.value?.damagedCount ?? 0,
+    // A fixed preview never offers "more" — the detail screen has a
+    // "See all N" row for that, and a footer under a deliberate three-row
+    // window would be two controls saying the same thing.
+    hasMore: preview === undefined && (slice.value?.hasMore ?? false),
+    error: slice.error,
+    reload: slice.reload,
+    loadMore,
+  };
 }
 
 /** One item's ledger, newest first. */
@@ -206,19 +313,12 @@ export function useItemCosts(
   itemId: string,
   limit?: number,
 ): ChildListView<MaintenanceCostRecord> {
-  const revision = useRevision('maintenance');
-  const read = useAsyncRead(
-    () => listCosts(itemId, limit === undefined ? {} : { limit }),
-    [itemId, limit, revision],
+  return useChildList<MaintenanceCostRecord>(
+    itemId,
+    (filter) => listCosts(itemId, filter),
+    limit,
+    NO_COSTS,
   );
-  return {
-    status: read.status,
-    rows: read.value?.rows ?? NO_COSTS,
-    total: read.value?.total ?? 0,
-    damagedCount: read.value?.damagedCount ?? 0,
-    error: read.error,
-    reload: read.reload,
-  };
 }
 
 /** One item's service history, newest first. */
@@ -226,33 +326,24 @@ export function useItemServices(
   itemId: string,
   limit?: number,
 ): ChildListView<MaintenanceServiceRecord> {
-  const revision = useRevision('maintenance');
-  const read = useAsyncRead(
-    () => listServices(itemId, limit === undefined ? {} : { limit }),
-    [itemId, limit, revision],
+  return useChildList<MaintenanceServiceRecord>(
+    itemId,
+    (filter) => listServices(itemId, filter),
+    limit,
+    NO_SERVICES,
   );
-  return {
-    status: read.status,
-    rows: read.value?.rows ?? NO_SERVICES,
-    total: read.value?.total ?? 0,
-    damagedCount: read.value?.damagedCount ?? 0,
-    error: read.error,
-    reload: read.reload,
-  };
 }
 
 /** One item's renewals, soonest to expire first. */
 export function useItemRenewals(itemId: string): ChildListView<MaintenanceRenewalRecord> {
-  const revision = useRevision('maintenance');
-  const read = useAsyncRead(() => listRenewals(itemId), [itemId, revision]);
-  return {
-    status: read.status,
-    rows: read.value?.rows ?? NO_RENEWALS,
-    total: read.value?.total ?? 0,
-    damagedCount: read.value?.damagedCount ?? 0,
-    error: read.error,
-    reload: read.reload,
-  };
+  // Renewals are not paged: an item has insurance, registration and a warranty,
+  // not forty of them. The detail screen shows every one.
+  return useChildList<MaintenanceRenewalRecord>(
+    itemId,
+    (filter) => listRenewals(itemId, filter),
+    undefined,
+    NO_RENEWALS,
+  );
 }
 
 /**

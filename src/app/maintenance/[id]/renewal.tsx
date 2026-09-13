@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback } from 'react';
 import { Alert } from 'react-native';
 
-import { Screen, ScreenHeader } from '@/components/ui';
+import { EmptyState, Screen, ScreenHeader } from '@/components/ui';
 import { isMaintenanceRenewalKind } from '@/features/maintenance';
 import {
   RenewalForm,
@@ -37,36 +37,69 @@ export default function MaintenanceRenewalScreen() {
     else router.replace({ pathname: '/maintenance/[id]', params: { id } });
   }, [router, id]);
 
+  // Works off the ROUTE's id, not the loaded record. `removeRenewal` never maps
+  // the row (T12), so a record too damaged for the form to seed itself from is
+  // still one the user can delete — and the unreadable state below offers
+  // exactly that. Reading `renewal.value` here made that button dead.
   const confirmDelete = useCallback(() => {
-    if (renewal.value === null) return;
+    if (renewalId === undefined || renewalId === '') return;
     const record = renewal.value;
     Alert.alert(
       'Delete this cover?',
-      record.costMinor === null
+      record !== null && record.costMinor === null
         ? 'This cannot be undone.'
         : 'The premium leaves the ledger with it. This cannot be undone.',
       [
-        { text: 'Keep', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              try {
-                await removeRenewal(record.id);
-                leave();
-              } catch (error) {
-                log.error('maintenance: deleting a renewal failed', error);
-                Alert.alert('Not deleted', 'Keeply could not remove this cover. Try again.');
-              }
-            })();
-          },
+      { text: 'Keep', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            try {
+              await removeRenewal(renewalId);
+              leave();
+            } catch (error) {
+              log.error('maintenance: deleting a renewal failed', error);
+              Alert.alert('Not deleted', 'Keeply could not remove this cover. Try again.');
+            }
+          })();
         },
+      },
       ],
     );
-  }, [renewal.value, leave]);
+  }, [renewalId, renewal.value, leave]);
 
-  if (item.value === null || (editing && renewal.value === null)) {
+  // STILL LOADING is not the same as GONE, and neither is a failed read. One
+  // branch covering all three rendered a bare header with only Back — no
+  // message, and no way to delete a record damaged enough that the form cannot
+  // seed itself from it. Found by audit; `[id]/index.tsx` already did this
+  // properly and these three did not.
+  const loading =
+    item.status === 'loading' || (editing && renewal.status === 'loading');
+  const unreadable = !loading && (item.value === null || (editing && renewal.value === null));
+
+  if (unreadable) {
+    return (
+      <Screen edges={['top']}>
+        <ScreenHeader title={editing ? 'Edit cover' : 'Add cover'} onBack={leave} />
+        <EmptyState
+          icon="errorCircle"
+          title={item.value === null ? 'This item is gone' : 'This cover cannot be opened'}
+          description={
+            item.value === null
+              ? 'It may have been deleted on this device.'
+              : 'It may have been deleted, or its details could not be read. You can still remove it.'
+          }
+          actionLabel={item.value === null || !editing ? 'Go back' : 'Delete it'}
+          onAction={item.value === null || !editing ? leave : confirmDelete}
+          fill={false}
+        />
+      </Screen>
+    );
+  }
+
+  if (loading || item.value === null) {
     return (
       <Screen edges={['top']}>
         <ScreenHeader title={editing ? 'Edit cover' : 'Add cover'} onBack={leave} />

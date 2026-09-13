@@ -308,9 +308,25 @@ export function DocumentForm({ record, onSaved, onCancel, onDelete }: DocumentFo
         )}
 
         {attach.error === null ? null : (
-          <Text variant="caption" color="danger">
-            {attach.error}
-          </Text>
+          <View style={styles.attachError}>
+            <Text variant="caption" color="danger">
+              {attach.error}
+            </Text>
+            {/* A sentence alone is still a wall when the refusal can only be
+                undone in Settings — iOS shows no dialog once a permission is
+                blocked, so the button would otherwise do nothing forever. */}
+            {attach.needsSettings ? (
+              <Button
+                title="Open Settings"
+                variant="secondary"
+                icon="gear"
+                onPress={() => {
+                  void attach.openSettings();
+                }}
+                testID="document-open-settings"
+              />
+            ) : null}
+          </View>
         )}
       </FormSection>
 
@@ -340,6 +356,7 @@ const makeStyles = (t: Theme) =>
   StyleSheet.create({
     preview: { marginBottom: t.space.sm },
     attachRow: { flexDirection: 'row', gap: t.space.sm },
+    attachError: { gap: t.space.sm },
     attachButton: { flex: 1 },
     // A block owns the gap above itself, never below.
     delete: { marginTop: t.layout.section },
