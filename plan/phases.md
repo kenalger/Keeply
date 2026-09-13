@@ -61,15 +61,26 @@ not. Calendar periods, no rollover, one cadence at a time. `allowances` is a his
 Anything that needs looking after: **vehicles, appliances, home & property, electronics**. One item
 table with a `kind`, one cost ledger, service history with next-due by date or mileage, and one
 renewals table covering insurance, registration **and warranty**. Odometer, fuel efficiency and
-cost-per-km are kept but scoped to vehicles alone. Schema and migrations (`0002` drops the five
-vehicle tables, `0003` creates the four maintenance ones) are **done**; the feature and UI layers
-are not.
+cost-per-km are kept but scoped to vehicles alone. **COMPLETE (5a–5e.)** Schema, data layer,
+analytics, screens and reminders. Home and Money wiring is the one piece left —
+`plan/phase5-maintenance.md` §12.
 
 ## Phase 6 — Documents
-Document CRUD, local file/PDF attachment, expiry bucketing (expired / today / 7 / 30 / 60 / 90 days), expiry notifications, masked document numbers (`**** **** 1234`).
+Document CRUD, local file/PDF attachment, expiry bucketing (expired / today / 7 / 30 / 60 / 90 days), expiry notifications, masked document numbers (`**** **** 1234`). **COMPLETE** —
+`plan/phase6-documents.md`.
 
 ## Phase 7 — Security
-Biometric app lock with passcode fallback, background-blur privacy screen, key rotation, sensitive-field handling audit, privacy settings, permission-denial recovery paths.
+Biometric app lock with passcode fallback, background-blur privacy screen, key rotation, sensitive-field handling audit, privacy settings, permission-denial recovery paths. **COMPLETE, with one
+deliberate exception** — `plan/phase7-security.md`.
+
+The privacy screen is OPAQUE, not a blur: a blurred amount is still a legible shape, and the effect
+is composited live so it can render as nothing at all in an app-switcher snapshot.
+
+**Key rotation was not built, on purpose** (§3 of that plan). The key is generated on-device, never
+transmitted and never displayed, so there is no exposure event rotation would answer — and an
+interrupted `PRAGMA rekey` leaves a file nobody holds the key to, which is the exact unrecoverable
+state §19/§A4's whole design exists to prevent. §20's encrypted export already provides the "get my
+data out under a key I choose" capability rotation is usually asked for.
 
 ## Phase 8 — Backup / Restore
 Encrypted export bundle (metadata + optional media), passphrase-derived key, import validation and decrypt, restore workflow with conflict handling, explicit opt-in for any plaintext export.

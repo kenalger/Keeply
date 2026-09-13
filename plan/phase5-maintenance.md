@@ -1,6 +1,6 @@
 # Phase 5 — Maintenance (replaces "Vehicles")
 
-**Status: 5a–5d done — you can record costs, services and renewals against an item, and see what it has cost. 5e (reminders) outstanding.** Written 2026-09-03, from: *"instead of vehicles, make it maintenance. because
+**Status: COMPLETE — 5a–5e.** Items, costs, services, renewals, analytics, screens, and reminders (`575aac3`, `17d1d03`). Written 2026-09-03, from: *"instead of vehicles, make it maintenance. because
 it's maintenance but not focus on 1 field. let's add more, like what more requires maintenance."*
 
 This supersedes `plan/phases.md` → "Phase 5 — Vehicles", and knowingly diverges from `goal.md`
@@ -103,7 +103,7 @@ The **tab itself is already renamed** — label, wrench icon, empty state and th
 tracks" list all describe the wider domain (`plan/screenshots/25-maintenance-tab-dark.png`). It
 was part of 5a because leaving a tab called "Vehicles" over a maintenance schema is the kind of
 drift that outlives the person who caused it.
-| **5e** | Reminders section (incl. the deferred `entity_type` rename, §9); Home and Money wiring | Round trip by hand on the simulator |
+| ~~**5e**~~ | ~~Reminders (incl. the deferred `entity_type` rename, §9)~~ | **Done.** A fourth reminder kind; `drizzle/0004` hand-authored with the view dance §9 predicted. 19 tests, 14 mutations red. Home and Money wiring NOT done — see §12. |
 
 ---
 
@@ -294,3 +294,68 @@ Neither was visible from the test suite.
 Reminders (step 5e, which still drags the `notification_settings.entity_type` rename and its
 view-drop dance), Home and Money wiring, and per-item cost charts. The `dueNext()` read 5e needs is
 built and tested.
+
+---
+
+## 12. What 5e built
+
+`575aac3` (the reminder kind and the rename) and `17d1d03` (the maintenance side).
+
+### One kind, two dated things
+
+A service falling due and cover expiring share a lead-time setting but not an
+identity. The reminder id is the **service or renewal ROW's** id, never the
+item's: `cancelRemindersFor()` matches on it, and a car with a service due plus
+three renewals expiring must not have cancelling one cancel all four.
+
+One kind rather than two because a user thinking "remind me about the car" is
+not thinking about which of them is due, and a settings screen with five kinds
+on it is one nobody finishes reading. The body carries a single verb and the
+projector composes a title that reads under it — "Oil change and filter for Vios
+is due in 3 days", "Insurance for Vios is due in 7 days". Not `${item} ${label}`:
+"Vios Oil change and filter" reads like a typo, and the fix is *not* to
+lower-case the user's own words (§8's rule, which exists because it turns
+"SSS ID" into "sss id").
+
+### Both sources accumulate; only the latest is a deadline
+
+A car serviced every six months has six service rows; a policy renewed three
+times has three. The queries narrow to the item's latest service and the latest
+renewal **of each kind** — taking the max across all renewals would report
+insurance and lose the registration expiring a fortnight sooner. Reminding
+someone about an oil change they had two years ago is the most annoying thing
+this feature could do, and the kind of bug that makes people turn notifications
+off rather than report them.
+
+A retired item does not remind. The history stays — it is why the user knows the
+last one lasted three years — but a sold car must not keep asking to be serviced.
+
+### A chain link that says nothing is not the end of the chain
+
+An audit found `selectNextService` took the newest service row outright, so
+fitting **wiper blades** after an oil change made the oil change's "next due
+1 March" vanish from the detail screen. The brand-new `selectRemindableServices`
+had inherited the same hole within the hour, which would have cancelled the
+reminder too. "Latest" now means *latest that names a next service*.
+
+### The rename drizzle-kit cannot generate
+
+§9 predicted, a month in advance, that renaming `entity_type`'s CHECK values
+would fail with `error in view notification_settings_live: no such table`. It
+was generated, run, and failed with exactly that.
+
+`drizzle/0004` is therefore **hand-authored** — the only migration in this
+project that is — and says so at length at the top. Two extra statements: drop
+the view before the rebuild, recreate it after. The snapshot is untouched and
+still correct, because it describes the END state.
+
+Two values replaced three: `maintenance_renewals` already merged insurance and
+registration into one table with its own `kind`, so a third entity type would be
+a distinction the schema no longer makes.
+
+### Not in 5e
+
+**Home and Money wiring.** `remindableMaintenance()` is built and tested and
+nothing outside the reminder queue and the settings preview reads it. Home has
+no "due for service" section, and Money does not show what maintenance is
+costing this month. That is the natural next slice for this domain.

@@ -1,18 +1,19 @@
 # Keeply — Handoff
 
-**State at `1237300`.** `tsc --noEmit` 0 · `eslint .` 0 errors · `npm test` **1092/1092**.
-Runs on the iOS Simulator.
+**State at `dd58151` + UNCOMMITTED WORK.** `tsc --noEmit` 0 · `eslint .` 0 errors ·
+`npm test` **1164/1164**. Runs on the iOS Simulator.
 
-> **Fifteen commits are UNPUSHED** (`edda5d1..HEAD`). `git log origin/main..HEAD` to see them.
-> Nothing is half-finished — each one is green on its own — but `origin/main` is fifteen behind.
+> ⚠ **24 paths are uncommitted.** `git status` before anything else. They are green and complete —
+> five QA-audit fixes and the whole of Phase 7 — but they are not committed, because the user asked
+> for commits only on an explicit command. Everything up to `dd58151` IS pushed; `origin/main` is
+> level with it.
 
-This session: **Phase 5c** (maintenance records and their analytics) and **Phase 6** (Documents,
-complete — data layer, files, screens and wiring). The previous session did restore (8c), the
-Bills screens (3c), the reminders rework and a design pass.
+This session: **Phase 5c** (maintenance records and analytics), **Phase 6** (Documents), **5e**
+(maintenance reminders and the deferred enum rename), **two QA audits** and their fixes, and
+**Phase 7** (Security).
 
-**Every record kind in the product now exists.** Subscriptions, bills, expenses, maintenance and
-documents all have a data layer, screens and reminders. Phase 7 (Security) is the only unbuilt
-phase left.
+**EVERY PHASE IS NOW BUILT.** Phases 1–9 are complete. What remains is polish, the audit findings
+listed under Known gaps, and the two "not in this phase" items each plan records.
 
 | Phase | State |
 | --- | --- |
@@ -20,9 +21,9 @@ phase left.
 | Onboarding | Complete |
 | 9 Expenses & Allowance | **Complete** |
 | 8 Backup | **Complete.** Export and restore, both verified on the device. |
-| 5 Maintenance *(was Vehicles)* | 5a–5d **complete**: items, costs, services, renewals, analytics, screens. **5e (reminders) outstanding.** |
+| 5 Maintenance *(was Vehicles)* | **Complete (5a–5e).** Items, costs, services, renewals, analytics, screens, reminders. Home/Money wiring is the one piece left. |
 | 6 Documents | **Complete.** CRUD, files, §15's ladder, expiry reminders, Home wiring. |
-| 7 Security | Not started |
+| 7 Security | **Complete**, key rotation deliberately deferred. App lock, privacy cover, `/security`, and the §18/§19 audit. |
 
 Read `CLAUDE.md` for conventions before touching anything. `plan/goal.md` is the product spec.
 
@@ -92,13 +93,21 @@ A private, offline-first iOS app you can actually use:
 - **Local notifications** — six-state permission model, 60-slot rolling window, rebuilt on boot,
   foreground, and any reminder-affecting settings change.
 - **First-run wizard** — 6 steps, resumable, 56-entry Philippine catalogue, all importable.
+- **App lock (Phase 7).** Face ID / Touch ID / passcode before Keeply opens, with a grace period.
+  The navigation tree is NOT MOUNTED while locked — verified on the device by walking the fiber
+  tree, not by looking at a screenshot. A privacy cover goes up on `inactive` (not `background` —
+  iOS snapshots on the first of those) for every user, whether or not the lock is on.
+  **The lock fails OPEN when it cannot be satisfied.** No enrolled biometrics, no passcode, a dead
+  sensor: Keeply unlocks and `/security` says why. There is no server, no account and no support
+  line, so a wall nobody can open is a user permanently locked out of their only copy of their own
+  records — and SQLCipher protects the data either way. `/security` says that out loud too.
 - **Design system** — greyscale plus ONE accent, full form layer, `ThemeLayout` spacing rules, and
   contrast that is now actually measured (`tests/theme-contrast.test.ts`) rather than claimed.
 
-253 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+263 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent, **`42-` Phase 5c**, **`43-` Phase 6**).
+`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent, **`42-` Phase 5c**, **`43-` Phase 6**, **`44-` paging, `45-` security**).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -112,24 +121,23 @@ A private, offline-first iOS app you can actually use:
 session that began before they existed cannot call them. Start a fresh session and they are available
 by name.
 
-**2. Maintenance reminders (step 5e), and the rename it drags.** The last gap in a phase that is
-otherwise done, and now the ONLY record kind that cannot remind. `dueNext()` is built and tested —
-next service date, soonest renewal expiry per item — so the scheduler has its input, and Phase 6d is
-a worked example of exactly this wiring end to end (`documentReminderEntity` beside
-`billReminderEntity`, `syncAllReminders()` gathering a third kind, the settings screen's preview).
-What is left is a fourth `REMINDER_KINDS` entry, Home and Money wiring, and the deferred
-`notification_settings.entity_type` rename, which still needs the drizzle-kit view-drop dance in
-Known gaps.
+**2. Commit what is in the tree, or review it first.** 24 paths, all green. Five QA-audit fixes
+and the whole of Phase 7. Nothing is half-done; it is uncommitted on purpose.
 
-**3. Phase 7 — Security.** The only unbuilt phase. Biometric app lock with passcode fallback,
-background-blur privacy screen, key rotation, a sensitive-field audit. The onboarding wizard already
-RECORDS that the user asked for an app lock and More says "Soon" — a stated promise with nothing
-behind it, and now the most visible one left.
+**3. The QA findings still open.** Two audits ran this session and most of what they found is
+fixed. What is left is under Known gaps, and the one with a real decision in it is the **odometer
+regression**: a replaced instrument cluster makes cost-per-km and km/L print confident nonsense
+(`1008.3 km/L` was produced from four readings). It needs a product call — refuse the reading at
+entry, or add an eighth `AnalyticsGap` for "these readings cannot all be right".
 
-**4. Small, high-value, any time.** Each is an hour or two and each closes something that currently
-reads as broken: a ledger row on the bill detail screen is not tappable (`saveBillPaymentEdit()` is
-wired and exported); bills are absent from Home (`useUpcomingBills()` exists for exactly that); and
-`useAsyncRead` is now copied into **six** features and wants extracting across all six at once.
+**4. Home and Money wiring for maintenance.** `remindableMaintenance()` is built and tested and
+nothing outside the reminder queue reads it. Home has no "due for service" section and Money does
+not show what maintenance costs. `plan/phase5-maintenance.md` §12.
+
+**5. Small, high-value, any time.** A ledger row on the bill detail screen is still not tappable
+(`saveBillPaymentEdit()` is wired and exported); bills are absent from Home (`useUpcomingBills()`
+exists for exactly that); and `useAsyncRead` is now copied into **seven** features and wants
+extracting across all of them at once.
 
 **Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
 camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
@@ -280,6 +288,18 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
   file and running the real migrations means there is one path, and it is the tested one.
   `recoverInterruptedRestore()` at the top of `openDatabase()` is what makes the two-rename window
   survivable — remove it and a kill mid-restore mints a fresh key over the user's data.
+- **A lock that cannot be satisfied must OPEN the app.** The one place in Keeply where failing
+  open is the safe direction. The app lock is a PRESENCE check — it stops whoever picks up an
+  unlocked phone. It is not what protects the data; SQLCipher is, with a device-bound key, and that
+  is true whether the lock is on or off. So a lock that can brick the app is strictly worse than no
+  lock. Failing open SILENTLY is still forbidden: a cancelled or failed attempt stays locked.
+- **A driver error's `params:` never reaches a log, and `describeError` never walks `cause`.**
+  op-sqlite echoes bound parameters into its error messages — and those parameters are the row.
+  Phase 8 hit this with the backup passphrase; the §18 audit proved a SHORT document number
+  (`AB12CD`) still came through, because it matches no identifier pattern and a long statement was
+  saved only by truncation. Everything after `params:` is now dropped. And `describeError` reading
+  only `error.message` is what keeps native container paths out of release logs — load-bearing,
+  now documented at the function and pinned by a test.
 - **`Library/Application Support/Keeply` is resolved in ONE place** —
   `src/lib/private-directory.ts` — and both media features ask it for a subfolder. Every other
   cross-feature duplication in this app is deliberate; this one cannot be, because the iOS backup
@@ -322,6 +342,32 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 Newest first, labelled by the commit that closed them — "this session" stopped being a useful
 label four commits ago.
+
+### UNCOMMITTED · Phase 7 — Security, and two QA audits
+
+- **Phase 7 is built.** App lock, privacy cover, `/security`, and the §18/§19 audit.
+  `plan/phase7-security.md`. Key rotation deliberately NOT built — §3 there has the argument.
+- **NO NATIVE REBUILD WAS NEEDED**, contrary to what `app-lock-store.ts`'s header implies.
+  `NSFaceIDUsageDescription` was already set via BOTH plugins' `faceIDPermission` prop in
+  `app.json` and is already in the built `Info.plist`. Reading `ios.infoPlist` and concluding it
+  was missing was wrong; `PlistBuddy` against the real build settled it.
+- **Two QA audits found 19 defects between them**, most now fixed. The three that corrupted data:
+  a renewal premium silently re-dated on an unrelated edit (moving spend between YEARS), a service
+  edit destroying notes typed on the ledger row, and deleting a damaged service stranding its cost.
+- **A test that could not see its own bug.** The premium re-dating was invisible until the test was
+  rebuilt around a clock that MOVES — `testClocks` pins `todayISO`, and with a pinned clock
+  "recompute the date as today" is indistinguishable from leaving it alone. Remember that the next
+  time a defect is about time passing.
+
+### `575aac3` + `17d1d03` · Phase 5e — maintenance reminders
+
+- **The fourth reminder kind**, and the `entity_type` rename deferred since 5a.
+  `drizzle/0004` is the only HAND-AUTHORED migration in the project and says so at length: the
+  generated version failed with exactly the error `plan/phase5-maintenance.md` §9 predicted a month
+  earlier.
+- **A chain bug the audit caught in brand-new code.** `selectNextService` took the newest service
+  row outright, so fitting wiper blades after an oil change made the oil change's next-due date
+  vanish. The 5e query had inherited it within the hour.
 
 ### `9780019`…`1237300` · Phase 6 — Documents, complete
 
@@ -487,11 +533,12 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   `deleteBillPayment()` are wired and exported and the `anchor-row` refusal has its sentence, but a
   ledger row on the bill detail screen is not tappable yet. The natural next slice.
 - **Bills are not on Home.** `useUpcomingBills()` exists and is exported for exactly that.
-- **`useAsyncRead` is duplicated SEVEN times** (documents added one) (subscriptions, receipts, allowance, maintenance, bills,
-  and maintenance's child records reuse the maintenance copy) — ~60 lines of subtle concurrency
-  logic (generation counter, cancellation) copied per feature. Worth extracting across all of them at
-  once; not worth smuggling into one. 5c deliberately reused the existing copy rather than adding a
-  seventh.
+- **`useAsyncRead` is duplicated SIX times** — subscriptions, receipts, allowance, bills,
+  maintenance, documents. Counted with `grep -rl "function useAsyncRead" src/`, not remembered.
+  ~60 lines of subtle concurrency logic (a generation counter, cancellation) copied per feature.
+  Worth extracting across all six at once; not worth smuggling into whichever one happens to be
+  under construction — 5c and Phase 6 both reused an existing copy rather than adding to the
+  problem sideways.
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
   budgets, no rollover.
 - **Maintenance is not wired into reminders, Home or Money (step 5e).** `dueNext()` exists and is
@@ -508,9 +555,18 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   which SQLite can only do by rebuilding the table — and drizzle-kit's rebuild does not drop the
   dependent `notification_settings_live` view first, so the generated RENAME fails. No code reads
   those values, so it waits for step 5e. The reason is written at the enum.
-- **Phase 7 not started**: Security (biometric lock). The onboarding wizard already RECORDS that the
-  user asked for an app lock, and More says "Soon" — a stated promise with nothing behind it, and now
-  the most visible one left.
+- **QA findings still open** (`plan/phase6-documents.md`, and the audits' own reports):
+  **an odometer regression makes the analytics print nonsense as fact** — a replaced instrument
+  cluster produced `1008.3 km/L` from four readings, and `AnalyticsGap` has no reason for "these
+  cannot all be right"; validation messages leak camelCase field names ("fuelLitersMilli must be a
+  whole number" under a field labelled Litres); `itemTotals` counts rows it did not total when
+  currencies mix; unicode search is case-sensitive (`lower()` is ASCII-only, project-wide).
+- **Key rotation is deliberately not built.** `plan/phase7-security.md` §3: the key never leaves
+  the device so there is no exposure event it answers, and an interrupted `PRAGMA rekey` leaves a
+  file nobody holds the key to.
+- **Nothing drives the camera for documents.** `useDocumentAttach` exposes `requestCamera` and
+  `store`; no screen mounts a viewfinder, because the simulator has no camera and receipts' capture
+  screen is receipt-shaped. Choosing a photo and choosing a file both work.
 - **Nothing opens a PDF.** An attached PDF gets a mark and a sentence on the document detail screen.
   Nothing installed can render one and adding a renderer is a native dependency.
 - **The document camera path is wired but unexercised.** `useDocumentAttach` exposes `requestCamera`
@@ -563,7 +619,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 1092 tests
+npm test                # node --test, 1164 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
