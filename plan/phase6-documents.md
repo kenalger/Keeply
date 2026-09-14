@@ -193,3 +193,84 @@ are a real backstop, and a damaged-row test has to work to get past them), and
 - **`strayDocumentFiles()` has no caller.** It is offered for a deliberate
   cleanup, not a launch sweep: a sweep that runs at boot can delete a file a
   half-finished form is about to reference.
+
+---
+
+## The expiry prompt: three answers instead of an edit form
+
+Before this, the only thing a user could do about an expired passport was tap the pencil and change
+a date field. That is the right tool for "I typed the wrong year" and the wrong one for everything
+that actually happens to an expired document — so opening one now asks, and the three answers are
+the three real outcomes.
+
+| Answer | What it does |
+| --- | --- |
+| **I've renewed it** | Opens a date field in the sheet, then moves the expiry and clears the prompt state |
+| **Still sorting it out** | Records `in_progress` and goes quiet for 7 days. Still counted as expired everywhere — the user asked for time, not silence |
+| **I don't need this any more** | Records `retired`. The row and its scan stay; only its DEADLINE retires |
+| **Not now** | Records that this expiry was asked about, and claims nothing about the document |
+
+### Asking once, with no flag to reset
+
+`renewal_prompted_for` stores the **expiry date** the prompt was last opened for, not a boolean.
+Renew the document and its `expiry_date` no longer equals that, so the next expiry asks again by
+itself — nothing has to remember to clear anything, which is the failure a boolean would have.
+
+After the prompt has been answered or dismissed it stops auto-opening, and a
+*"What do you want to do?"* button takes its place on the expired card. "Not now" means not now.
+
+### One suppression mechanism each, which a test had to teach me
+
+The first version set `renewal_prompted_for` on **every** answer. That silently killed the feature it
+had just promised: "ask me again in a week" would never fire, because `promptedFor` suppresses that
+expiry *forever* and outlives any snooze. The test that caught it is the one asserting the two halves
+of the module agree — a snooze that nothing reads back the same way is a snooze that does nothing.
+
+So: dismissing is suppressed by `promptedFor`, being in progress by the snooze date, being retired by
+the state. None of them shadows another.
+
+### Retiring changes what other screens do, or it is a button that does nothing
+
+`selectExpiring` and `selectExpirySummary` both exclude `renewal_state = 'retired'`. The summary's
+`total` and `undated` deliberately do **not** — they answer "what do you have", and a retired
+passport is still one you have. Only the two deadline counters drop it.
+
+### The migration drizzle-kit could not generate, again
+
+`drizzle/0006` is the **second** hand-authored migration in this project. The generated table rebuild
+was broken three ways, each observed before the file was written: the copy `SELECT`s the new columns
+from the old table (`no such column`), the `DROP VIEW` lands after the rename (§0004's trap, in the
+same shape), and `0005`'s paging indexes come back with their whole SQL fragment quoted as one
+identifier.
+
+None of it was needed. `ALTER TABLE ADD COLUMN` takes a CHECK constraint — verified, the constraint
+fires on a bad INSERT afterwards — fills existing rows from the DEFAULT, leaves every index alone and
+never renames the table. The view is dropped and recreated only because its column list has to grow.
+`ADD COLUMN` appends, so the schema declares the three columns after `deleted_at` to match.
+
+---
+
+## The migration runner was skipping by timestamp
+
+Found while verifying the above on the device, and it is the most serious thing in this section.
+
+`runMigrations` decided "already applied" by comparing each journal entry's `when` against the newest
+`created_at` in `__drizzle_migrations` — a timestamp standing in for identity. Regenerating a
+migration file gives its entry a **new** `when` while the database still holds the old one against
+the same tag, so the entry stops looking applied, runs a second time, and dies on
+`index ... already exists`. That rolls back **and aborts the loop**, so every later migration is
+blocked too.
+
+Exactly that happened: `0005` was regenerated during this work, re-ran, failed, and `0006` never got
+the chance. **Nothing reported it.** The app kept working because `mapDocumentRow` tolerated the
+missing column and returned `'none'` — so the screen looked right and the database was three columns
+short. A write would have been the first thing to fail, in front of a user.
+
+The fix is to skip by **tag**, which is what the table already records, what drizzle's own runner
+compares, and the one thing that cannot drift. A tag in the database but not in this bundle is
+ignored rather than fatal — that is a downgrade, and refusing to boot is a worse answer than running
+what this build knows.
+
+The decision moved to `src/db/migration-order.ts` so it could be tested at all: `migrate.ts` imports
+the generated bundle, which imports `_journal.json`, which plain Node will not load. Deploying the
+fix repaired the device by itself — `0006` applied on the next launch with nothing touched by hand.

@@ -175,3 +175,55 @@ The dialogs themselves are unrendered.
   phase; extracting it is a worthwhile cleanup across all five at once, not a
   change to smuggle into one of them.
 - **Bills are not on Home.** `useUpcomingBills()` exists and is exported for it.
+
+---
+
+## Correcting a payment that is already in the ledger
+
+`saveBillPaymentEdit()` was written, tested and exported in Phase 3 and had **no caller**. The
+payment history rendered each period as a flat, untappable row, so a payment entered with the wrong
+amount or date could only be fixed by `undoBillPayment` — which reaches the **most recent** period
+only. Anything older than that was wrong permanently.
+
+A settled row is now tappable and opens a correction sheet with the three things people actually get
+wrong: what they paid, when they paid it, and how. An unpaid row stays flat — there is nothing
+recorded to correct, and settling it is the screen's primary action.
+
+**`dueDate` is deliberately not editable here.** Moving a payment to a different period re-anchors
+the recurrence — the oldest live payment IS the anchor every later due date is computed from — so it
+has a different blast radius and belongs behind its own flow. `status` is not editable either:
+unpaying is `undoBillPayment`, which also rewinds the due date, and a status toggle that did not
+would leave the bill rolled forward with a hole in its history.
+
+Clearing the amount is a real answer, not a validation failure: `null` means "I paid it but I do not
+know what it cost", which is a variable bill settled before the invoice arrived (§7). The ledger
+already renders an em dash for it.
+
+### The form is keyed, not synced
+
+The first version copied the record into state in an effect. `eslint` rejected it — *"Calling
+setState synchronously within an effect can trigger cascading renders"* — and the rule is right: it
+renders once with the wrong values and again with the right ones. Mounting the form with the
+payment's id as its `key` gets the same result from React's own machinery. A different row is a
+different instance with its own initial state; the same row reopened keeps what was typed.
+
+Verified on the device end to end: tapped the ledger row, changed ₱2,500.00 to ₱1,987.50, saved, and
+read the stored payment back as `198750`.
+
+---
+
+## `useAsyncRead`, once instead of six times
+
+Six features — subscriptions, receipts, allowance, bills, maintenance, documents — each carried
+their own forty-line copy. Compared with comments stripped and the log label normalised, **all six
+hashed identically**: nobody had improved one, and nobody could have improved all of them. What had
+drifted was the prose, so the same code carried six different explanations of itself.
+
+It now lives in `src/lib/use-async-read.ts` and takes a `label` for the failure log. Cross-feature
+sharing is normally refused in this codebase — a shared thing turns a change to one feature into a
+silent change to another — and this earned the exception by containing no SQL, no schema and no
+feature vocabulary. A generation counter and a ref.
+
+The generation counter is not ceremony: two reads started a frame apart can resolve out of order, so
+without it a fast filter change is overwritten by the slower read it replaced. Typing in a search
+box is exactly that shape — which is also why `useDebounced` now sits in front of it.

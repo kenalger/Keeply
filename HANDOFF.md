@@ -121,23 +121,41 @@ A private, offline-first iOS app you can actually use:
 session that began before they existed cannot call them. Start a fresh session and they are available
 by name.
 
-**2. Commit what is in the tree, or review it first.** 24 paths, all green. Five QA-audit fixes
-and the whole of Phase 7. Nothing is half-done; it is uncommitted on purpose.
+**2. Commit what is in the tree, or review it first.** All green, and in four coherent pieces:
+the odometer regression, the three remaining audit findings, the duplicate-key bug that running it
+turned up, and the Home/Money wiring. **Verified on the simulator** rather than only against
+`node:sqlite` — Unicode search folds on op-sqlite's SQLCipher build, the spend card renders, and
+Home shows both the "Due for service" rows and a live Vehicle line. Nothing is half-done; it is
+uncommitted on purpose.
 
-**3. The QA findings still open.** Two audits ran this session and most of what they found is
-fixed. What is left is under Known gaps, and the one with a real decision in it is the **odometer
-regression**: a replaced instrument cluster makes cost-per-km and km/L print confident nonsense
-(`1008.3 km/L` was produced from four readings). It needs a product call — refuse the reading at
-entry, or add an eighth `AnalyticsGap` for "these readings cannot all be right".
+**3. The QA findings are closed.** Two audits ran this session and every finding they raised is
+now fixed: the odometer regression (`plan/phase5-maintenance.md` §13), the leaked field
+identifiers, the mixed-currency totals, and the ASCII-only search (§14 of the same file). The next
+item is not a bug — it is step 4.
 
-**4. Home and Money wiring for maintenance.** `remindableMaintenance()` is built and tested and
-nothing outside the reminder queue reads it. Home has no "due for service" section and Money does
-not show what maintenance costs. `plan/phase5-maintenance.md` §12.
+**4. The one thing left unverified: Data Protection on a real device.** `plugins/with-database-backup-exclusion.js`
+now also sets the iOS file protection class — `completeUnlessOpen` on the database directory,
+`complete` on the media sub-folders, and the difference matters (`plan/phase5-maintenance.md` §16).
+The app was rebuilt and relaunched, the backup exclusion and SQLCipher header still check out, and
+the plugin logged nothing (it logs only on failure). But **the simulator stores protection classes
+and never enforces them**, so what is proved is that the attribute is set, not what it does. The
+real test is a physical device: lock it with Keeply backgrounded, come back, and confirm the
+database still reads. That is the case `completeUnlessOpen` exists for.
 
-**5. Small, high-value, any time.** A ledger row on the bill detail screen is still not tappable
-(`saveBillPaymentEdit()` is wired and exported); bills are absent from Home (`useUpcomingBills()`
-exists for exactly that); and `useAsyncRead` is now copied into **seven** features and wants
-extracting across all of them at once.
+**5. Small, high-value, any time** — step 6 below is now the top of the list. Home and Money are
+done (`plan/phase5-maintenance.md` §15): Home has a "Due for service" section and the "This month"
+card's Vehicle line is live. Money itself stays a three-row navigation hub, because maintenance has
+its own tab; the spending breakdown is Home's, which is where §5 puts it.
+
+**6. Small wins — done.** The bill ledger row is tappable and opens a correction sheet
+(`plan/phase3-bills-ui.md`), and `useAsyncRead` is one shared hook in `src/lib/use-async-read.ts`
+instead of six copies. "Bills are absent from Home" was stale and has been struck: `readDashboard`
+reads `upcomingBills()` and Home renders them under Overdue and Upcoming payments.
+
+**7. What is actually left.** Android has never been run. The app icon is still the Expo default.
+Camera capture and the permission-denied paths need a real device (the simulator has no camera), as
+do the two taps inside the file picker. Moving a payment to a different PERIOD has no UI — see the
+bills note for why it was left out of the correction sheet.
 
 **Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
 camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
@@ -526,6 +544,17 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 
 ## Known gaps, deliberately open
 
+- **Restore compares schema versions by TIMESTAMP, and that assumption has now been proven
+  breakable.** `compareBundle` takes the newest `created_at` from the bundle and from
+  `shippedSchemaVersions()`. Both are the journal's `when` — and regenerating a migration file
+  gives the same tag a new one, which is exactly the bug that stopped `0006` applying on a device
+  (`src/db/migration-order.ts`). Two builds at the same commit still agree, so every ordinary
+  restore is fine; what it cannot survive is a bundle whose timestamps moved without its schema
+  changing, which it would call `bundle-newer` and REFUSE — in the code path a user reaches while
+  rescuing a phone. The tag-set comparison that fixed the runner is exact here too, but it calls a
+  squashed-migration bundle `bundle-newer`, so it is a trade rather than a fix. Left deliberately;
+  the reasoning is written at `compareBundle`.
+
 - **13 lower-tier audit findings** in `plan/phase2-3-remediation.md` (Tier 4 form-layer items and the
   latent list): amount-field selection-delete clearing a committed value, pagination re-fetching from
   offset 0, no caret management, `+N more` undercounting past 24.
@@ -533,18 +562,8 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   `deleteBillPayment()` are wired and exported and the `anchor-row` refusal has its sentence, but a
   ledger row on the bill detail screen is not tappable yet. The natural next slice.
 - **Bills are not on Home.** `useUpcomingBills()` exists and is exported for exactly that.
-- **`useAsyncRead` is duplicated SIX times** — subscriptions, receipts, allowance, bills,
-  maintenance, documents. Counted with `grep -rl "function useAsyncRead" src/`, not remembered.
-  ~60 lines of subtle concurrency logic (a generation counter, cancellation) copied per feature.
-  Worth extracting across all six at once; not worth smuggling into whichever one happens to be
-  under construction — 5c and Phase 6 both reused an existing copy rather than adding to the
-  problem sideways.
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
   budgets, no rollover.
-- **Maintenance is not wired into reminders, Home or Money (step 5e).** `dueNext()` exists and is
-  tested — next service date, soonest renewal expiry per item — so the scheduler has its input, but
-  nothing calls it outside the item's own screen. No maintenance reminder is ever scheduled, and
-  `/reminders` still has three kinds.
 - **A maintenance item's odometer is not updated by a cost.** Recording a fill-up at 47,810 km leaves
   `maintenance_items.current_mileage` wherever it was. Deliberate for now — "the latest reading" and
   "what the user last told us" are different facts, and silently overwriting one with the other on
@@ -555,12 +574,11 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   which SQLite can only do by rebuilding the table — and drizzle-kit's rebuild does not drop the
   dependent `notification_settings_live` view first, so the generated RENAME fails. No code reads
   those values, so it waits for step 5e. The reason is written at the enum.
-- **QA findings still open** (`plan/phase6-documents.md`, and the audits' own reports):
-  **an odometer regression makes the analytics print nonsense as fact** — a replaced instrument
-  cluster produced `1008.3 km/L` from four readings, and `AnalyticsGap` has no reason for "these
-  cannot all be right"; validation messages leak camelCase field names ("fuelLitersMilli must be a
-  whole number" under a field labelled Litres); `itemTotals` counts rows it did not total when
-  currencies mix; unicode search is case-sensitive (`lower()` is ASCII-only, project-wide).
+- **The QA audits' findings are all closed.** The four that were open — the odometer regression,
+  validation messages naming camelCase field keys, `itemTotals` counting rows it did not total
+  across currencies, and search folding case for ASCII only — are fixed, each with tests that were
+  mutation-verified. `plan/phase5-maintenance.md` §13 and §14 record what was decided and what it
+  costs. What remains open is listed above and below: none of it came from an audit.
 - **Key rotation is deliberately not built.** `plan/phase7-security.md` §3: the key never leaves
   the device so there is no exposure event it answers, and an interrupted `PRAGMA rekey` leaves a
   file nobody holds the key to.

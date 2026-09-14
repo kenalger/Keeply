@@ -81,6 +81,22 @@ Paths are derived from the constants op-sqlite reports from native code (`IOS_LI
 **two** places and they must match: `DATABASE_DIRECTORY` in `src/db/client.ts` and the `directory`
 option passed to the plugin in `app.json`.
 
+### Data Protection: two classes, on purpose
+
+The same launch hook sets the iOS Data Protection class, because it is the same directory and the
+same "before op-sqlite opens the file" constraint. Without it everything takes the OS default,
+`CompleteUntilFirstUserAuthentication` — readable from the first unlock after a reboot until the
+phone powers off, which is weaker than a passport scan deserves.
+
+| | Class | Why this one |
+| --- | --- | --- |
+| `Application Support/Keeply` (the database) | `completeUnlessOpen` | op-sqlite holds `keeply.db` OPEN for the life of the process. `complete` evicts the file key on lock, so a backgrounded app would hit an I/O error below SQLCipher on return. `completeUnlessOpen` keeps an already-open handle alive across a lock. |
+| `…/Keeply/receipts`, `…/Keeply/documents` (media) | `complete` | Opened on demand, never held. The strongest class costs nothing and means a locked phone cannot be made to give up an ID photo. |
+
+**Not verifiable on the simulator** — it stores protection classes and never enforces them. A
+simulator check proves the attribute was set and nothing about what it does; read it back on a
+device with `FileManager.attributesOfItem(atPath:)[.protectionKey]`.
+
 Verify the iOS exclusion empirically — a plugin that compiles but sets nothing is the failure mode:
 
 ```bash
@@ -151,6 +167,13 @@ npm run test:watch
 - `migration-sql` — `drizzle/*.sql` applied to a real database via `node:sqlite`:
   CHECK constraints, partial unique indexes, the `*_live` views, cascades.
 - `lint-rules` — the lint config itself.
+- `query-plans` — `EXPLAIN QUERY PLAN` over every paged list, asserting none
+  answers a page with `USE TEMP B-TREE FOR ORDER BY`. A plan, not a stopwatch:
+  timing on fixture rows is a coin flip on CI and says nothing about a hundred
+  thousand. It fails when an ORDER BY gains a term and its `*_page_*_idx` in
+  `src/db/schema/` does not — widen the index, do not delete the case. Its
+  second half drops all seventeen indexes and asserts every plan regresses,
+  which proves the guard can fail and that no index in the set is dead weight.
 
 `tests/hooks/resolve-ts.mjs` teaches Node the `@/` alias and extensionless
 imports; `tests/node-types.d.ts` requests `@types/node` for the program.

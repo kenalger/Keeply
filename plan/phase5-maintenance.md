@@ -231,8 +231,10 @@ end to end on the device, not only under `node:sqlite`.
 
 ### Cost-per-kilometre measures the odometer's window, not the ledger's
 
-The distance is `max(odometer) - min(odometer)` over the cost rows that carry one, and the numerator
-is every cost dated inside **that same window**. Dividing the all-time total by the measured distance
+The distance is the span of the odometer over the cost rows that carry one, and the numerator
+is every cost dated inside **that same window**. (`max - min` is what this said until §13 found what
+it does to a car whose instrument cluster was replaced; it is now the endpoints of the latest
+monotonic run.) Dividing the all-time total by the measured distance
 was the obvious alternative and is wrong: it charges kilometres nobody measured with pesos somebody
 spent, so the rate falls every time a reading is recorded, for no reason the user did anything about.
 
@@ -359,3 +361,325 @@ a distinction the schema no longer makes.
 nothing outside the reminder queue and the settings preview reads it. Home has
 no "due for service" section, and Money does not show what maintenance is
 costing this month. That is the natural next slice for this domain.
+
+---
+
+## 13. The odometer regression
+
+A QA audit fed the analytics four readings from one car — `120000`, `121000`, `0`, `500` — the
+shape an instrument cluster leaves behind when it is replaced. `max - min` reported **121,000 km**
+for a car that had done about 1,500, and the fuel walk, which ordered fills by odometer, printed
+**`1008.3 km/L`**. Both stated it as fact. Nothing was flagged, because nothing had been asked.
+
+### Accept the reading, narrow the measurement
+
+The alternative was to refuse the entry: reject a reading lower than the one before it. That makes
+the app refuse the truth. A cluster swap is real, a corrected typo is real, and the user is the one
+holding the car — an app that argues with the dashboard is wrong more often than it is right.
+
+So the reading is always accepted, and the **measurement** is what gets narrowed.
+`latestMonotonicRun()` (`src/features/maintenance/odometer.ts`) sorts readings by date, cuts the
+sequence wherever the odometer goes backwards, and returns only the last segment. Distance comes
+from that segment's endpoints; the fuel walk runs inside it. Four readings become a run of two, and
+the answers become 500 km and a number a car could actually achieve.
+
+### By date, not by odometer
+
+Sorting by odometer was the old fuel walk's ordering, chosen so a backdated glovebox receipt landed
+where its reading said. Across a reset it interleaves two different meters into one nonsense
+sequence — that is the mechanism that produced 1008.3. Date is the truth about *sequence*; the
+odometer is the truth about *distance within a run*, and inside a run the two agree.
+
+The cost of this is honest and small: **a backdated receipt whose reading contradicts its date now
+stops the measurement** rather than being silently re-sorted into agreement. A genuine glovebox
+receipt — older date, lower reading — still slots in and changes nothing, because it is monotonic.
+Contradictory data (40,400 km in August, 40,000 in September) is data the app cannot reconcile, and
+`tests/maintenance-analytics.test.ts` now pins both halves of that.
+
+### The screen says so
+
+`AnalyticsGap` gained `'reset-odometer'`, and when a run is not the whole history both
+cost-per-km and km/L carry `afterReset: true`. The detail screen prefixes their subtitles with
+`since the odometer reset`, so a figure that covers less than the user expects explains itself
+instead of looking wrong.
+
+### What no test can prove
+
+`selectOdometerReadings` and `selectFuelFills` both `ORDER BY "cost_date" ASC, "id" ASC`, and
+`latestMonotonicRun()` sorts by date itself — so a mutation putting the SQL back to
+`ORDER BY odometer` leaves the whole suite green. It was tried; it survived. The ORDER BY stays for
+determinism (two identical calls, two identical arrays) and is written down at both sites as not
+load-bearing, the same treatment `extensionOfUri`'s redundant guard got. Seven of the eight
+mutations in this area do fail a test, and each names one.
+
+---
+
+## 14. Three findings from the audits, and what each cost
+
+The odometer regression (§13) was the one with a product decision in it. These three were smaller
+but each one was wrong in a way the app stated confidently.
+
+### A message that named a variable
+
+Typing a decimal into a field labelled **Litres** answered:
+
+```
+fuelLitersMilli must be a whole number
+```
+
+Three generic helpers in `maintenance/validation.ts` and two in `documents/validation.ts` were
+interpolating the field KEY into the sentence, while every hand-written message beside them was
+already plain English. Maintenance and Documents render `error.message` directly under the input
+that `error.field` names — unlike Bills, which has a `ui/messages.ts` and whose data-layer message
+is explicitly developer-facing — so whatever the validator wrote was what the user read.
+
+The message does not need the name, because the form has already put it under the right input. And
+it cannot have it: `identifier` is labelled "Plate number" or "Serial number" depending on the
+item's kind, so there is no fixed map from key to label at that layer. `counter()` also split into
+three branches on the way — a fraction, a negative and an over-large value are three different
+mistakes and now say so.
+
+`tests/validation-messages.test.ts` drives every validator with bad input and rejects any message
+containing a camelCase token or its own field key. Grepping for `` `${field}` `` would have passed
+the day someone wrote `` `${name} is too long` ``.
+
+### A total that counted what it had not added
+
+`itemTotals()` summed ONE currency and counted ALL of them, so three ₱ costs and two $ costs
+rendered as **"₱5,000.00 across 5 entries"**. There is no exchange rate on this device and no way
+to get one (§1), so the answer is not to add them.
+
+`costCount`, `damagedCount` and `otherCurrencyCount` now partition the ledger — every cost row is in
+exactly one, and their sum equals `listCosts().total`, which a test asserts against a figure counted
+by a different query. The card says what is not in the figure: *"2 entries in USD are not in this
+total."* `describeSpend()` makes that decision, pure, because making it inline in the screen is what
+produced the bug.
+
+One honest wart, now written at the SQL: the primary currency is `ORDER BY total_minor DESC`, which
+compares minor units across currencies (¥5000 outranks ₱1.00). It is a heuristic for "the currency
+this item is mostly recorded in" and it never makes a total wrong — every total is reported with
+its own currency.
+
+### A search that stopped at z
+
+`LIKE` folds case for ASCII and only ASCII, and `lower()` folds only ASCII too — so
+`lower(x) LIKE lower(?)`, which Documents and Maintenance both used, was an elaborate way of writing
+a plain `LIKE`. A receipt from `MUÑOZ MARKET` was not found by `muñoz`. No error, no hint, just a
+row that was not there — the failure shape that makes someone believe the app lost their data.
+Parañaque and Las Piñas are cities of about a million people each.
+
+The usual fix is a `*_folded` column written by the app, because JavaScript knows Unicode and SQLite
+does not. That is a migration on five tables, a second copy of every searchable string on disk, and
+a write path that rots silently the day a patch updates `name` without refreshing the copy.
+
+`GLOB` takes character classes and compares them by code point, which `LIKE` does not — so
+`*[mM][uU][ñÑ][oO][zZ]*` works with no schema change and no write path at all. `src/lib/search.ts`
+folds the needle in JavaScript and emits the pattern; all five features call it. `GLOB` has no
+`ESCAPE` clause, so its three metacharacters are escaped as classes of their own (`[*]`, `[?]`,
+`[[]`). The query plan is unchanged: `GLOB '*x*'` scans exactly as `LIKE '%x%'` did.
+
+Two things this deliberately does not do. A letter whose other case is two characters (`ß` →
+`SS`) stays literal, because `[ßSS]` is a class of three that matches one — a wrong answer is worse
+than a missed one. And a term over 2,000 characters is truncated rather than thrown: SQLite refuses
+a pattern over 50,000, and a truncated pattern returns a superset, which is a far better failure for
+a search box than an exception.
+
+The test that mattered most was the one that nearly did not exist. `globContains('🚗')` proves
+nothing about how the string is walked — a surrogate half has no case and is not a metacharacter, so
+splitting the pair and rejoining it returns the same text. A mutation to `.split('')` survived until
+a **cased** astral character (Deseret U+10400/U+10428) was added at both the pattern level and
+against real SQLite.
+
+### What running it found that reading it did not
+
+The three fixes above were verified on the simulator against op-sqlite's SQLCipher build, which is
+a different SQLite from the `node:sqlite` the suite uses — `GLOB` folding `[ñÑ]` by code point was
+a prediction until then. It holds: `muñoz` and `MUÑOZ` both find `MUÑOZ MARKET`, `PARAÑAQUE` finds
+`Parañaque`, `škoda` finds `ŠKODA`, ASCII is unchanged, and a typed `*` matches only itself.
+
+The spend card rendered as designed. One card lower, the screen showed **`2026` twice** under a red
+*"Encountered two children with the same key"* toast. `selectTotalsByYear` groups by year AND
+currency — it has to — so an item with ₱ and $ costs in one year returns two rows, and the screen
+used the year as both the React key and the title. Unreachable until an item has two currencies,
+which is the case the card above it had just been fixed for. `describeYearRows()` keys on
+year-plus-currency and appends the currency to the subtitle only where a year repeats; a
+single-currency item, which is nearly all of them, is not captioned with a code already beside the
+amount.
+
+`byType` has the same shape — grouped by type AND currency — and no consumer. Whoever renders it
+needs the same key.
+
+
+---
+
+## 15. Home and Money
+
+The wiring §12 left open. `remindableMaintenance()` was built, tested and read by nothing outside
+the reminder queue; the Vehicle line on Home's "This month" card had been structurally zero since
+Phase 2.
+
+### The Vehicle line
+
+`maintenanceTotals(fromISO, toISO)` is the one read in this feature that spans every item rather
+than one. Three decisions in a small query:
+
+**No `item_id`, no join to the item, no `is_active`.** A retired car's September fuel is still money
+that left the account in September. `is_active` decides whether something asks to be *serviced*; it
+is not a claim that its history did not happen. What IS excluded is a deleted item's costs, and that
+exclusion belongs to the `*_live` view's live-parent rule rather than to anything this query says.
+
+**`primary` is the DEFAULT currency, not the largest.** `byCurrency` is ordered by minor units
+descending, so ₱1.00 and US$90.00 puts USD first — and taking the first row would hand Home 9,000
+minor units of dollars, which `<Amount/>` renders under a peso sign as ₱90.00. A 90x error in the
+wrong currency, stated as fact. It is zeroed rather than absent when there are no peso rows, because
+Home renders four fixed buckets and a missing one collapses a row.
+
+**Receipts categorised `vehicle` stay in "Other", and that is now a decision rather than an
+oversight.** A receipt and a maintenance cost are different records in different tables. The one
+thing a user can actually do wrong is enter the same purchase as both; today that lands once in
+Other and once in Vehicle, where the two figures at least disagree visibly. Moving them would put
+the same peso in the same line twice, which looks correct and is not. Re-bucketing receipts is a
+receipts decision, and `receiptSums.byCategory` already has the numbers when it is made.
+
+### Due for service
+
+One section, holding services falling due and cover expiring, between Expiring documents and
+Upcoming subscriptions. The late ones stay in it rather than moving to "Overdue": that section is
+money owed, and a car whose service is a fortnight late is a different kind of late from a bill.
+`attentionCount` counts them, so the header cannot say "all caught up" over a list of things that
+are not.
+
+The rows carry **no amount**, and `hasNoRecords` is what that broke: its money test could not see
+them, so an install whose only record was a car with a service due reported "never recorded
+anything" and got the first-run screen. The test for that is in `tests/dashboard-sections.test.ts`.
+
+### Two words in two shapes
+
+The first draft titled the row with `maintenanceReminderEntity().title` — the notification's whole
+sentence — so that a lock screen and Home could never call the same thing by two different names.
+On the device both rows truncated: *"Oil change and filter…"*, *"Insurance for Vios zz…"*.
+
+A lock screen has no context and needs the sentence. A row under a "Due for service" header has a
+subtitle. So `maintenanceDueLabel()` now exposes the *word* — "Oil change and filter", "Insurance" —
+and the notification composes its sentence from it while the row puts the item in the subtitle. One
+source for the wording, which is what actually had to be shared; two layouts, which never did.
+
+### Home was watching two domains and reading five
+
+Found while wiring this. `useDashboardData` re-read on the `subscriptions` and `receipts` revisions
+only, so paying a bill, filing a document or recording a service left Home showing the state before
+it until something unrelated happened to a subscription. Every read now has a watcher beside it.
+
+### The pure half had to come out first
+
+`attentionCount` forgetting a section is invisible in a screenshot and fatal to the point of the
+screen — and no test could reach it, because importing `@/lib/dashboard` pulls in every feature
+barrel and through them op-sqlite and expo-file-system, which `node --test` cannot load.
+
+`src/lib/dashboard-shape.ts` now holds the types, the two dev fixtures, the three predicates and the
+month arithmetic; `dashboard.ts` holds the hook and the reads and re-exports all of it, so screens
+still import from one place. `monthBounds` came out with it and is now tested — it decides the
+window for the receipt totals *and* the maintenance totals, and an off-by-one there makes both
+figures quietly short by a day in a way that looks like the user simply spent less.
+
+---
+
+## 16. Scale: paging indexes, debounced search, data protection
+
+Three asks — caching, rate limiting, encryption — and in an app with no server two of them mean
+something different from what they mean in a web service. What each turned out to be:
+
+### Caching → indexes, because the page was the cache miss
+
+`EXPLAIN QUERY PLAN` over every list query in the app said `USE TEMP B-TREE FOR ORDER BY` for **all
+fifteen of them**. SQLite can only walk an ORDER BY for free when an index matches it
+column-for-column, direction-for-direction and collation-for-collation; otherwise it reads every
+matching row, sorts the lot in a temporary B-tree, and throws all but the forty a page asked for
+away. The answers were right. The cost grew with the table.
+
+That is the worst shape a performance bug can have here: invisible on ten fixture rows, invisible in
+every other test, and arriving years later as "it got slow" on the device holding the most data.
+
+`drizzle/0005` adds seventeen partial `*_page_*_idx` indexes, one per ORDER BY a screen can ask for.
+They are declared as `sql` fragments rather than `.on(t.column)` because the direction and the
+collation are the entire point — an index on `name` cannot order `name COLLATE NOCASE`, and one on
+`(purchase_date)` cannot resolve the tiebreakers after it. Two carry a leading expression,
+`("expiry_date" is null) asc`, which is the nulls-LAST rule: SQLite puts NULLs first in an ASC index
+and "no expiry" has to sort after every real date.
+
+Measured through the real `selectReceipts`, page cost goes from growing to flat:
+
+| rows | before | after |
+| --- | --- | --- |
+| 1,000 | 0.050 ms | 0.042 ms |
+| 10,000 | 0.068 ms | 0.036 ms |
+| 50,000 | 0.179 ms | 0.037 ms |
+
+The absolute numbers are small today and that is the point — this is an asymptotic fix, not a
+speed-up. What it trades is write time: a bulk insert of 50,000 rows goes 137 ms → 219 ms, and a
+single insert 0.0039 ms → 0.0077 ms. For an app where a user records a few rows a day and a bulk
+insert happens once, at restore, that is the right side of the trade.
+
+`tests/query-plans.test.ts` is the guard, and it asserts the PLAN rather than a timing — a stopwatch
+on fixture rows is a coin flip on CI and says nothing about a hundred thousand. Its second half
+DROPS all seventeen indexes and asserts every plan goes back to sorting, which proves both that the
+guard can fail and that no index in the set is dead weight.
+
+Verified on the device against op-sqlite's own SQLCipher build, not just `node:sqlite`: migration
+0005 applied to a database with data in it, all seventeen indexes exist, and
+`SCAN receipts USING INDEX receipts_page_date_idx` is what the real engine reports.
+
+### Rate limiting → debouncing the one read that cannot use an index
+
+There is no network and no server, so the only thing worth limiting is work the app gives itself.
+After 0005, **search is the only read left in the app that cannot use an index**: `GLOB '*term*'`
+has no left anchor, so it reads every live row and always will. It was running on every keystroke —
+a six-letter word cost six list queries and six counts, five of them already stale on arrival.
+`useAsyncRead` discarded the stale results correctly; not running them is the fix.
+
+`useDebounced` (200 ms) sits between the state and the query in all five search boxes. The field
+stays bound to the raw value, so typing is instant. The empty-state predicates were moved onto the
+debounced value too — "Nothing matches that search" against a search that has not run yet is a
+screen contradicting itself for 200 ms. On the expenses screen ONLY `search` is debounced: a
+category chip is a decision the user already made and applies on the tap.
+
+Measured on the device by wrapping the store's `all()`:
+
+| | queries | reads |
+| --- | --- | --- |
+| one settled change | 5 | 1 |
+| 5 keystrokes, 80 ms apart (typing) | 5 | **1** |
+| 5 keystrokes, 400 ms apart (deliberate) | 25 | 5 |
+
+Which is the whole design: a pause means "I meant that", an inter-key gap does not.
+
+### Encrypting → the database already was; the media was not
+
+The database has been SQLCipher-encrypted with a device-bound Keychain key
+(`WHEN_UNLOCKED_THIS_DEVICE_ONLY`) since Phase 1, and the app-lock's attempt throttling is the OS's
+own biometric lockout, which is the correct place for it — reimplementing either would be worse than
+what is there. Neither needed work.
+
+The gap was the **media**. Receipt photos, passport scans and IDs sat under iOS's default protection
+class, `CompleteUntilFirstUserAuthentication`: encrypted at rest, but readable from the first unlock
+after a reboot until the phone powers off.
+
+`plugins/with-database-backup-exclusion.js` already runs Swift at launch against exactly that
+directory for the backup exclusion, so the protection class is set in the same place, for the same
+"before op-sqlite opens the file" reason. **Two different classes, deliberately:**
+
+- The **database** directory gets `completeUnlessOpen`. Not `complete` — op-sqlite holds `keeply.db`
+  open for the life of the process, and `complete` evicts the file key when the phone locks, so a
+  user who locks their phone with Keeply backgrounded would come back to an I/O error from below
+  SQLCipher with no useful message. `completeUnlessOpen` protects the file at rest and keeps an
+  already-open handle alive across a lock, which is precisely this file's lifecycle.
+- **Media sub-folders** get `complete`. Those files are opened on demand and closed again, never
+  held, so the strongest class costs nothing and means a locked phone cannot be made to give up an
+  ID photo even with the filesystem in hand.
+
+Two honest limits, both written at the plugin. The media sub-folders are created by JavaScript, so
+they are stamped on the *next* launch rather than the one that created them — media written today
+inherits `completeUnlessOpen` from the parent until then, which is still stronger than the OS
+default it replaces. And **none of this is verifiable on the simulator**, which stores protection
+classes and never enforces them: a simulator test proves the attribute was set and nothing about
+what it does. That one needs a physical device.
