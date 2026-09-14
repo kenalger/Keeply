@@ -10,7 +10,7 @@
  * polls, nothing subscribes to SQLite, and no write ever renders a spinner
  * (§25) — `loading` is the FIRST read of a screen and nothing else.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import {
   costPerKilometre,
@@ -43,67 +43,8 @@ import {
   type MaintenanceTypeTotal,
   type MaintenanceYearTotal,
 } from '@/features/maintenance';
-import { log } from '@/lib/log';
+import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
 import { useRevision } from '@/stores/revision-store';
-
-export type AsyncStatus = 'loading' | 'ready' | 'error';
-
-export interface AsyncValue<T> {
-  status: AsyncStatus;
-  /** The last successful value. `null` until the first read resolves. */
-  value: T | null;
-  error: unknown;
-  reload: () => void;
-}
-
-/**
- * Run an async read, re-running it when `deps` change, last read wins.
- *
- * The generation counter is not ceremony: two reads started a frame apart can
- * resolve out of order, and without it a fast filter change can be overwritten
- * by the slower read it replaced. Typing in the search box is exactly that.
- */
-function useAsyncRead<T>(read: () => Promise<T>, deps: readonly unknown[]): AsyncValue<T> {
-  const [state, setState] = useState<{ status: AsyncStatus; value: T | null; error: unknown }>({
-    status: 'loading',
-    value: null,
-    error: null,
-  });
-  const [nonce, setNonce] = useState(0);
-  const generation = useRef(0);
-
-  const readRef = useRef(read);
-  readRef.current = read;
-
-  useEffect(() => {
-    generation.current += 1;
-    const mine = generation.current;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const value = await readRef.current();
-        if (cancelled || mine !== generation.current) return;
-        setState({ status: 'ready', value, error: null });
-      } catch (error) {
-        if (cancelled || mine !== generation.current) return;
-        // No identifier reaches this line: the data layer never puts one in an
-        // error, and `log.error` redacts by key name regardless (§10).
-        log.error('maintenance: read failed', error);
-        setState((previous) => ({ status: 'error', value: previous.value, error }));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
-
-  const reload = useCallback(() => setNonce((value) => value + 1), []);
-
-  return { status: state.status, value: state.value, error: state.error, reload };
-}
 
 export interface MaintenanceListView {
   status: AsyncStatus;
@@ -140,7 +81,7 @@ export function useMaintenanceList(filter: MaintenanceItemFilter): MaintenanceLi
     [search, kind, isActive],
   );
 
-  const read = useAsyncRead(() => listItems(stable), [stable, revision]);
+  const read = useAsyncRead(() => listItems(stable), [stable, revision], 'maintenance');
 
   return {
     status: read.status,
@@ -155,7 +96,7 @@ export function useMaintenanceList(filter: MaintenanceItemFilter): MaintenanceLi
 /** One item. `null` while loading, and on the error path. */
 export function useMaintenanceItem(id: string): AsyncValue<MaintenanceItemRecord> {
   const revision = useRevision('maintenance');
-  return useAsyncRead(() => getItem(id), [id, revision]);
+  return useAsyncRead(() => getItem(id), [id, revision], 'maintenance');
 }
 
 /**
@@ -167,7 +108,7 @@ export function useMaintenanceItem(id: string): AsyncValue<MaintenanceItemRecord
  */
 export function useItemTotals(id: string): AsyncValue<MaintenanceItemTotals> {
   const revision = useRevision('maintenance');
-  return useAsyncRead(() => itemTotals(id), [id, revision]);
+  return useAsyncRead(() => itemTotals(id), [id, revision], 'maintenance');
 }
 
 /** The kind filter's value, where `null` means "every kind". */
@@ -289,6 +230,7 @@ function useChildList<T>(
             hasMore: p.hasMore,
           }))(await read({ limit: preview, offset: 0 })),
     [itemId, preview, revision, requested],
+      'maintenance',
   );
 
   const loadMore = useCallback(() => setPages((current) => current + 1), []);
@@ -367,6 +309,7 @@ function useOptionalRecord<T>(
   return useAsyncRead<T | null>(
     () => (id === undefined || id === '' ? Promise.resolve(null) : read(id)),
     [id, revision],
+    'maintenance',
   );
 }
 
@@ -389,7 +332,7 @@ export function useRenewal(
 /** What is due next on one item. */
 export function useDueNext(id: string): AsyncValue<MaintenanceDueNext> {
   const revision = useRevision('maintenance');
-  return useAsyncRead(() => dueNext(id), [id, revision]);
+  return useAsyncRead(() => dueNext(id), [id, revision], 'maintenance');
 }
 
 /**
@@ -420,7 +363,7 @@ export function useItemAnalytics(id: string): AsyncValue<ItemAnalytics> {
       fuelEfficiency(id),
     ]);
     return { totals, byYear, byType, costPerKm, fuel };
-  }, [id, revision]);
+  }, [id, revision], 'maintenance');
 }
 
 /**
@@ -439,5 +382,9 @@ export function useRemindableMaintenance(
   return useAsyncRead(
     () => remindableMaintenance(withinDays, limit, excludeOverdue),
     [withinDays, limit, excludeOverdue, revision],
+  'maintenance',
   );
 }
+
+// Re-exported so every screen keeps importing these from its own feature.
+export type { AsyncStatus, AsyncValue };

@@ -13,8 +13,10 @@
  *
  * NO STRING INTERPOLATION OF USER DATA. Every value is a bound parameter; the
  * only text this file builds is column and view names it owns. A search term
- * is escaped for LIKE (see `escapeLike`) and then bound.
+ * becomes a GLOB pattern via `globContains()` and is then bound.
  */
+import { globContains } from '@/lib/search';
+
 import type { SqlStatement, SqlValue } from './store';
 import {
   DEFAULT_PAGE_SIZE,
@@ -37,14 +39,6 @@ const ITEM_COLUMNS =
   '"id", "name", "kind", "vehicle_type", "brand", "model", "year", "identifier",' +
   ' "purchase_date", "current_mileage", "notes", "is_active", "created_at", "updated_at"';
 
-/**
- * `%`, `_` and the escape character itself, so a search for "50%" matches a
- * literal "50%" instead of everything.
- */
-function escapeLike(term: string): string {
-  return term.replace(/[\\%_]/g, (char) => `\\${char}`);
-}
-
 interface Clause {
   readonly text: string;
   readonly params: readonly SqlValue[];
@@ -64,11 +58,14 @@ function whereFor(filter: MaintenanceItemFilter): Clause {
 
   const search = filter.search?.trim();
   if (search !== undefined && search.length > 0) {
-    const pattern = `%${escapeLike(search)}%`;
+    // GLOB, not `lower() LIKE lower()`: BOTH sides of that folded ASCII only,
+    // so it was an elaborate way of writing a plain LIKE and `MUÑOZ` never
+    // matched `muñoz`. See `globContains()`.
+    const pattern = globContains(search) ?? '*';
     parts.push(
-      '(lower("name") LIKE lower(?) ESCAPE \'\\\'' +
-        ' OR lower(coalesce("brand", \'\')) LIKE lower(?) ESCAPE \'\\\'' +
-        ' OR lower(coalesce("model", \'\')) LIKE lower(?) ESCAPE \'\\\')',
+      '("name" GLOB ?' +
+        ' OR coalesce("brand", \'\') GLOB ?' +
+        ' OR coalesce("model", \'\') GLOB ?)',
     );
     params.push(pattern, pattern, pattern);
   }
@@ -154,6 +151,14 @@ export function selectItem(id: string): SqlStatement {
  * dynamically typed, so a float sits happily past the `> 0` CHECK, and summing
  * it would produce a total no `MinorUnits` can hold. Excluded in SQLite rather
  * than in JavaScript, and counted separately so a screen can say so out loud.
+ *
+ * ORDER BY total_minor DESC picks the primary currency, and it compares MINOR
+ * UNITS across currencies — ¥5000 outranks ₱1.00 because 5000 > 100, which is
+ * not a claim about value. It is a heuristic for "the currency this item is
+ * mostly recorded in", and the honest one: there is no exchange rate on this
+ * device and no way to get one (§1). Which group wins never makes a total
+ * wrong — every total is reported with the currency it is in, and the rows
+ * outside it are counted separately rather than folded in.
  */
 export function selectItemTotals(itemId: string): SqlStatement {
   return {
@@ -819,21 +824,38 @@ export function selectTotalsByType(itemId: string): SqlStatement {
 }
 
 /**
- * The span the odometer actually covers, and the dates at either end.
+ * Every odometer reading, oldest first.
  *
- * `typeof("odometer") = 'integer'` for the same reason the sums carry it: a
- * float sits happily past a `>= 0` CHECK, and one would make `max - min` a
- * fractional distance that a `number` divides into an unrepeatable rate.
+ * ── ROWS, NOT AN AGGREGATE ─────────────────────────────────────────────────
+ * This was `min/max(odometer)` with the dates at either end, and that is wrong
+ * the moment an odometer goes BACKWARDS — a replaced instrument cluster, or a
+ * corrected typo. Readings of 120,000 → 121,000 → 0 → 500 reported 121,000 km
+ * travelled for a car that had done about 1,500.
+ *
+ * SQLite cannot express "the latest stretch over which it only went forward"
+ * without a window function and a subquery nobody could review, so the rows
+ * come back and `latestMonotonicRun()` segments them — where a test can drive
+ * it with a literal array.
+ *
+ * ORDERED BY DATE for determinism only — `latestMonotonicRun()` sorts by date
+ * itself, so no test can tell this ORDER BY from any other. It is here so two
+ * identical calls return two identical arrays.
+ *
+ * `typeof = 'integer'` is the damaged-row guard, and that one IS load-bearing:
+ * a float would make the distance fractional.
+ *
+ * Unbounded, like `selectFuelFills` and for the same reason — a decade of
+ * weekly fills is a few hundred rows, and a LIMIT would silently truncate the
+ * history the segmentation is reading.
  */
-export function selectOdometerWindow(itemId: string): SqlStatement {
+export function selectOdometerReadings(itemId: string): SqlStatement {
   return {
     text:
-      'SELECT min("odometer") AS "min_odometer", max("odometer") AS "max_odometer",' +
-      ' min("cost_date") AS "from_date", max("cost_date") AS "to_date",' +
-      ' count(*) AS "reading_count"' +
+      'SELECT "id", "cost_date", "odometer"' +
       ` FROM "${COSTS_LIVE_VIEW}"` +
       ' WHERE "item_id" = ? AND "odometer" IS NOT NULL' +
-      " AND typeof(\"odometer\") = 'integer'",
+      " AND typeof(\"odometer\") = 'integer'" +
+      ' ORDER BY "cost_date" ASC, "id" ASC',
     params: [itemId],
   };
 }
@@ -843,6 +865,10 @@ export function selectOdometerWindow(itemId: string): SqlStatement {
  *
  * The numerator of cost-per-km. Bounds are INCLUSIVE: a cost recorded on the
  * same day as the closing odometer reading was spent covering that distance.
+ *
+ * After an odometer reset the window is the LATEST run's, so spend from before
+ * the reset is excluded along with the distance — charging old pesos to new
+ * kilometres is the same error in the other direction.
  */
 export function selectTotalsInWindow(
   itemId: string,
@@ -858,6 +884,36 @@ export function selectTotalsInWindow(
       ' WHERE "item_id" = ? AND "cost_date" >= ? AND "cost_date" <= ?' +
       ' GROUP BY "currency" ORDER BY "total_minor" DESC, "currency" ASC',
     params: [itemId, fromISO, toISO],
+  };
+}
+
+/**
+ * What EVERY item cost inside a date window, grouped by currency.
+ *
+ * `selectTotalsInWindow` answers the same question for one item and is the
+ * numerator of cost-per-km; this one is Home's "This month · Vehicle" line and
+ * spans the whole ledger.
+ *
+ * NO `item_id` PREDICATE AND NO JOIN TO THE ITEM. A retired car's fuel is still
+ * money that left the account this month — `is_active` decides whether an item
+ * still asks to be serviced (see `selectRemindableServices`), not whether its
+ * history happened. The `*_live` view already excludes costs whose parent item
+ * was deleted, which is the exclusion that does belong here.
+ *
+ * Bounds are INCLUSIVE, matching every other window in this file and the one
+ * the receipt totals use for the same calendar month.
+ */
+export function selectSpendInWindow(fromISO: string, toISO: string): SqlStatement {
+  return {
+    text:
+      'SELECT "currency",' +
+      ` ${sumOfIntegers('amount_minor')} AS "total_minor",` +
+      ' count(*) AS "cost_count",' +
+      ` ${countOfNonIntegers('amount_minor')} AS "damaged_count"` +
+      ` FROM "${COSTS_LIVE_VIEW}"` +
+      ' WHERE "cost_date" >= ? AND "cost_date" <= ?' +
+      ' GROUP BY "currency" ORDER BY "total_minor" DESC, "currency" ASC',
+    params: [fromISO, toISO],
   };
 }
 
@@ -879,7 +935,16 @@ export function selectFuelFills(itemId: string): SqlStatement {
       ' AND "odometer" IS NOT NULL AND "fuel_liters_milli" IS NOT NULL' +
       " AND typeof(\"odometer\") = 'integer'" +
       " AND typeof(\"fuel_liters_milli\") = 'integer'" +
-      ' ORDER BY "odometer" ASC, "cost_date" ASC, "id" ASC',
+      // By date, for a DETERMINISTIC result — not because the walk depends on
+      // it. `latestMonotonicRun()` sorts by date itself, so a mutation that
+      // puts this back to `ORDER BY odometer` leaves every test green; it was
+      // tried. The ordering is here so two identical calls return two identical
+      // arrays, which is worth having when debugging a figure that looks wrong.
+      //
+      // What the walk DOES depend on is segmentation, and that is in the walk.
+      // Ordering by odometer used to be load-bearing and was the bug: across a
+      // cluster reset it scrambled the sequence and printed 1008.3 km/L.
+      ' ORDER BY "cost_date" ASC, "id" ASC',
     params: [itemId],
   };
 }

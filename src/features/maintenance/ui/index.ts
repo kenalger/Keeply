@@ -20,9 +20,13 @@ export {
   VEHICLE_TYPE_LABELS,
   VEHICLE_TYPE_OPTIONS,
   describeItem,
+  describeSpend,
+  describeYearRows,
   formatEfficiency,
   formatKilometres,
   formatLitres,
+  type SpendSummary,
+  type YearRow,
 } from './labels';
 export {
   useCost,

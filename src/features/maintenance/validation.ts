@@ -5,7 +5,16 @@
  * constraints are the last line, not the first: a constraint failure arrives as
  * a driver error naming a constraint, which is not something to show a user.
  *
- * ── EVERY MESSAGE NAMES A FIELD AND NEVER A VALUE ──────────────────────────
+ * ── A MESSAGE NAMES NEITHER THE VALUE NOR THE FIELD ───────────────────────
+ * The error carries `field` as a CODE key and the form matches it against its
+ * own inputs, so the message is already rendered under the labelled input that
+ * caused it — it does not have to name anything. It must not: the key is an
+ * identifier (`fuelLitersMilli`), the label is English (Litres), and using one
+ * as the other is how "fuelLitersMilli must be a whole number" appeared under
+ * a field labelled Litres. Two of these labels are not even fixed — the same
+ * key is "Plate number" or "Serial number" depending on the kind — so there is
+ * no map from key to label that this layer could hold.
+ *
  * An identifier is a plate or a serial (§10) and notes are user data. "Enter a
  * name" is a usable message; quoting what they typed back at them puts it in a
  * string that may end up in a log.
@@ -74,7 +83,9 @@ function text(value: string | null | undefined, max: number, field: string): str
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   if (trimmed.length > max) {
-    throw new MaintenanceError('invalid-field', `${field} is too long`, field);
+    // The limit is a constant of this app, not something the user typed, so it
+    // is safe to state and it is the only part of this that is actionable.
+    throw new MaintenanceError('invalid-field', `Keep this under ${max} characters`, field);
   }
   return trimmed;
 }
@@ -86,8 +97,14 @@ function counter(
   max = Number.MAX_SAFE_INTEGER,
 ): number | null {
   if (value === null || value === undefined) return null;
-  if (!Number.isInteger(value) || value < 0 || value > max) {
-    throw new MaintenanceError('invalid-field', `${field} must be a whole number`, field);
+  if (!Number.isInteger(value)) {
+    throw new MaintenanceError('invalid-field', 'Enter a whole number', field);
+  }
+  if (value < 0) {
+    throw new MaintenanceError('invalid-field', 'That cannot be negative', field);
+  }
+  if (value > max) {
+    throw new MaintenanceError('invalid-field', 'That is larger than this can hold', field);
   }
   return value;
 }
@@ -95,7 +112,7 @@ function counter(
 function calendarDate(value: string | null | undefined, field: string): string | null {
   if (value === null || value === undefined || value === '') return null;
   if (!isValidCalendarDate(value)) {
-    throw new MaintenanceError('invalid-field', `${field} is not a real date`, field);
+    throw new MaintenanceError('invalid-field', 'That is not a real date', field);
   }
   return value;
 }

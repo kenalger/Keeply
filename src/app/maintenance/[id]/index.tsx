@@ -27,6 +27,8 @@ import {
   RENEWAL_KIND_LABELS,
   VEHICLE_TYPE_LABELS,
   describeItem,
+  describeSpend,
+  describeYearRows,
   formatEfficiency,
   formatKilometres,
   removeItem,
@@ -180,6 +182,9 @@ export default function MaintenanceItemScreen() {
   }
 
   const spend = analytics.value;
+  // Which captions the cost card shows is a decision about the three buckets in
+  // `MaintenanceItemTotals`, not about rendering — so `describeSpend` makes it.
+  const summary = spend === null ? null : describeSpend(spend.totals);
   const dueNext = due.value;
   const vehicle = isVehicle(record.kind);
   const hasDue =
@@ -278,23 +283,34 @@ export default function MaintenanceItemScreen() {
 
       <Block title="What it has cost" style={styles.block}>
         <Card style={styles.spend}>
-          {spend === null || spend.totals.costCount === 0 ? (
+          {spend === null || summary === null || summary.isEmpty ? (
             <Text variant="caption" color="textSecondary">
               Nothing recorded against it yet.
             </Text>
           ) : (
             <>
-              <Amount
-                minor={spend.totals.totalMinor}
-                currency={spend.totals.currency}
-                size="lg"
-              />
-              <Text variant="caption" color="textSecondary">
-                {`across ${spend.totals.costCount} ${spend.totals.costCount === 1 ? 'entry' : 'entries'}`}
-              </Text>
-              {spend.totals.damagedCount === 0 ? null : (
+              {summary.showsAmount ? (
+                <Amount
+                  minor={spend.totals.totalMinor}
+                  currency={spend.totals.currency}
+                  size="lg"
+                />
+              ) : null}
+              {summary.countLine === null ? null : (
+                <Text variant="caption" color="textSecondary">
+                  {summary.countLine}
+                </Text>
+              )}
+              {summary.damagedLine === null ? null : (
                 <Text variant="caption" color="textTertiary">
-                  {`${spend.totals.damagedCount} could not be added up.`}
+                  {summary.damagedLine}
+                </Text>
+              )}
+              {/* Two currencies cannot be added, so the rows outside the one
+                  above are named rather than folded in (§30). */}
+              {summary.otherCurrencyLine === null ? null : (
+                <Text variant="caption" color="textTertiary">
+                  {summary.otherCurrencyLine}
                 </Text>
               )}
             </>
@@ -305,11 +321,13 @@ export default function MaintenanceItemScreen() {
             headed "By year" restates the figure directly above it. */}
         {spend !== null && spend.byYear.length > 1 ? (
           <Card style={styles.stacked}>
-            {spend.byYear.map((year) => (
+            {describeYearRows(spend.byYear).map((year) => (
               <Row
-                key={year.year}
-                title={year.year}
-                subtitle={`${year.costCount} ${year.costCount === 1 ? 'entry' : 'entries'}`}
+                // Year AND currency: `selectTotalsByYear` groups by both, so an
+                // item with costs in two currencies returns 2026 twice.
+                key={year.key}
+                title={year.title}
+                subtitle={year.subtitle}
                 value={<Amount minor={year.totalMinor} currency={year.currency} size="sm" />}
                 valueLabel={amountLabel(year.totalMinor, { currency: year.currency })}
                 chevron={false}
@@ -326,7 +344,12 @@ export default function MaintenanceItemScreen() {
               <Row
                 icon="chartBar"
                 title="Cost per kilometre"
-                subtitle={`over ${formatKilometres(spend.costPerKm.value.distanceKm)}, ${formatDate(spend.costPerKm.value.fromISO)} – ${formatDate(spend.costPerKm.value.toISO)}`}
+                subtitle={`${
+                  // A narrowed window shown as the whole history is the same
+                  // lie in a smaller font. The reset is why the figure covers
+                  // less than the user expects, so the row says it.
+                  spend.costPerKm.value.afterReset ? 'since the odometer reset · ' : ''
+                }over ${formatKilometres(spend.costPerKm.value.distanceKm)}, ${formatDate(spend.costPerKm.value.fromISO)} – ${formatDate(spend.costPerKm.value.toISO)}`}
                 value={
                   <Amount
                     minor={spend.costPerKm.value.costPerKmMinor}
@@ -355,7 +378,9 @@ export default function MaintenanceItemScreen() {
               <Row
                 icon="fuel"
                 title="Fuel"
-                subtitle={`${formatKilometres(spend.fuel.value.distanceKm)} on ${spend.fuel.value.fillCount} ${spend.fuel.value.fillCount === 1 ? 'fill' : 'fills'}`}
+                subtitle={`${
+                  spend.fuel.value.afterReset ? 'since the odometer reset · ' : ''
+                }${formatKilometres(spend.fuel.value.distanceKm)} on ${spend.fuel.value.fillCount} ${spend.fuel.value.fillCount === 1 ? 'fill' : 'fills'}`}
                 value={
                   <Text variant="body">
                     {formatEfficiency(spend.fuel.value.kilometresPerLitre)}

@@ -48,10 +48,15 @@ function withDb(): { db: ReturnType<typeof createMigratedDatabase>; api: Mainten
 }
 
 /** A fill-up fixture. Positional, because these read as a table. */
-function fill(odometer: number, litres: number, isFullTank: boolean, costDate = '2026-01-01'): FuelFill {
+function fill(
+  odometer: number,
+  litres: number,
+  isFullTank: boolean,
+  dateISO = '2026-01-01',
+): FuelFill {
   return {
     id: `f-${odometer}`,
-    costDate,
+    dateISO,
     odometer,
     fuelLitersMilli: litres * 1000,
     isFullTank,
@@ -394,19 +399,38 @@ describe('tank-to-tank fuel efficiency', () => {
     assert.equal(result.available === false && result.gap, 'no-distance');
   });
 
-  test('the window’s dates are shown in order even when one was backdated', () => {
-    // Ordered by ODOMETER, because the reading is what the distance is measured
-    // with. A receipt found in a glovebox can put the later reading on the
-    // earlier day; the window is still right, and the two dates are sorted so a
-    // screen never reads "1 September to 4 August".
+  test('a receipt found in a glovebox slots in and changes nothing', () => {
+    // The GENUINE backdated case: a fill entered late, dated correctly, with an
+    // odometer between its neighbours. In date order it is monotonic, so it
+    // produces no reset and simply joins the run.
+    const result = computeFuelEfficiency([
+      fill(40_000, 40, true, '2026-08-01'),
+      fill(40_400, 40, true, '2026-08-15'),
+      fill(40_200, 20, false, '2026-08-08'), // entered last, belongs in the middle
+    ]);
+    assert.equal(result.available, true);
+    if (!result.available) return;
+    assert.equal(result.value.distanceKm, 400);
+    assert.equal(result.value.litresMilli, 60_000);
+    assert.equal(result.value.fromISO, '2026-08-01');
+    assert.equal(result.value.toISO, '2026-08-15');
+    assert.equal(result.value.afterReset, false);
+  });
+
+  test('a date and a reading that CONTRADICT each other refuse to measure', () => {
+    // 40,400 km in August and 40,000 km in September cannot both be true, and
+    // nothing can tell which is wrong. The old walk ordered by odometer and
+    // quietly produced a figure from it — the same class of data that made the
+    // analytics print 1008.3 km/L as fact.
+    //
+    // Declining is the honest answer, and the gap names a reset, which is also
+    // what a genuine cluster replacement looks like from here.
     const result = computeFuelEfficiency([
       fill(40_000, 40, true, '2026-09-01'),
       fill(40_400, 40, true, '2026-08-04'),
     ]);
-    assert.equal(result.available, true);
-    if (!result.available) return;
-    assert.equal(result.value.fromISO, '2026-08-04');
-    assert.equal(result.value.toISO, '2026-09-01');
+    assert.equal(result.available, false);
+    assert.equal(result.available === false && result.gap, 'reset-odometer');
   });
 
   test('a non-fuel row carrying litres is excluded by its TYPE', async () => {

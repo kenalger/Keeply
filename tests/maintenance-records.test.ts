@@ -68,8 +68,9 @@ describe('every read goes through a live view', () => {
     statements.selectRenewal('r'),
     statements.selectTotalsByYear('i'),
     statements.selectTotalsByType('i'),
-    statements.selectOdometerWindow('i'),
+    statements.selectOdometerReadings('i'),
     statements.selectTotalsInWindow('i', '2026-01-01', '2026-12-31'),
+    statements.selectSpendInWindow('2026-09-01', '2026-09-30'),
     statements.selectFuelFills('i'),
     statements.selectNextService('i'),
     statements.selectNextExpiry('i'),
@@ -953,3 +954,140 @@ describe('a long ledger pages', () => {
     );
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Totals, and the three buckets every cost row falls into                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `itemTotals()` sums ONE currency and used to count ALL of them.
+ *
+ * Three ₱ costs and two $ costs rendered as "₱5,000.00 across 5 entries" — a
+ * figure captioned with a count that two of those entries were not in. There is
+ * no exchange rate on this device and no business inventing one (§30), so the
+ * fix is not to add them: it is for the counts to partition the ledger, and for
+ * the screen to say out loud what is not in the figure.
+ */
+describe('itemTotals / the counts partition the ledger', () => {
+  test('a second currency is excluded from the total AND from its count', async () => {
+    const { api } = harness();
+    const item = await vehicle(api);
+
+    for (const amountMinor of [100_000, 200_000, 300_000]) {
+      await api.createCost({
+        itemId: item.id,
+        type: 'fuel',
+        amountMinor,
+        currency: 'PHP',
+        costDate: '2026-09-01',
+      });
+    }
+    for (const amountMinor of [4_000, 5_000]) {
+      await api.createCost({
+        itemId: item.id,
+        type: 'parts',
+        amountMinor,
+        currency: 'USD',
+        costDate: '2026-09-02',
+      });
+    }
+
+    const totals = await api.itemTotals(item.id);
+    assert.equal(totals.currency, 'PHP', 'the primary currency is the one with the most in it');
+    assert.equal(totals.totalMinor, 600_000);
+    // The bug: this was 5.
+    assert.equal(totals.costCount, 3, 'only the rows the total is made of');
+    assert.equal(totals.otherCurrencyCount, 2);
+    assert.deepEqual(totals.otherCurrencies, ['USD']);
+    assert.equal(totals.damagedCount, 0);
+  });
+
+  test('the three counts always add up to the number of rows', async () => {
+    const { db, api } = harness();
+    const item = await vehicle(api);
+
+    const rows = [
+      { amountMinor: 100_000, currency: 'PHP' },
+      { amountMinor: 200_000, currency: 'PHP' },
+      { amountMinor: 9_000, currency: 'USD' },
+      { amountMinor: 8_000, currency: 'JPY' },
+      { amountMinor: 50_000, currency: 'PHP' },
+    ];
+    const created = [];
+    for (const row of rows) {
+      created.push(
+        await api.createCost({
+          itemId: item.id,
+          type: 'other',
+          costDate: '2026-09-01',
+          ...row,
+        }),
+      );
+    }
+
+    // One PHP row and one USD row go bad — damage is counted wherever it is.
+    db.prepare('UPDATE maintenance_costs SET amount_minor = 1234.5 WHERE id = ?').run(
+      created[1]!.id,
+    );
+    db.prepare('UPDATE maintenance_costs SET amount_minor = 99.25 WHERE id = ?').run(
+      created[2]!.id,
+    );
+
+    const totals = await api.itemTotals(item.id);
+    assert.equal(totals.currency, 'PHP');
+    assert.equal(totals.totalMinor, 150_000, 'the damaged PHP row is not in the sum');
+    assert.equal(totals.costCount, 2, 'nor in the count of what the sum is made of');
+    assert.equal(totals.damagedCount, 2, 'both damaged rows, in either currency');
+    assert.equal(totals.otherCurrencyCount, 1, 'only the readable JPY row');
+    assert.deepEqual(
+      totals.otherCurrencies,
+      ['JPY'],
+      'USD had nothing readable, so there is no total for it to be missing from',
+    );
+
+    // `listCosts().total` is `count(*)` in SQL over every matching row, damaged
+    // ones included — so this is the partition, stated against a figure counted
+    // by a different query.
+    assert.equal(
+      totals.costCount + totals.damagedCount + totals.otherCurrencyCount,
+      (await api.listCosts(item.id)).total,
+      'every row is in exactly one bucket',
+    );
+  });
+
+  test('an item whose only rows are damaged has not cost nothing', async () => {
+    const { db, api } = harness();
+    const item = await vehicle(api);
+    const only = await api.createCost({
+      itemId: item.id,
+      type: 'repair',
+      amountMinor: 250_000,
+      costDate: '2026-09-01',
+    });
+    db.prepare('UPDATE maintenance_costs SET amount_minor = 7.5 WHERE id = ?').run(only.id);
+
+    const totals = await api.itemTotals(item.id);
+    assert.equal(totals.costCount, 0, 'nothing went into the total');
+    assert.equal(totals.damagedCount, 1);
+    // `costCount === 0` used to be the screen\'s test for "nothing recorded
+    // yet", which would have hidden this row entirely.
+    assert.equal(totals.totalMinor, 0);
+  });
+
+  test('one currency behaves exactly as before', async () => {
+    const { api } = harness();
+    const item = await vehicle(api);
+    await api.createCost({
+      itemId: item.id,
+      type: 'fuel',
+      amountMinor: 250_000,
+      costDate: '2026-09-01',
+    });
+
+    const totals = await api.itemTotals(item.id);
+    assert.equal(totals.costCount, 1);
+    assert.equal(totals.otherCurrencyCount, 0);
+    assert.deepEqual(totals.otherCurrencies, []);
+  });
+});
+

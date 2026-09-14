@@ -20,6 +20,7 @@ import {
   type SegmentedOption,
 } from '@/components/ui';
 import type { MaintenanceItemKind, MaintenanceItemRecord } from '@/features/maintenance';
+import { useDebounced } from '@/lib/use-debounced';
 import {
   KIND_ICONS,
   KIND_LABELS,
@@ -118,8 +119,13 @@ export default function MaintenanceScreen() {
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<'all' | MaintenanceItemKind>('all');
 
+  // Debounced before it reaches the query, not before it reaches the box: the
+  // field stays instant, the search runs once the typing stops. Search is the
+  // only read left in the app that cannot use an index (§33).
+  const query = useDebounced(search);
+
   const list = useMaintenanceList({
-    search: search.trim().length === 0 ? undefined : search.trim(),
+    search: query.trim().length === 0 ? undefined : query.trim(),
     kind: kindFilter === 'all' ? undefined : kindFilter,
   });
 
@@ -139,7 +145,9 @@ export default function MaintenanceScreen() {
     [open],
   );
 
-  const filtering = search.trim().length > 0 || kindFilter !== 'all';
+  // `query`, not `search`: the empty state must describe the search that
+  // actually ran, or it contradicts the list for 200ms.
+  const filtering = query.trim().length > 0 || kindFilter !== 'all';
 
   return (
     <Screen edges={['top']} padded={false} keyboardAvoiding={false}>

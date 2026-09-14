@@ -30,6 +30,8 @@
 import { minorUnits, type MinorUnits } from '@/db/money';
 import type { ReminderEntity } from '@/lib/notifications-plan';
 
+import { latestMonotonicRun, type OdometerReading } from './odometer';
+
 import {
   insertCost,
   insertItem,
@@ -47,7 +49,7 @@ import {
   selectItems,
   selectNextExpiry,
   selectNextService,
-  selectOdometerWindow,
+  selectOdometerReadings,
   selectRenewal,
   selectRenewalCount,
   selectRemindableRenewals,
@@ -56,6 +58,7 @@ import {
   selectService,
   selectServiceCount,
   selectServices,
+  selectSpendInWindow,
   selectTotalsByType,
   selectTotalsByYear,
   selectTotalsInWindow,
@@ -77,6 +80,7 @@ import {
   isVehicle,
   isVehicleType,
   type Analytic,
+  type AnalyticsGap,
   type CostPerKilometre,
   type FuelEfficiency,
   type MaintenanceCostFilter,
@@ -101,6 +105,7 @@ import {
   type MaintenanceServicePatch,
   type MaintenanceServiceRecord,
   type MaintenanceTypeTotal,
+  type MaintenanceSpendTotals,
   type MaintenanceYearTotal,
   type NewMaintenanceCostInput,
   type NewMaintenanceItemInput,
@@ -395,10 +400,7 @@ export function mapRenewalRow(row: RenewalRow): MaintenanceRenewalRecord {
 /* -------------------------------------------------------------------------- */
 
 /** One fill-up, as `selectFuelFills` returns it: ordered by odometer. */
-export interface FuelFill {
-  id: string;
-  costDate: string;
-  odometer: number;
+export interface FuelFill extends OdometerReading {
   fuelLitersMilli: number;
   isFullTank: boolean;
 }
@@ -430,17 +432,33 @@ export interface FuelFill {
  * `isFullTank` is for, and why `false` and `null` are different answers.
  */
 export function computeFuelEfficiency(
-  fills: readonly FuelFill[],
+  allFills: readonly FuelFill[],
 ): Analytic<FuelEfficiency> {
-  if (fills.length === 0) return { available: false, gap: 'no-fuel' };
+  if (allFills.length === 0) return { available: false, gap: 'no-fuel' };
+
+  // ── ONLY SINCE THE LAST TIME THE ODOMETER WENT FORWARD ──────────────────
+  // A replaced instrument cluster resets the reading to zero. This walk
+  // measures distance BETWEEN readings, so a reset in the middle of the set
+  // made the arithmetic meaningless — four readings across one produced
+  // **1008.3 km/L**, rendered as fact. Segmenting first means a reset starts a
+  // new measurement period instead of poisoning every figure after it.
+  const run = latestMonotonicRun(allFills);
+  const fills = run.readings;
+  const afterReset = run.afterReset;
 
   const fullTankIndices: number[] = [];
   for (let index = 0; index < fills.length; index += 1) {
     if (fills[index]!.isFullTank) fullTankIndices.push(index);
   }
 
-  if (fullTankIndices.length === 0) return { available: false, gap: 'no-full-tank' };
-  if (fullTankIndices.length === 1) return { available: false, gap: 'one-full-tank' };
+  if (fullTankIndices.length === 0) {
+    // After a reset "no full tank yet" is the ordinary state, and the sentence
+    // the user needs is about the reset, not about their habits.
+    return { available: false, gap: afterReset ? 'reset-odometer' : 'no-full-tank' };
+  }
+  if (fullTankIndices.length === 1) {
+    return { available: false, gap: afterReset ? 'reset-odometer' : 'one-full-tank' };
+  }
 
   const first = fullTankIndices[0]!;
   const last = fullTankIndices[fullTankIndices.length - 1]!;
@@ -456,11 +474,9 @@ export function computeFuelEfficiency(
   }
   if (litresMilli <= 0) return { available: false, gap: 'no-fuel' };
 
-  // The rows are ordered by ODOMETER, so a fill entered with a backdated date
-  // can put the later reading on the earlier day. The window is still correct —
-  // distance is what is being measured — but the two dates are sorted before
-  // they are shown, so a screen never reads "1 Sep to 4 Aug".
-  const ends = [fills[first]!.costDate, fills[last]!.costDate].sort();
+  // Sorted before they are shown. Within a run the dates are already in order,
+  // but this costs nothing and a screen must never read "1 Sep to 4 Aug".
+  const ends = [fills[first]!.dateISO, fills[last]!.dateISO].sort();
 
   return {
     available: true,
@@ -471,6 +487,7 @@ export function computeFuelEfficiency(
       fillCount: last - first,
       fromISO: ends[0]!,
       toISO: ends[1]!,
+      afterReset,
     },
   };
 }
@@ -554,11 +571,28 @@ const RENEWAL_REMINDER_LABELS: Readonly<Record<MaintenanceRenewalKind, string>> 
  * A due service has no price yet — that is the whole point of it being due —
  * and a plate, a serial or a policy number never goes near a lock screen (§10).
  */
+/**
+ * What is due, as a word — "Oil change and filter", "Insurance".
+ *
+ * The renewal kinds are the only part a surface must not spell for itself: the
+ * schema stores `insurance` and a screen showing that is showing the enum. A
+ * service type is the user's own words and passes through untouched (§8).
+ *
+ * Exposed separately from {@link maintenanceReminderEntity} because a
+ * NOTIFICATION and a ROW want the same words in different shapes. A lock screen
+ * has no context, so it gets the whole sentence — "Insurance for Vios". A Home
+ * row sits under a section header and has a subtitle, so it puts the item
+ * there and keeps the title short enough not to truncate. One source for the
+ * wording, two layouts.
+ */
+export function maintenanceDueLabel(due: MaintenanceDue): string {
+  return due.source === 'renewal' && isMaintenanceRenewalKind(due.label)
+    ? RENEWAL_REMINDER_LABELS[due.label]
+    : due.label;
+}
+
 export function maintenanceReminderEntity(due: MaintenanceDue): ReminderEntity {
-  const what =
-    due.source === 'renewal' && isMaintenanceRenewalKind(due.label)
-      ? RENEWAL_REMINDER_LABELS[due.label]
-      : due.label;
+  const what = maintenanceDueLabel(due);
   return {
     id: due.id,
     kind: 'maintenance',
@@ -616,6 +650,12 @@ export interface MaintenanceApi {
   deleteRenewal(id: string): Promise<void>;
 
   /* -- analytics --------------------------------------------------------- */
+  /**
+   * What EVERY item cost inside a window, grouped by currency.
+   *
+   * Home's "This month · Vehicle" line. Bounds are inclusive `YYYY-MM-DD`.
+   */
+  maintenanceTotals(fromISO: string, toISO: string): Promise<MaintenanceSpendTotals>;
   /** What the item cost, per calendar year, newest year first. */
   totalsByYear(itemId: string): Promise<readonly MaintenanceYearTotal[]>;
   /** What the item cost, by what the money was for, largest first. */
@@ -976,19 +1016,47 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
         damaged_count: unknown;
       }>(selectItemTotals(itemId));
 
-      // The primary currency is the one with the most spent in it. An item with
-      // no costs yet is a real state, not an empty result to hide.
+      // The primary currency is the one with the most spent in it (the SELECT
+      // orders by that). An item with no costs yet is a real state, not an
+      // empty result to hide.
       const primary = rows[0];
       const number = (value: unknown): number => (typeof value === 'number' ? value : 0);
+      const currencyOf = (value: unknown): string =>
+        typeof value === 'string' && value.length > 0 ? value : defaultCurrency;
+
+      const currency = currencyOf(primary?.currency);
+
+      // Three buckets, every row in exactly one — see `MaintenanceItemTotals`.
+      // `cost_count` is `count(*)` for the group, so the readable rows in a
+      // group are `cost_count - damaged_count`; summing `cost_count` across
+      // groups is what used to claim a ₱ total was "across 5 entries" when two
+      // of them were in dollars.
+      let costCount = 0;
+      let damagedCount = 0;
+      let otherCurrencyCount = 0;
+      const otherCurrencies = new Set<string>();
+
+      for (const row of rows) {
+        const damaged = number(row.damaged_count);
+        const readable = Math.max(0, number(row.cost_count) - damaged);
+        damagedCount += damaged;
+        if (currencyOf(row.currency) === currency) {
+          costCount += readable;
+        } else {
+          otherCurrencyCount += readable;
+          // A group with nothing readable in it has no total to be missing
+          // from, so it does not earn a mention on the screen.
+          if (readable > 0) otherCurrencies.add(currencyOf(row.currency));
+        }
+      }
 
       return {
         totalMinor: minorUnits(number(primary?.total_minor)) as MinorUnits,
-        currency:
-          typeof primary?.currency === 'string' && primary.currency.length > 0
-            ? primary.currency
-            : defaultCurrency,
-        costCount: rows.reduce((sum, row) => sum + number(row.cost_count), 0),
-        damagedCount: rows.reduce((sum, row) => sum + number(row.damaged_count), 0),
+        currency,
+        costCount,
+        damagedCount,
+        otherCurrencyCount,
+        otherCurrencies: [...otherCurrencies].sort(),
       };
     },
 
@@ -1222,6 +1290,41 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
 
     /* -- analytics ------------------------------------------------------- */
 
+    async maintenanceTotals(fromISO, toISO) {
+      const rows = await store.all<{
+        currency: unknown;
+        total_minor: unknown;
+        cost_count: unknown;
+        damaged_count: unknown;
+      }>(selectSpendInWindow(fromISO, toISO));
+
+      const byCurrency = rows.map((row) => ({
+        currency: typeof row.currency === 'string' ? row.currency : defaultCurrency,
+        totalMinor: minorUnits(
+          typeof row.total_minor === 'number' ? row.total_minor : 0,
+        ) as MinorUnits,
+        costCount: typeof row.cost_count === 'number' ? row.cost_count : 0,
+      }));
+
+      // Zeroed rather than absent when the default currency has no rows — see
+      // `MaintenanceSpendTotals.primary`.
+      const primary = byCurrency.find((row) => row.currency === defaultCurrency) ?? {
+        currency: defaultCurrency,
+        totalMinor: minorUnits(0) as MinorUnits,
+        costCount: 0,
+      };
+
+      return {
+        byCurrency,
+        primary,
+        costCount: byCurrency.reduce((sum, row) => sum + row.costCount, 0),
+        damagedCount: rows.reduce(
+          (sum, row) => sum + (typeof row.damaged_count === 'number' ? row.damaged_count : 0),
+          0,
+        ),
+      };
+    },
+
     async totalsByYear(itemId) {
       const rows = await store.all<GroupedTotalRow & { year: unknown }>(
         selectTotalsByYear(itemId),
@@ -1255,34 +1358,48 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
       // The gate is the predicate, not `kind === 'vehicle'` written again here.
       if (!isVehicle(item.kind)) return { available: false, gap: 'not-a-vehicle' as const };
 
-      const windows = await store.all<{
-        min_odometer: unknown;
-        max_odometer: unknown;
-        from_date: unknown;
-        to_date: unknown;
-        reading_count: unknown;
-      }>(selectOdometerWindow(itemId));
+      const rows = await store.all<{
+        id: unknown;
+        cost_date: unknown;
+        odometer: unknown;
+      }>(selectOdometerReadings(itemId));
 
-      const window = windows[0];
-      const readingCount = numberOr(window?.reading_count, 0);
+      const readings: OdometerReading[] = [];
+      for (const row of rows) {
+        // A damaged reading is SKIPPED, not thrown on — the list policy. The
+        // SQL already excludes non-integers, so reaching this means the column
+        // held something stranger still.
+        if (
+          typeof row.id !== 'string' ||
+          typeof row.cost_date !== 'string' ||
+          typeof row.odometer !== 'number'
+        ) {
+          continue;
+        }
+        readings.push({ id: row.id, dateISO: row.cost_date, odometer: row.odometer });
+      }
+
+      // Only the stretch over which the odometer went FORWARD. Spanning a
+      // reset reported 121,000 km for a car that had done 1,500.
+      const run = latestMonotonicRun(readings);
+      const readingCount = run.readings.length;
       if (readingCount === 0) return { available: false, gap: 'no-odometer' as const };
-      if (readingCount === 1) return { available: false, gap: 'one-odometer' as const };
+      if (readingCount === 1) {
+        // After a reset this is the ordinary state for a while, and the gap
+        // message has to say which of the two situations it is.
+        const gap: AnalyticsGap = run.afterReset ? 'reset-odometer' : 'one-odometer';
+        return { available: false, gap };
+      }
 
-      const minOdometer = numberOr(window?.min_odometer, 0);
-      const maxOdometer = numberOr(window?.max_odometer, 0);
-      const distanceKm = maxOdometer - minOdometer;
+      const first = run.readings[0]!;
+      const last = run.readings[readingCount - 1]!;
+      const distanceKm = last.odometer - first.odometer;
       // Two readings at the same number measure no distance — ordinary when a
       // car sits for a month, and still nothing to divide by.
       if (distanceKm <= 0) return { available: false, gap: 'no-distance' as const };
 
-      const fromISO = typeof window?.from_date === 'string' ? window.from_date : null;
-      const toISO = typeof window?.to_date === 'string' ? window.to_date : null;
-      if (fromISO === null || toISO === null) {
-        return { available: false, gap: 'no-odometer' as const };
-      }
-
       const totals = await store.all<GroupedTotalRow>(
-        selectTotalsInWindow(itemId, fromISO, toISO),
+        selectTotalsInWindow(itemId, first.dateISO, last.dateISO),
       );
       const primary = totals[0];
       const totalMinor = minorUnits(numberOr(primary?.total_minor, 0)) as MinorUnits;
@@ -1295,12 +1412,14 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
           distanceKm,
           costPerKm: totalMinor / distanceKm,
           costPerKmMinor: minorUnits(Math.round(totalMinor / distanceKm)) as MinorUnits,
-          fromISO,
-          toISO,
+          fromISO: first.dateISO,
+          toISO: last.dateISO,
           readingCount,
+          afterReset: run.afterReset,
         },
       };
     },
+
 
     async fuelEfficiency(itemId) {
       const item = await readItem(itemId);
@@ -1329,7 +1448,7 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
         }
         fills.push({
           id: row.id,
-          costDate: row.cost_date,
+          dateISO: row.cost_date,
           odometer: row.odometer,
           fuelLitersMilli: row.fuel_liters_milli,
           isFullTank: row.is_full_tank === 1 || row.is_full_tank === true,

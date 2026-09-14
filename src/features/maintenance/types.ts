@@ -168,19 +168,41 @@ export interface NewMaintenanceItemInput {
 /** A partial update. An explicit `null` clears an optional field. */
 export type MaintenanceItemPatch = Partial<NewMaintenanceItemInput>;
 
-/** Totals for one item, aggregated by SQLite. */
+/**
+ * What one item has cost, aggregated by SQLite.
+ *
+ * ── THE THREE COUNTS PARTITION THE LEDGER ──────────────────────────────────
+ * `costCount + damagedCount + otherCurrencyCount` is exactly the number of
+ * cost rows this item has, and each row falls in one bucket only. That is the
+ * invariant a screen can lean on, and it is the fix for a real bug: `costCount`
+ * used to be `count(*)` over EVERY currency while `totalMinor` summed only the
+ * primary one, so three ₱ costs and two $ costs rendered as "₱5,000.00 across
+ * 5 entries" — a total that two of those entries were not in.
+ *
+ * Money in two currencies cannot be added (§30: there is no rate, and an
+ * offline app has no business inventing one), so the rows outside the primary
+ * currency are reported rather than converted or hidden.
+ */
 export interface MaintenanceItemTotals {
   /** Every peso spent on this item, in its primary currency. */
   totalMinor: MinorUnits;
+  /** The currency `totalMinor` is in: the one with the most spent in it. */
   currency: string;
+  /** How many rows went INTO `totalMinor`. Not how many rows exist. */
   costCount: number;
   /**
    * Rows the sum had to leave out because `amount_minor` is not an integer.
    *
    * Same policy the receipts layer settled on: one corrupt row must not blank
-   * the screen, and must not silently skew the total either.
+   * the screen, and must not silently skew the total either. Counted across
+   * every currency — a row being unreadable is a fact about the data, not
+   * about which currency it was in.
    */
   damagedCount: number;
+  /** Readable rows in some other currency. Excluded from `totalMinor`. */
+  otherCurrencyCount: number;
+  /** Those currencies' codes, so a screen can name them. Sorted, no repeats. */
+  otherCurrencies: readonly string[];
 }
 
 /** §23-style filters for the item list. */
@@ -475,6 +497,31 @@ export interface MaintenanceYearTotal {
   costCount: number;
 }
 
+/** One currency's share of a window's maintenance spend. */
+export interface MaintenanceCurrencyTotal {
+  currency: string;
+  totalMinor: MinorUnits;
+  costCount: number;
+}
+
+/**
+ * What every item cost inside a window — Home's "This month · Vehicle" line.
+ *
+ * `primary` is the entry for the app's default currency, ZEROED rather than
+ * absent when there is none: Home renders four fixed buckets and a missing one
+ * would collapse the row, which reads as a bug rather than as ₱0.00. Same
+ * contract as `ReceiptTotals.primary`, deliberately — the dashboard treats the
+ * two identically and a difference here would be a difference on screen.
+ */
+export interface MaintenanceSpendTotals {
+  byCurrency: readonly MaintenanceCurrencyTotal[];
+  primary: MaintenanceCurrencyTotal;
+  /** Matching cost rows in every currency, damaged ones included. */
+  costCount: number;
+  /** Of those, how many the sums had to leave out. See `MaintenanceItemTotals`. */
+  damagedCount: number;
+}
+
 /** What one item cost, split by what the money was for. */
 export interface MaintenanceTypeTotal {
   type: MaintenanceCostType;
@@ -497,7 +544,19 @@ export type AnalyticsGap =
   | 'no-distance'
   | 'no-fuel'
   | 'one-full-tank'
-  | 'no-full-tank';
+  | 'no-full-tank'
+  /**
+   * The odometer went BACKWARDS — a replaced instrument cluster, or a
+   * corrected typo — and the readings since are not yet enough to measure
+   * with.
+   *
+   * Distinct from `one-odometer` because the sentence a user needs is
+   * different: one says "record another reading", this one says "the reset was
+   * noticed, and measuring has started again from there". Without it the
+   * screen would tell someone who has recorded twenty readings that they have
+   * only one.
+   */
+  | 'reset-odometer';
 
 /** An analytic that may legitimately have nothing to say. */
 export type Analytic<T> =
@@ -536,8 +595,15 @@ export interface CostPerKilometre {
   costPerKmMinor: MinorUnits;
   fromISO: string;
   toISO: string;
-  /** Cost rows carrying an odometer reading. Always at least 2. */
+  /** Cost rows carrying an odometer reading IN THIS RUN. Always at least 2. */
   readingCount: number;
+  /**
+   * Readings before this window were dropped because the odometer went back.
+   *
+   * Surfaced so the screen can say so. A narrowed window presented as the whole
+   * history is the same lie in a smaller font.
+   */
+  afterReset: boolean;
 }
 
 /**
@@ -563,6 +629,8 @@ export interface FuelEfficiency {
   fillCount: number;
   fromISO: string;
   toISO: string;
+  /** See `CostPerKilometre.afterReset`. */
+  afterReset: boolean;
 }
 
 /**

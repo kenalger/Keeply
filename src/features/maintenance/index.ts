@@ -79,6 +79,7 @@ export const {
   createRenewal,
   updateRenewal,
   deleteRenewal,
+  maintenanceTotals,
   totalsByYear,
   totalsByType,
   costPerKilometre,
@@ -92,6 +93,7 @@ export { liveStore as liveMaintenanceStore };
 export {
   computeFuelEfficiency,
   createMaintenanceApi,
+  maintenanceDueLabel,
   maintenanceReminderEntity,
   mapCostRow,
   mapItemRow,
@@ -101,6 +103,7 @@ export {
 export type { FuelFill, MaintenanceApi, MaintenanceApiDeps } from './queries';
 export type { MaintenanceStore, SqlStatement, SqlValue } from './store';
 export { formatLitresDraft, parseLitres } from './litres';
+export { latestMonotonicRun, type OdometerReading, type OdometerRun } from './odometer';
 export {
   validateCostPatch,
   validateItemPatch,
@@ -154,6 +157,7 @@ export type {
   MaintenanceCostPatch,
   MaintenanceCostRecord,
   MaintenanceCostType,
+  MaintenanceCurrencyTotal,
   MaintenanceDue,
   MaintenanceDueNext,
   MaintenanceErrorCode,
@@ -162,6 +166,7 @@ export type {
   MaintenanceItemPage,
   MaintenanceItemPatch,
   MaintenanceItemRecord,
+  MaintenanceSpendTotals,
   MaintenanceItemTotals,
   MaintenanceRenewalFilter,
   MaintenanceRenewalKind,

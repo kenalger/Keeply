@@ -29,6 +29,7 @@ import {
   useDashboardData,
   type DashboardData,
   type ExpiringDocumentItem,
+  type MaintenanceDueItem,
   type OverdueItem,
   type RecentActivityItem,
   type SpendingBucket,
@@ -108,6 +109,7 @@ type HomeRow =
   | { kind: 'overdue'; key: string; group: GroupPosition; item: OverdueItem }
   | { kind: 'payment'; key: string; group: GroupPosition; item: UpcomingPaymentItem }
   | { kind: 'expiry'; key: string; group: GroupPosition; item: ExpiringDocumentItem }
+  | { kind: 'maintenance'; key: string; group: GroupPosition; item: MaintenanceDueItem }
   | { kind: 'renewal'; key: string; group: GroupPosition; item: UpcomingSubscriptionItem }
   | { kind: 'bucket'; key: string; group: GroupPosition; bucket: SpendingBucket }
   | { kind: 'total'; key: string; group: GroupPosition; totalMinor: MinorUnits }
@@ -177,6 +179,15 @@ function buildHomeRows(data: DashboardData): readonly HomeRow[] {
   section('Expiring documents', data.expiringDocuments, (item, group) => ({
     kind: 'expiry',
     key: `expiry:${item.id}`,
+    group,
+    item,
+  }));
+
+  // Above subscriptions and below documents: both of those are deadlines, and a
+  // service that is late is nearer to a task than a renewal that is on schedule.
+  section('Due for service', data.maintenanceDue, (item, group) => ({
+    kind: 'maintenance',
+    key: `maintenance:${item.id}`,
     group,
     item,
   }));
@@ -260,9 +271,13 @@ export default function HomeScreen() {
     (id: string) => router.push({ pathname: '/subscriptions/[id]', params: { id } }),
     [router],
   );
+  const openMaintenance = useCallback(
+    (itemId: string) => router.push({ pathname: '/maintenance/[id]', params: { id: itemId } }),
+    [router],
+  );
   const actions = useMemo<HomeActions>(
-    () => ({ openAdd, openSubscription }),
-    [openAdd, openSubscription],
+    () => ({ openAdd, openSubscription, openMaintenance }),
+    [openAdd, openSubscription, openMaintenance],
   );
 
   return (
@@ -332,11 +347,14 @@ export default function HomeScreen() {
 interface HomeActions {
   openAdd: () => void;
   openSubscription: (id: string) => void;
+  /** Takes the ITEM's id, not the due row's — see `MaintenanceDueItem`. */
+  openMaintenance: (itemId: string) => void;
 }
 
 const HomeActionsContext = createContext<HomeActions>({
   openAdd: () => undefined,
   openSubscription: () => undefined,
+  openMaintenance: () => undefined,
 });
 
 /* Module scope: a new identity per render would defeat row memoization. */
@@ -445,6 +463,30 @@ const HomeRowView = memo(function HomeRowView({ row }: { row: HomeRow }) {
       );
     }
 
+    case 'maintenance': {
+      const { item } = row;
+      // Late reads as "6 days late", not as "in -6 days". `dueLabel` already
+      // says the second thing correctly, so the sign is handled here rather
+      // than inside a formatter three other sections share.
+      const label = item.dueInDays < 0 ? overdueLabel(-item.dueInDays) : dueLabel(item.dueInDays);
+      return (
+        <ListGroup position={row.group}>
+          <MaintenanceLink id={item.itemId}>
+            {(open) => (
+              <Row
+                icon={item.due === 'service' ? 'wrench' : 'shield'}
+                title={item.title}
+                subtitle={item.itemName}
+                value={<StatusPill status={item.status} label={label} showIcon />}
+                valueLabel={label}
+                onPress={open}
+              />
+            )}
+          </MaintenanceLink>
+        </ListGroup>
+      );
+    }
+
     case 'renewal': {
       const { item } = row;
       return (
@@ -541,12 +583,25 @@ function SubscriptionLink({
   return children(() => openSubscription(id));
 }
 
+/** The same render-prop shape as `SubscriptionLink`, for the same reason. */
+function MaintenanceLink({
+  id,
+  children,
+}: {
+  id: string;
+  children: (open: () => void) => ReactElement;
+}): ReactElement {
+  const { openMaintenance } = useContext(HomeActionsContext);
+  return children(() => openMaintenance(id));
+}
+
 const ACTIVITY_ICON = {
   subscription: 'repeat',
   bill: 'banknote',
   receipt: 'receipt',
   'vehicle-expense': 'fuel',
   document: 'doc',
+  maintenance: 'wrench',
 } as const;
 
 /**

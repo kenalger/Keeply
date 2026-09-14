@@ -16,6 +16,8 @@
  *
  * Pure: no React, no database, no clock.
  */
+import type { MinorUnits } from '@/db/money';
+
 import type { IconName, SelectOption } from '@/components/ui';
 
 import {
@@ -25,6 +27,7 @@ import {
   VEHICLE_TYPES,
   type AnalyticsGap,
   type MaintenanceCostType,
+  type MaintenanceYearTotal,
   type MaintenanceItemKind,
   type MaintenanceRenewalKind,
   type VehicleType,
@@ -185,6 +188,10 @@ export const ANALYTICS_GAP_MESSAGES: Readonly<Record<AnalyticsGap, string>> = {
   'no-fuel': 'Record a fill-up with its litres to start tracking this.',
   'no-full-tank': 'Mark a fill-up as a full tank — that is what makes the maths work.',
   'one-full-tank': 'One full tank so far. The next one completes the measurement.',
+  // Says what HAPPENED, not what is missing. Someone with twenty readings told
+  // "record another one" would think the app had lost them.
+  'reset-odometer':
+    'The odometer reading went backwards — a replaced meter, or a corrected entry. Keeply is measuring again from there.',
 };
 
 /**
@@ -206,4 +213,112 @@ export function formatEfficiency(kilometresPerLitre: number): string {
 /** Millilitres back to litres for display. "40.0 L". */
 export function formatLitres(milli: number): string {
   return `${(milli / 1000).toFixed(1)} L`;
+}
+
+/**
+ * The "What it has cost" card, as sentences.
+ *
+ * The card has one figure and up to three captions under it, and which ones
+ * appear depends on how the ledger's rows fall into the three buckets of
+ * {@link MaintenanceItemTotals}. Deciding that inline in the screen produced
+ * the bug this replaces — a ₱ total captioned "across 5 entries" when two of
+ * the five were in dollars — so the whole decision lives here, pure and
+ * testable without a renderer.
+ *
+ * `showsAmount` is false when nothing readable is in the primary currency.
+ * Rendering ₱0.00 there would state a total, and "nothing added up" is not a
+ * total of zero: an item whose only two rows are damaged has not cost nothing.
+ */
+export interface SpendSummary {
+  /** Nothing has ever been recorded. The card says so and stops. */
+  isEmpty: boolean;
+  /** Whether to render the figure at all. */
+  showsAmount: boolean;
+  /** Under the figure. `null` when there is no figure. */
+  countLine: string | null;
+  /** Rows that could not be read. `null` when they all could. */
+  damagedLine: string | null;
+  /** Rows in another currency, which cannot be added to the figure (§30). */
+  otherCurrencyLine: string | null;
+}
+
+function entries(count: number): string {
+  return `${count} ${count === 1 ? 'entry' : 'entries'}`;
+}
+
+/** A list a person would read out: "USD", "USD and JPY", "USD, JPY and EUR". */
+function andList(values: readonly string[]): string {
+  if (values.length <= 1) return values[0] ?? '';
+  return `${values.slice(0, -1).join(', ')} and ${values[values.length - 1]!}`;
+}
+
+export function describeSpend(totals: {
+  costCount: number;
+  damagedCount: number;
+  otherCurrencyCount: number;
+  otherCurrencies: readonly string[];
+}): SpendSummary {
+  const { costCount, damagedCount, otherCurrencyCount, otherCurrencies } = totals;
+  const isEmpty = costCount + damagedCount + otherCurrencyCount === 0;
+
+  return {
+    isEmpty,
+    showsAmount: costCount > 0,
+    countLine: costCount > 0 ? `across ${entries(costCount)}` : null,
+    damagedLine:
+      damagedCount === 0
+        ? null
+        : `${entries(damagedCount)} could not be read and ${
+            damagedCount === 1 ? 'is' : 'are'
+          } not counted here.`,
+    // Names the currencies, because "2 entries elsewhere" sends someone back
+    // through the whole ledger to find out where.
+    otherCurrencyLine:
+      otherCurrencyCount === 0
+        ? null
+        : `${entries(otherCurrencyCount)} in ${andList(otherCurrencies)} ${
+            otherCurrencyCount === 1 ? 'is' : 'are'
+          } not in this total.`,
+  };
+}
+
+/**
+ * The "by year" rows, disambiguated when a year carries more than one currency.
+ *
+ * `selectTotalsByYear` groups by year AND currency, because two currencies
+ * cannot be summed — so an item with ₱ and $ costs in 2026 returns TWO rows
+ * labelled `2026`. The screen keyed and titled them by year alone, which gave
+ * a list reading "2026 / 2026" and a React duplicate-key warning in a red
+ * toast. It went unnoticed because it cannot happen until an item has costs in
+ * two currencies, which is exactly the case `describeSpend` was written for.
+ *
+ * The currency is added to the subtitle only where it is needed. Putting it on
+ * every row would caption the overwhelmingly common single-currency item with
+ * a code it already shows in the amount beside it.
+ */
+export interface YearRow {
+  /** Unique per row — year alone is not. */
+  key: string;
+  title: string;
+  subtitle: string;
+  totalMinor: MinorUnits;
+  currency: string;
+}
+
+export function describeYearRows(
+  totals: readonly MaintenanceYearTotal[],
+): readonly YearRow[] {
+  const perYear = new Map<string, number>();
+  for (const row of totals) perYear.set(row.year, (perYear.get(row.year) ?? 0) + 1);
+
+  return totals.map((row) => ({
+    key: `${row.year}-${row.currency}`,
+    title: row.year,
+    subtitle:
+      (perYear.get(row.year) ?? 0) > 1
+        ? `${entries(row.costCount)} · ${row.currency}`
+        : entries(row.costCount),
+    totalMinor: row.totalMinor,
+    currency: row.currency,
+  }));
 }
