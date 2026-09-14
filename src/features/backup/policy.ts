@@ -148,6 +148,20 @@ export type BundleCompatibility =
  * bundle from a build that squashed migrations has fewer rows and the same
  * schema, and a count would call that a downgrade.
  *
+ * ⚠ THE SAME ASSUMPTION THAT BROKE THE MIGRATION RUNNER LIVES HERE.
+ * `createdAt` is the journal's `when`, and regenerating a migration file gives
+ * the same tag a NEW one — see `src/db/migration-order.ts`, where that was
+ * proven on a device rather than reasoned about. Two builds at the same commit
+ * still agree, so this is correct for every ordinary restore; what it cannot
+ * survive is a bundle whose journal timestamps moved without its schema
+ * changing, which it would call `bundle-newer` and REFUSE.
+ *
+ * Left as it is deliberately. The tag-set comparison that fixed the runner is
+ * exact here too, but it calls a squash `bundle-newer` — and trading a proven-
+ * narrow failure for a different one, in the code path a user reaches while
+ * rescuing a phone, is not a change to make in passing. `HANDOFF.md` carries
+ * it as a known risk.
+ *
  * `bundle-newer` is the one that must refuse. A newer bundle may contain a
  * table or a column this build has never heard of, and restoring it produces a
  * database the app cannot read — on the exact device the user just tried to

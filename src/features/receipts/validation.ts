@@ -420,16 +420,20 @@ export function validateReceiptFilter(filter: ReceiptFilter): ReceiptResult<Rece
     );
   }
 
-  for (const [value, field] of [
-    [filter.minAmountMinor, 'minAmountMinor'],
-    [filter.maxAmountMinor, 'maxAmountMinor'],
+  // `ReceiptField` has one `amountMinor`, not a min and a max, so the END of the
+  // range is named in the sentence — in English. Interpolating the key here
+  // would have put `minAmountMinor` in a string this type's own doc comment says
+  // may be rendered.
+  for (const [value, edge] of [
+    [filter.minAmountMinor, 'bottom'],
+    [filter.maxAmountMinor, 'top'],
   ] as const) {
     if (value !== undefined && !isMinorUnits(value)) {
       errors.push(
         fieldError(
           'invalid-amount',
           'amountMinor',
-          `${field} must be a whole number of minor units`,
+          `The ${edge} of the amount range must be a whole number of minor units`,
         ),
       );
     }

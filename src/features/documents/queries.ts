@@ -48,6 +48,7 @@ import {
 import type { DocumentStore, SqlStatement, SqlValue } from './store';
 import {
   DocumentError,
+  isDocumentRenewalState,
   isDocumentType,
   type DocumentExpirySummary,
   type DocumentFilter,
@@ -56,6 +57,7 @@ import {
   type DocumentRecord,
   type NewDocumentInput,
 } from './types';
+import { patchForAnswer, type RenewalAnswer } from './renewal';
 import { validateDocumentPatch, validateNewDocument } from './validation';
 
 /** A row exactly as the driver hands it back, keyed by column name. */
@@ -69,6 +71,9 @@ interface DocumentRow {
   notes: unknown;
   local_file_uri: unknown;
   file_mime_type: unknown;
+  renewal_state: unknown;
+  renewal_remind_after: unknown;
+  renewal_prompted_for: unknown;
   created_at: unknown;
   updated_at: unknown;
 }
@@ -113,6 +118,14 @@ export function mapDocumentRow(row: DocumentRow): DocumentRecord {
     documentNumber: optionalText(row.document_number),
     issueDate: optionalText(row.issue_date),
     expiryDate: optionalText(row.expiry_date),
+    // A row written before `drizzle/0006` cannot exist — the migration's
+    // DEFAULT filled every one — but an unknown string here would become a
+    // state the switch in `patchForAnswer` has no case for. Fall back to
+    // `'none'` rather than throw: a document that cannot be prompted about is
+    // still a document the user must be able to open and read.
+    renewalState: isDocumentRenewalState(row.renewal_state) ? row.renewal_state : 'none',
+    renewalRemindAfter: optionalText(row.renewal_remind_after),
+    renewalPromptedFor: optionalText(row.renewal_prompted_for),
     notes: optionalText(row.notes),
     localFileUri: optionalText(row.local_file_uri),
     fileMimeType: optionalText(row.file_mime_type),
@@ -174,6 +187,19 @@ export interface DocumentsApi {
   createDocument(input: NewDocumentInput): Promise<DocumentRecord>;
   /** Replacing or clearing the file reports the URI it orphaned. */
   updateDocument(id: string, patch: DocumentPatch): Promise<DocumentWriteResult>;
+  /**
+   * Record the user's answer to §15's "this expired — what now?" prompt.
+   *
+   * Separate from `updateDocument` because it is NOT an edit: it writes a
+   * patch this module computes from the answer, and a `'renewed'` answer moves
+   * the expiry date as part of it. `newExpiryDate` is required for that answer
+   * and ignored for the rest.
+   */
+  answerRenewal(
+    id: string,
+    answer: RenewalAnswer,
+    newExpiryDate?: string,
+  ): Promise<DocumentRecord>;
   /** Soft-delete. Reports the file's URI so the caller can unlink it. */
   deleteDocument(id: string): Promise<{ orphanedUri: string | null }>;
   /** §15's ladder as counts, over every row. */
@@ -273,6 +299,38 @@ export function createDocumentsApi(deps: DocumentsApiDeps): DocumentsApi {
       const validated = validateNewDocument(input, todayISO());
       const id = newId();
       await store.execute(insertDocument({ ...validated, id, nowMs: nowMs() }));
+      return readDocument(id);
+    },
+
+    async answerRenewal(id, answer, newExpiryDate) {
+      // Read first: every answer is computed FROM the current state (the
+      // expiry being answered about, the state "Not now" must leave alone), and
+      // a missing document must fail as `not-found`.
+      const current = await readDocument(id);
+      const today = todayISO();
+
+      const patch = patchForAnswer(current, answer, today, newExpiryDate);
+
+      // A renewal moves the expiry, so it goes through the SAME validation
+      // every other date edit does — §29's "expiry cannot precede issue" is
+      // not suspended because the date arrived from a prompt.
+      if (patch.expiryDate !== undefined) {
+        validateDocumentPatch({ expiryDate: patch.expiryDate }, today, current);
+      }
+
+      const statement = updateDocumentSql(
+        id,
+        {
+          renewalState: patch.renewalState,
+          renewalRemindAfter: patch.renewalRemindAfter,
+          renewalPromptedFor: patch.renewalPromptedFor,
+          ...(patch.expiryDate === undefined ? {} : { expiryDate: patch.expiryDate }),
+        },
+        nowMs(),
+      );
+      // `patchForAnswer` always returns the three state fields, so the builder
+      // can never see an empty patch here.
+      if (statement !== null) await store.execute(statement);
       return readDocument(id);
     },
 

@@ -31,7 +31,13 @@ export {
   type GroupableDocument,
   type GroupedDocument,
 } from './grouping';
-export { removeDocument, saveDocumentPatch, saveNewDocument } from './mutations';
+export {
+  answerDocumentRenewal,
+  removeDocument,
+  saveDocumentPatch,
+  saveNewDocument,
+} from './mutations';
+export { RenewalSheet, type RenewalSheetProps } from './renewal-sheet';
 export { DocumentForm } from './document-form';
 export { DocumentFile } from './document-file';
 export { useDocumentAttach, type DocumentAttach } from './attach';

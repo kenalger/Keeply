@@ -22,7 +22,7 @@
  * `listBills()` takes a limit and an offset and returns `total` from a
  * `count(*)` over the same WHERE. Nothing is sliced in JavaScript (§33).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import {
   DEFAULT_UPCOMING_DAYS,
@@ -38,77 +38,10 @@ import {
   type BillState,
   type BillTotals,
 } from '@/features/bills';
-import { log } from '@/lib/log';
+import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
 import { useRevision } from '@/stores/revision-store';
 
 /** Loading is the first read only. After that a refresh keeps the old rows. */
-export type AsyncStatus = 'loading' | 'ready' | 'error';
-
-export interface AsyncValue<T> {
-  status: AsyncStatus;
-  /** The last successful value. `null` until the first read resolves. */
-  value: T | null;
-  error: unknown;
-  /** Re-run the read now. Safe to call from an event handler. */
-  reload: () => void;
-}
-
-/**
- * Run an async read, re-running it when `deps` change, with the last in-flight
- * read winning.
- *
- * The generation counter is not ceremony: two reads started a frame apart can
- * resolve out of order, and without it a fast filter change can be overwritten
- * by the slower read it replaced.
- *
- * NOTE: this is the fifth copy of this helper (subscriptions, receipts,
- * allowance, maintenance, bills). It is duplicated rather than shared because
- * every previous feature duplicated it; extracting it is a worthwhile cleanup
- * across all five at once, not a change to smuggle into one of them.
- */
-function useAsyncRead<T>(read: () => Promise<T>, deps: readonly unknown[]): AsyncValue<T> {
-  const [state, setState] = useState<{ status: AsyncStatus; value: T | null; error: unknown }>({
-    status: 'loading',
-    value: null,
-    error: null,
-  });
-  const [nonce, setNonce] = useState(0);
-  const generation = useRef(0);
-
-  // `read` is rebuilt every render by design — the caller closes over its own
-  // arguments — so the effect keys on `deps`, and the ref carries the current
-  // function into it without adding an identity that changes every render.
-  const readRef = useRef(read);
-  readRef.current = read;
-
-  useEffect(() => {
-    generation.current += 1;
-    const mine = generation.current;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const value = await readRef.current();
-        if (cancelled || mine !== generation.current) return;
-        setState({ status: 'ready', value, error: null });
-      } catch (error) {
-        if (cancelled || mine !== generation.current) return;
-        log.error('bills: read failed', error);
-        setState((previous) => ({ status: 'error', value: previous.value, error }));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
-
-  const reload = useCallback(() => setNonce((value) => value + 1), []);
-
-  return { status: state.status, value: state.value, error: state.error, reload };
-}
-
 /* -------------------------------------------------------------------------- */
 /* The list (§23)                                                              */
 /* -------------------------------------------------------------------------- */
@@ -192,6 +125,7 @@ export function useBillList(filter: BillFilter): BillListView {
   const slice = useAsyncRead<ListSlice>(
     () => readPages(filter, requested),
     [key, revision, requested],
+    'bills',
   );
 
   const loadMore = useCallback(() => setPages((current) => current + 1), []);
@@ -215,7 +149,7 @@ export function useBillList(filter: BillFilter): BillListView {
 /** §7's dashboard figures. Aggregated by SQLite; no row crosses into JS. */
 export function useBillTotals(): AsyncValue<BillTotals> {
   const revision = useRevision('bills');
-  return useAsyncRead(() => billTotals(), [revision]);
+  return useAsyncRead(() => billTotals(), [revision], 'bills');
 }
 
 /**
@@ -225,7 +159,7 @@ export function useBillTotals(): AsyncValue<BillTotals> {
  */
 export function useBillRecord(id: string): AsyncValue<BillRecord | null> {
   const revision = useRevision('bills');
-  return useAsyncRead(() => getBill(id), [id, revision]);
+  return useAsyncRead(() => getBill(id), [id, revision], 'bills');
 }
 
 /**
@@ -240,6 +174,7 @@ export function useBillPayments(billId: string, limit = 24): AsyncValue<readonly
   return useAsyncRead(
     async () => (await listBillPayments(billId, { limit })).rows,
     [billId, revision, limit],
+  'bills',
   );
 }
 
@@ -252,6 +187,7 @@ export function useUpcomingBills(
   return useAsyncRead(
     () => upcomingBills(withinDays, limit === undefined ? undefined : { limit }),
     [revision, withinDays, limit],
+  'bills',
   );
 }
 
@@ -310,3 +246,6 @@ export function useBillFilter(options: {
     [trimmed, stateKey, categoryKey, sort, active],
   );
 }
+
+// Re-exported so every screen keeps importing these from its own feature.
+export type { AsyncStatus, AsyncValue };

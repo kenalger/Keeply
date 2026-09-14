@@ -5,7 +5,16 @@
  * constraints are the last line, not the first: a constraint failure arrives as
  * a driver error naming a constraint, which is not something to show a user.
  *
- * ── EVERY MESSAGE NAMES A FIELD AND NEVER A VALUE ──────────────────────────
+ * ── A MESSAGE NAMES NEITHER THE VALUE NOR THE FIELD ───────────────────────
+ * The error carries `field` as a CODE key and the form matches it against its
+ * own inputs, so the message is already rendered under the labelled input that
+ * caused it — it does not have to name anything. It must not: the key is an
+ * identifier (`fuelLitersMilli`), the label is English (Litres), and using one
+ * as the other is how "fuelLitersMilli must be a whole number" appeared under
+ * a field labelled Litres. Two of these labels are not even fixed — the same
+ * key is "Plate number" or "Serial number" depending on the kind — so there is
+ * no map from key to label that this layer could hold.
+ *
  * A document number is §14 material and a file URI is §16 material. "Enter a
  * name" is a usable message; quoting what they typed back at them puts it in a
  * string that may end up in a log.
@@ -47,7 +56,8 @@ function text(value: string | null | undefined, max: number, field: string): str
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   if (trimmed.length > max) {
-    throw new DocumentError('invalid-field', `${field} is too long`, field);
+    // The limit is a constant of this app, not something the user typed.
+    throw new DocumentError('invalid-field', `Keep this under ${max} characters`, field);
   }
   return trimmed;
 }
@@ -55,7 +65,7 @@ function text(value: string | null | undefined, max: number, field: string): str
 function calendarDate(value: string | null | undefined, field: string): string | null {
   if (value === null || value === undefined || value === '') return null;
   if (!isValidCalendarDate(value)) {
-    throw new DocumentError('invalid-field', `${field} is not a real date`, field);
+    throw new DocumentError('invalid-field', 'That is not a real date', field);
   }
   return value;
 }

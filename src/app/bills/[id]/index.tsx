@@ -1,8 +1,15 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { memo, useCallback, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
+import { useLocalSearchParams, useRouter } from "expo-router";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
+import { Alert, StyleSheet, View, type ListRenderItemInfo } from "react-native";
 
-import { ReminderPermissionNote } from '@/components/reminder-permission';
+import { ReminderPermissionNote } from "@/components/reminder-permission";
 import {
   Amount,
   Button,
@@ -20,9 +27,13 @@ import {
   amountLabel,
   groupPosition,
   type GroupPosition,
-} from '@/components/ui';
-import type { MinorUnits } from '@/db';
-import type { BillPaymentRecord, BillRecord } from '@/features/bills';
+} from "@/components/ui";
+import type { MinorUnits } from "@/db";
+import type {
+  BillPaymentPatch,
+  BillPaymentRecord,
+  BillRecord,
+} from "@/features/bills";
 import {
   STATE_LABELS,
   amountLine,
@@ -35,13 +46,15 @@ import {
   dueCountdown,
   estimateNote,
   markBillPaid,
+  PaymentEditSheet,
+  saveBillPaymentEdit,
   undoBillPayment,
   useBillPayments,
   useBillRecord,
   writeFailureMessage,
-} from '@/features/bills/ui';
-import { log } from '@/lib/log';
-import { formatDate, useThemedStyles, type Theme } from '@/theme';
+} from "@/features/bills/ui";
+import { log } from "@/lib/log";
+import { formatDate, useThemedStyles, type Theme } from "@/theme";
 
 /**
  * One bill (§7).
@@ -71,11 +84,11 @@ import { formatDate, useThemedStyles, type Theme } from '@/theme';
 /* -------------------------------------------------------------------------- */
 
 type DetailRow =
-  | { kind: 'sectionHeader'; key: string; title: string }
-  | { kind: 'note'; key: string; text: string }
-  | { kind: 'reminders'; key: string }
+  | { kind: "sectionHeader"; key: string; title: string }
+  | { kind: "note"; key: string; text: string }
+  | { kind: "reminders"; key: string }
   | {
-      kind: 'amount';
+      kind: "amount";
       key: string;
       group: GroupPosition;
       label: string;
@@ -85,15 +98,26 @@ type DetailRow =
       emphasis: boolean;
     }
   | {
-      kind: 'fact';
+      kind: "fact";
       key: string;
       group: GroupPosition;
       label: string;
       value: string;
       caption?: string;
     }
-  | { kind: 'text'; key: string; group: GroupPosition; label: string; body: string }
-  | { kind: 'payment'; key: string; group: GroupPosition; payment: BillPaymentRecord };
+  | {
+      kind: "text";
+      key: string;
+      group: GroupPosition;
+      label: string;
+      body: string;
+    }
+  | {
+      kind: "payment";
+      key: string;
+      group: GroupPosition;
+      payment: BillPaymentRecord;
+    };
 
 function buildRows(
   record: BillRecord,
@@ -105,12 +129,12 @@ function buildRows(
 
   /* --- what it costs ----------------------------------------------------- */
 
-  rows.push({ kind: 'sectionHeader', key: 'h:amount', title: 'Amount' });
+  rows.push({ kind: "sectionHeader", key: "h:amount", title: "Amount" });
   rows.push({
-    kind: 'amount',
-    key: 'amount:expected',
-    group: record.lastPaidAmountMinor === null ? 'only' : 'first',
-    label: record.isVariable ? 'Expected' : 'Amount',
+    kind: "amount",
+    key: "amount:expected",
+    group: record.lastPaidAmountMinor === null ? "only" : "first",
+    label: record.isVariable ? "Expected" : "Amount",
     amountMinor: record.amountMinor,
     currency: record.currency,
     emphasis: true,
@@ -120,11 +144,14 @@ function buildRows(
   // recording at all: what it ACTUALLY came to last time.
   if (record.lastPaidAmountMinor !== null) {
     rows.push({
-      kind: 'amount',
-      key: 'amount:last',
-      group: 'last',
-      label: 'Last paid',
-      caption: record.lastPaidDate === null ? undefined : formatDate(record.lastPaidDate),
+      kind: "amount",
+      key: "amount:last",
+      group: "last",
+      label: "Last paid",
+      caption:
+        record.lastPaidDate === null
+          ? undefined
+          : formatDate(record.lastPaidDate),
       amountMinor: record.lastPaidAmountMinor,
       currency: record.currency,
       emphasis: false,
@@ -132,67 +159,71 @@ function buildRows(
   }
 
   const estimate = estimateNote(record);
-  if (estimate !== null) rows.push({ kind: 'note', key: 'amount:estimate', text: estimate });
+  if (estimate !== null)
+    rows.push({ kind: "note", key: "amount:estimate", text: estimate });
 
   /* --- the period -------------------------------------------------------- */
 
-  rows.push({ kind: 'sectionHeader', key: 'h:period', title: 'This period' });
+  rows.push({ kind: "sectionHeader", key: "h:period", title: "This period" });
   rows.push({
-    kind: 'fact',
-    key: 'period:due',
-    group: 'first',
-    label: 'Due',
+    kind: "fact",
+    key: "period:due",
+    group: "first",
+    label: "Due",
     value: formatDate(record.dueDate),
-    caption: record.status === 'paid' ? STATE_LABELS.paid : dueCountdown(record.daysUntilDue),
+    caption:
+      record.status === "paid"
+        ? STATE_LABELS.paid
+        : dueCountdown(record.daysUntilDue),
   });
   rows.push({
-    kind: 'fact',
-    key: 'period:cycle',
-    group: 'middle',
-    label: 'Repeats',
+    kind: "fact",
+    key: "period:cycle",
+    group: "middle",
+    label: "Repeats",
     value: describeRecurrence(record),
   });
   rows.push({
-    kind: 'fact',
-    key: 'period:category',
-    group: record.autopay || !record.isActive ? 'middle' : 'last',
-    label: 'Category',
+    kind: "fact",
+    key: "period:category",
+    group: record.autopay || !record.isActive ? "middle" : "last",
+    label: "Category",
     value: categoryLabel(record.category),
   });
   if (record.autopay) {
     rows.push({
-      kind: 'fact',
-      key: 'period:autopay',
-      group: record.isActive ? 'last' : 'middle',
-      label: 'Paid automatically',
-      value: 'Yes',
-      caption: 'Keeply still reminds you, so you can check it went through',
+      kind: "fact",
+      key: "period:autopay",
+      group: record.isActive ? "last" : "middle",
+      label: "Paid automatically",
+      value: "Yes",
+      caption: "Keeply still reminds you, so you can check it went through",
     });
   }
   if (!record.isActive) {
     rows.push({
-      kind: 'fact',
-      key: 'period:archived',
-      group: 'last',
-      label: 'Archived',
-      value: 'Not counted, not reminded',
+      kind: "fact",
+      key: "period:archived",
+      group: "last",
+      label: "Archived",
+      value: "Not counted, not reminded",
     });
   }
 
-  if (record.isActive && record.status === 'unpaid') {
-    rows.push({ kind: 'reminders', key: 'period:permission' });
+  if (record.isActive && record.status === "unpaid") {
+    rows.push({ kind: "reminders", key: "period:permission" });
   }
 
   /* --- optional ---------------------------------------------------------- */
 
   if (record.paymentMethod !== null || record.notes !== null) {
-    rows.push({ kind: 'sectionHeader', key: 'h:extra', title: 'Details' });
+    rows.push({ kind: "sectionHeader", key: "h:extra", title: "Details" });
     if (record.paymentMethod !== null) {
       rows.push({
-        kind: 'fact',
-        key: 'extra:method',
-        group: record.notes === null ? 'only' : 'first',
-        label: 'Payment method',
+        kind: "fact",
+        key: "extra:method",
+        group: record.notes === null ? "only" : "first",
+        label: "Payment method",
         value: record.paymentMethod,
       });
     }
@@ -200,10 +231,10 @@ function buildRows(
       // A `<Row/>`'s subtitle is `numberOfLines={2}`. Notes are prose and get
       // their own block, for the reason the expense detail screen learned.
       rows.push({
-        kind: 'text',
-        key: 'extra:notes',
-        group: record.paymentMethod === null ? 'only' : 'last',
-        label: 'Notes',
+        kind: "text",
+        key: "extra:notes",
+        group: record.paymentMethod === null ? "only" : "last",
+        label: "Notes",
         body: record.notes,
       });
     }
@@ -211,27 +242,31 @@ function buildRows(
 
   /* --- history ----------------------------------------------------------- */
 
-  rows.push({ kind: 'sectionHeader', key: 'h:history', title: 'Payment history' });
+  rows.push({
+    kind: "sectionHeader",
+    key: "h:history",
+    title: "Payment history",
+  });
 
   if (paymentsFailed) {
     rows.push({
-      kind: 'note',
-      key: 'history:error',
-      text: 'Keeply could not read this bill’s history just now. The payments are still recorded.',
+      kind: "note",
+      key: "history:error",
+      text: "Keeply could not read this bill’s history just now. The payments are still recorded.",
     });
   } else if (payments.length === 0) {
     rows.push({
-      kind: 'note',
-      key: 'history:empty',
+      kind: "note",
+      key: "history:empty",
       text:
-        state === 'paid'
-          ? 'This period is settled. Older periods will appear here as you record them.'
-          : 'Nothing recorded yet. Mark this bill paid and each period is kept here, so you can see what it actually costs over time.',
+        state === "paid"
+          ? "This period is settled. Older periods will appear here as you record them."
+          : "Nothing recorded yet. Mark this bill paid and each period is kept here, so you can see what it actually costs over time.",
     });
   } else {
     payments.forEach((payment, index) =>
       rows.push({
-        kind: 'payment',
+        kind: "payment",
         key: `p:${payment.id}`,
         group: groupPosition(index, payments.length),
         payment,
@@ -271,13 +306,13 @@ export default function BillDetailScreen() {
     () =>
       value === null
         ? []
-        : buildRows(value, payments.value ?? [], payments.status === 'error'),
+        : buildRows(value, payments.value ?? [], payments.status === "error"),
     [value, payments.value, payments.status],
   );
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
-    else router.replace('/bills');
+    else router.replace("/bills");
   }, [router]);
 
   /**
@@ -297,16 +332,16 @@ export default function BillDetailScreen() {
     Alert.alert(
       `Mark ${value.name} paid?`,
       value.amountMinor === null
-        ? 'No amount will be recorded for this period — you can add one afterwards.'
+        ? "No amount will be recorded for this period — you can add one afterwards."
         : `Keeply records ${recorded} for the period due ${formatDate(value.dueDate)}.${
             value.isVariable
-              ? ' That is the estimate; edit the payment afterwards if the charge was different.'
-              : ''
+              ? " That is the estimate; edit the payment afterwards if the charge was different."
+              : ""
           }`,
       [
-        { text: 'Not yet', style: 'cancel' },
+        { text: "Not yet", style: "cancel" },
         {
-          text: 'Mark paid',
+          text: "Mark paid",
           onPress: () => {
             setFailure(null);
             setBusy(true);
@@ -322,15 +357,17 @@ export default function BillDetailScreen() {
                 // "did that go to the wrong bill?".
                 if (result.value.rolledForward) {
                   Alert.alert(
-                    'Recorded',
+                    "Recorded",
                     `${value.name} is settled for ${formatDate(
                       result.value.previousDueDate,
                     )}. The next one is due ${formatDate(result.value.bill.dueDate)}.`,
                   );
                 }
               } catch (error) {
-                log.error('bills: marking paid failed', error);
-                setFailure('Keeply could not record that. Nothing was changed.');
+                log.error("bills: marking paid failed", error);
+                setFailure(
+                  "Keeply could not record that. Nothing was changed.",
+                );
               } finally {
                 setBusy(false);
               }
@@ -346,13 +383,13 @@ export default function BillDetailScreen() {
     if (value === null || busy) return;
 
     Alert.alert(
-      'Undo the last payment?',
-      'The recorded payment is removed and this bill goes back to being due on the date it was due.',
+      "Undo the last payment?",
+      "The recorded payment is removed and this bill goes back to being due on the date it was due.",
       [
-        { text: 'Keep it', style: 'cancel' },
+        { text: "Keep it", style: "cancel" },
         {
-          text: 'Undo',
-          style: 'destructive',
+          text: "Undo",
+          style: "destructive",
           onPress: () => {
             setFailure(null);
             setBusy(true);
@@ -361,8 +398,8 @@ export default function BillDetailScreen() {
                 const result = await undoBillPayment(value.id);
                 if (!result.ok) setFailure(writeFailureMessage(result.errors));
               } catch (error) {
-                log.error('bills: undoing a payment failed', error);
-                setFailure('Keeply could not undo that. Nothing was changed.');
+                log.error("bills: undoing a payment failed", error);
+                setFailure("Keeply could not undo that. Nothing was changed.");
               } finally {
                 setBusy(false);
               }
@@ -382,8 +419,8 @@ export default function BillDetailScreen() {
         const result = await archiveBill(value.id, !value.isActive);
         if (!result.ok) setFailure(writeFailureMessage(result.errors));
       } catch (error) {
-        log.error('bills: archiving failed', error);
-        setFailure('Keeply could not change that. Nothing was changed.');
+        log.error("bills: archiving failed", error);
+        setFailure("Keeply could not change that. Nothing was changed.");
       } finally {
         setBusy(false);
       }
@@ -396,15 +433,15 @@ export default function BillDetailScreen() {
     Alert.alert(
       `Delete ${value.name}?`,
       value.paymentCount === 0
-        ? 'This cannot be undone.'
+        ? "This cannot be undone."
         : `Its ${value.paymentCount} recorded ${
-            value.paymentCount === 1 ? 'payment goes' : 'payments go'
+            value.paymentCount === 1 ? "payment goes" : "payments go"
           } with it. If you have simply stopped paying this bill, archive it instead — that keeps the history.`,
       [
-        { text: 'Keep', style: 'cancel' },
+        { text: "Keep", style: "cancel" },
         {
-          text: 'Delete',
-          style: 'destructive',
+          text: "Delete",
+          style: "destructive",
           onPress: () => {
             setBusy(true);
             void (async () => {
@@ -415,10 +452,10 @@ export default function BillDetailScreen() {
                   setBusy(false);
                   return;
                 }
-                router.replace('/bills');
+                router.replace("/bills");
               } catch (error) {
-                log.error('bills: delete failed', error);
-                setFailure('Keeply could not delete this. Try again.');
+                log.error("bills: delete failed", error);
+                setFailure("Keeply could not delete this. Try again.");
                 setBusy(false);
               }
             })();
@@ -433,127 +470,172 @@ export default function BillDetailScreen() {
     [],
   );
 
-  const missing = record.status === 'ready' && value === null;
+  /** Which ledger row the correction sheet is open on. `null` means closed. */
+  const [editing, setEditing] = useState<BillPaymentRecord | null>(null);
+  const actions = useMemo<BillActions>(
+    () => ({ editPayment: (payment) => setEditing(payment) }),
+    [],
+  );
+
+  const savePaymentEdit = useCallback(
+    (paymentId: string, patch: BillPaymentPatch) => {
+      setFailure(null);
+      setBusy(true);
+      void (async () => {
+        try {
+          const result = await saveBillPaymentEdit(paymentId, patch);
+          if (result.ok) setEditing(null);
+          else setFailure(writeFailureMessage(result.errors));
+        } catch (error) {
+          log.error("bills: correcting a payment failed", error);
+          setFailure("Keeply could not save that. Nothing was changed.");
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [],
+  );
+
+  const missing = record.status === "ready" && value === null;
 
   return (
-    <Screen edges={['top', 'bottom']} padded={false} keyboardAvoiding={false}>
-      <List<DetailRow>
-        data={rows}
-        renderItem={renderRow}
-        keyExtractor={detailRowKey}
-        separator="none"
-        loading={record.status === 'loading'}
-        error={
-          record.status === 'error' ? (
-            <EmptyState
-              icon="errorCircle"
-              title="Keeply could not open this bill"
-              description="The record is on this device, so this is not a connection problem."
-              actionLabel="Try again"
-              actionIcon="repeat"
-              onAction={record.reload}
-              fill={false}
+    <Screen edges={["top", "bottom"]} padded={false} keyboardAvoiding={false}>
+      <BillActionsContext value={actions}>
+        <List<DetailRow>
+          data={rows}
+          renderItem={renderRow}
+          keyExtractor={detailRowKey}
+          separator="none"
+          loading={record.status === "loading"}
+          error={
+            record.status === "error" ? (
+              <EmptyState
+                icon="errorCircle"
+                title="Keeply could not open this bill"
+                description="The record is on this device, so this is not a connection problem."
+                actionLabel="Try again"
+                actionIcon="repeat"
+                onAction={record.reload}
+                fill={false}
+              />
+            ) : undefined
+          }
+          empty={
+            missing ? (
+              <EmptyState
+                icon="tray"
+                title="This bill is gone"
+                description="It was deleted, so there is nothing left to show here."
+                actionLabel="Back to bills"
+                actionIcon="chevronLeft"
+                onAction={() => router.replace("/bills")}
+                fill={false}
+              />
+            ) : undefined
+          }
+          header={
+            <ScreenHeader
+              title={value?.name ?? "Bill"}
+              subtitle={
+                value === null ? undefined : categoryLabel(value.category)
+              }
+              onBack={goBack}
+              backLabel="Back to bills"
+              right={
+                value === null ? undefined : (
+                  <IconButton
+                    name="pencil"
+                    accessibilityLabel={`Edit ${value.name}`}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/bills/[id]/edit",
+                        params: { id: value.id },
+                      })
+                    }
+                    testID="bill-edit"
+                  />
+                )
+              }
             />
-          ) : undefined
-        }
-        empty={
-          missing ? (
-            <EmptyState
-              icon="tray"
-              title="This bill is gone"
-              description="It was deleted, so there is nothing left to show here."
-              actionLabel="Back to bills"
-              actionIcon="chevronLeft"
-              onAction={() => router.replace('/bills')}
-              fill={false}
-            />
-          ) : undefined
-        }
-        header={
-          <ScreenHeader
-            title={value?.name ?? 'Bill'}
-            subtitle={value === null ? undefined : categoryLabel(value.category)}
-            onBack={goBack}
-            backLabel="Back to bills"
-            right={
-              value === null ? undefined : (
-                <IconButton
-                  name="pencil"
-                  accessibilityLabel={`Edit ${value.name}`}
-                  onPress={() =>
-                    router.push({ pathname: '/bills/[id]/edit', params: { id: value.id } })
+          }
+          footer={
+            value === null ? undefined : (
+              <View style={styles.actions}>
+                {failure === null ? null : (
+                  <Text variant="caption" color="danger">
+                    {failure}
+                  </Text>
+                )}
+
+                {value.status === "paid" ? (
+                  <Button
+                    title="Undo the last payment"
+                    variant="secondary"
+                    icon="arrowUp"
+                    fullWidth
+                    disabled={busy}
+                    onPress={confirmUndo}
+                    accessibilityHint="Removes the recorded payment and puts the due date back"
+                    testID="bill-unpay"
+                  />
+                ) : (
+                  <Button
+                    title="Mark paid"
+                    variant="primary"
+                    icon="checkCircle"
+                    fullWidth
+                    disabled={busy}
+                    onPress={confirmPay}
+                    accessibilityHint="Records this period as settled and moves to the next one"
+                    testID="bill-pay"
+                  />
+                )}
+
+                <Button
+                  title={
+                    value.isActive ? "Archive this bill" : "Restore this bill"
                   }
-                  testID="bill-edit"
-                />
-              )
-            }
-          />
-        }
-        footer={
-          value === null ? undefined : (
-            <View style={styles.actions}>
-              {failure === null ? null : (
-                <Text variant="caption" color="danger">
-                  {failure}
-                </Text>
-              )}
-
-              {value.status === 'paid' ? (
-                <Button
-                  title="Undo the last payment"
                   variant="secondary"
-                  icon="arrowUp"
+                  icon={value.isActive ? "tray" : "repeat"}
                   fullWidth
                   disabled={busy}
-                  onPress={confirmUndo}
-                  accessibilityHint="Removes the recorded payment and puts the due date back"
-                  testID="bill-unpay"
+                  onPress={toggleArchive}
+                  accessibilityHint={
+                    value.isActive
+                      ? "Keeps the record and its history but stops the reminders and leaves it out of your totals"
+                      : "Puts it back into your totals and schedules its reminders again"
+                  }
+                  testID="bill-archive"
                 />
-              ) : (
+
                 <Button
-                  title="Mark paid"
-                  variant="primary"
-                  icon="checkCircle"
+                  title="Delete"
+                  variant="dangerGhost"
+                  icon="trash"
                   fullWidth
                   disabled={busy}
-                  onPress={confirmPay}
-                  accessibilityHint="Records this period as settled and moves to the next one"
-                  testID="bill-pay"
+                  onPress={confirmDelete}
+                  accessibilityHint="Asks you to confirm before removing it permanently"
+                  testID="bill-delete"
                 />
-              )}
+              </View>
+            )
+          }
+          contentContainerStyle={styles.content}
+          accessibilityLabel="Bill details"
+          testID="bill-detail"
+        />
 
-              <Button
-                title={value.isActive ? 'Archive this bill' : 'Restore this bill'}
-                variant="secondary"
-                icon={value.isActive ? 'tray' : 'repeat'}
-                fullWidth
-                disabled={busy}
-                onPress={toggleArchive}
-                accessibilityHint={
-                  value.isActive
-                    ? 'Keeps the record and its history but stops the reminders and leaves it out of your totals'
-                    : 'Puts it back into your totals and schedules its reminders again'
-                }
-                testID="bill-archive"
-              />
-
-              <Button
-                title="Delete"
-                variant="dangerGhost"
-                icon="trash"
-                fullWidth
-                disabled={busy}
-                onPress={confirmDelete}
-                accessibilityHint="Asks you to confirm before removing it permanently"
-                testID="bill-delete"
-              />
-            </View>
-          )
-        }
-        contentContainerStyle={styles.content}
-        accessibilityLabel="Bill details"
-        testID="bill-detail"
-      />
+        <PaymentEditSheet
+          visible={editing !== null}
+          payment={editing}
+          saving={busy}
+          onSave={savePaymentEdit}
+          onClose={() => setEditing(null)}
+          testID="bill-payment-edit"
+        />
+      </BillActionsContext>
     </Screen>
   );
 }
@@ -564,20 +646,35 @@ const detailRowKey = (row: DetailRow): string => row.key;
 /* Rows                                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * What a ledger row can do, for a row view that lives outside the screen.
+ *
+ * Same shape and same reason as Home's `HomeActionsContext`: `DetailRowView` is
+ * memoised at module scope so a new callback identity per render would defeat
+ * it, and threading one through `renderItem` would do exactly that.
+ */
+interface BillActions {
+  editPayment: (payment: BillPaymentRecord) => void;
+}
+
+const BillActionsContext = createContext<BillActions>({
+  editPayment: () => undefined,
+});
+
 const DetailRowView = memo(function DetailRowView({ row }: { row: DetailRow }) {
   const styles = useThemedStyles(makeStyles);
 
   switch (row.kind) {
-    case 'sectionHeader':
+    case "sectionHeader":
       return <ListSectionHeader title={row.title} />;
 
-    case 'note':
+    case "note":
       return <ListNote>{row.text}</ListNote>;
 
-    case 'reminders':
+    case "reminders":
       return <ReminderPermissionNote />;
 
-    case 'amount':
+    case "amount":
       return (
         <ListGroup position={row.group}>
           <Row
@@ -592,21 +689,21 @@ const DetailRowView = memo(function DetailRowView({ row }: { row: DetailRow }) {
                 <Amount
                   minor={row.amountMinor}
                   currency={row.currency}
-                  size={row.emphasis ? 'lg' : 'sm'}
-                  color={row.emphasis ? 'text' : 'textSecondary'}
+                  size={row.emphasis ? "lg" : "sm"}
+                  color={row.emphasis ? "text" : "textSecondary"}
                 />
               )
             }
             valueLabel={
               row.amountMinor === null
-                ? 'No amount recorded'
+                ? "No amount recorded"
                 : amountLabel(row.amountMinor, { currency: row.currency })
             }
           />
         </ListGroup>
       );
 
-    case 'fact':
+    case "fact":
       return (
         <ListGroup position={row.group}>
           <Row
@@ -618,7 +715,7 @@ const DetailRowView = memo(function DetailRowView({ row }: { row: DetailRow }) {
         </ListGroup>
       );
 
-    case 'text':
+    case "text":
       return (
         <ListGroup position={row.group}>
           <View>
@@ -632,40 +729,67 @@ const DetailRowView = memo(function DetailRowView({ row }: { row: DetailRow }) {
         </ListGroup>
       );
 
-    case 'payment': {
+    case "payment": {
       const { payment } = row;
-      const settled = payment.status === 'paid';
+      const settled = payment.status === "paid";
       return (
         <ListGroup position={row.group}>
-          <Row
-            title={formatDate(payment.dueDate)}
-            subtitle={
-              settled
-                ? payment.paidDate === null
-                  ? 'Paid'
-                  : `Paid ${formatDate(payment.paidDate)}`
-                : 'Not paid'
-            }
-            value={
-              payment.amountMinor === null ? (
-                <Text variant="body" color="textSecondary">
-                  —
-                </Text>
-              ) : (
-                <Amount minor={payment.amountMinor} currency={payment.currency} />
-              )
-            }
-            valueLabel={
-              payment.amountMinor === null
-                ? 'No amount recorded'
-                : amountLabel(payment.amountMinor, { currency: payment.currency })
-            }
-            trailing={
-              settled ? undefined : <StatusPill status={billStatusKey('unpaid')} label="Unpaid" />
-            }
-          />
+          <PaymentRow payment={payment} settled={settled} />
         </ListGroup>
       );
     }
   }
 });
+
+/**
+ * One settled period, and the way back into it.
+ *
+ * Only a SETTLED row opens the correction sheet: an unpaid period has nothing
+ * recorded to correct, and the way to settle it is the screen's primary action
+ * rather than a row tap.
+ */
+function PaymentRow({
+  payment,
+  settled,
+}: {
+  payment: BillPaymentRecord;
+  settled: boolean;
+}) {
+  const { editPayment } = useContext(BillActionsContext);
+  return (
+    <Row
+      title={formatDate(payment.dueDate)}
+      subtitle={
+        settled
+          ? payment.paidDate === null
+            ? "Paid"
+            : `Paid ${formatDate(payment.paidDate)}`
+          : "Not paid"
+      }
+      value={
+        payment.amountMinor === null ? (
+          <Text variant="body" color="textSecondary">
+            —
+          </Text>
+        ) : (
+          <Amount minor={payment.amountMinor} currency={payment.currency} />
+        )
+      }
+      valueLabel={
+        payment.amountMinor === null
+          ? "No amount recorded"
+          : amountLabel(payment.amountMinor, { currency: payment.currency })
+      }
+      trailing={
+        settled ? undefined : (
+          <StatusPill status={billStatusKey("unpaid")} label="Unpaid" />
+        )
+      }
+      onPress={settled ? () => editPayment(payment) : undefined}
+      chevron={settled}
+      accessibilityHint={
+        settled ? "Correct what was paid, and when" : undefined
+      }
+    />
+  );
+}

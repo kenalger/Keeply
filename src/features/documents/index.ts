@@ -59,6 +59,7 @@ export const {
   listDocuments,
   getDocument,
   createDocument,
+  answerRenewal,
   updateDocument,
   deleteDocument,
   expirySummary,
@@ -110,4 +111,20 @@ export type {
   DocumentSort,
   DocumentType,
   NewDocumentInput,
+} from './types';
+
+export {
+  RENEWAL_SNOOZE_DAYS,
+  canOfferRenewal,
+  patchForAnswer,
+  shouldPrompt,
+  shouldPromptForRenewal,
+  type RenewalAnswer,
+  type RenewalPatch,
+  type RenewalSubject,
+} from './renewal';
+export {
+  DOCUMENT_RENEWAL_STATES,
+  isDocumentRenewalState,
+  type DocumentRenewalState,
 } from './types';

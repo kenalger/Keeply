@@ -65,6 +65,8 @@ import {
   type BillSort,
   type BillState,
 } from './types';
+import { globContains } from '@/lib/search';
+
 import type { SqlStatement, SqlValue } from './store';
 
 /** The live-row view for bills. One of the two relations a SELECT may name. */
@@ -296,19 +298,6 @@ export interface ReminderRow {
 /* Filtering (§23)                                                             */
 /* -------------------------------------------------------------------------- */
 
-/**
- * `%`, `_` and the escape character itself, escaped for a `LIKE ... ESCAPE`.
- *
- * Without this, a user searching for "50%" matches every bill they own, and a
- * search for "_" matches all of them too. Declared here rather than imported
- * from the subscriptions feature: a three-line pure helper is not worth a
- * cross-feature dependency in the hot path, and `tests/bills-filters.test.ts`
- * pins the behaviour independently.
- */
-export function escapeLikePattern(term: string): string {
-  return term.replace(/[\\%_]/g, (character) => `\\${character}`);
-}
-
 interface WhereClause {
   text: string;
   params: SqlValue[];
@@ -392,15 +381,14 @@ export function buildFilterClause(
 
   const search = typeof filter.search === 'string' ? filter.search.trim() : '';
   if (search.length > 0) {
-    // SQLite's LIKE is case-insensitive for ASCII by default, which is what a
-    // search box should be. The escape character is a backslash; SQLite does
-    // not process backslash escapes inside string literals, so '\' is one
-    // literal backslash.
-    const pattern = `%${escapeLikePattern(search)}%`;
+    // GLOB, not LIKE: LIKE folds case for ASCII only, so `MUÑOZ` never matched
+    // `muñoz`. `globContains()` folds the needle in JavaScript — which knows
+    // Unicode — and emits a character class per letter. Same scan, same plan.
+    const pattern = globContains(search) ?? '*';
     conditions.push(
-      `("${BILL}"."name" LIKE ? ESCAPE '\\'` +
-        ` OR coalesce("${BILL}"."payment_method", '') LIKE ? ESCAPE '\\'` +
-        ` OR coalesce("${BILL}"."notes", '') LIKE ? ESCAPE '\\')`,
+      `("${BILL}"."name" GLOB ?` +
+        ` OR coalesce("${BILL}"."payment_method", '') GLOB ?` +
+        ` OR coalesce("${BILL}"."notes", '') GLOB ?)`,
     );
     params.push(pattern, pattern, pattern);
   }

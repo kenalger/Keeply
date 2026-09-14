@@ -43,6 +43,7 @@ import {
   type ActivityFilter,
 } from '@/features/subscriptions/ui';
 import { daysUntil, formatMoney, useThemedStyles, type Theme } from '@/theme';
+import { useDebounced } from '@/lib/use-debounced';
 
 /**
  * The subscription list (§6, §23, §33).
@@ -238,8 +239,13 @@ export default function SubscriptionListScreen() {
   // Soonest renewal first, which is the question this list is opened to answer.
   const [sort, setSort] = useState<SubscriptionSort>('next-billing');
 
+  // Debounced before it reaches the query, not before it reaches the box: the
+  // field stays instant, the search runs once the typing stops. Search is the
+  // only read left in the app that cannot use an index (§33).
+  const query = useDebounced(search);
+
   const filter = useSubscriptionFilter({
-    search,
+    search: query,
     activity,
     category: category ?? undefined,
     sort,
@@ -247,7 +253,8 @@ export default function SubscriptionListScreen() {
   const list = useSubscriptionList(filter);
   const totals = useSubscriptionTotals();
 
-  const filtered = search.trim().length > 0 || activity !== 'all' || category !== null;
+  // `query`, not `search` — see the note at `useDebounced`.
+  const filtered = query.trim().length > 0 || activity !== 'all' || category !== null;
 
   const rows = useMemo(
     () => buildRows(totals.value, list.rows, filtered, list.total, totals.status === 'error'),

@@ -25,12 +25,14 @@
  * showing the old list.
  */
 import {
+  answerRenewal,
   createDocument,
   deleteDocument,
   updateDocument,
   type DocumentPatch,
   type DocumentRecord,
   type NewDocumentInput,
+  type RenewalAnswer,
 } from '@/features/documents';
 import { syncAllReminders } from '@/lib/reminders';
 import { bumpRevision } from '@/stores/revision-store';
@@ -75,6 +77,26 @@ export async function saveDocumentPatch(
   bumpRevision('documents');
   resyncReminders();
   await unlinkOrphanedFile(orphanedUri);
+  return record;
+}
+
+/**
+ * Record the user's answer to §15's expiry prompt, then publish.
+ *
+ * No orphan handling: none of the four answers touches the file. The reminder
+ * resync is the load-bearing part — "still sorting it out" and "I don't need
+ * this" both change what Keeply should be reminding about, and a notification
+ * that still fires after the user said either would be the feature reading as
+ * broken.
+ */
+export async function answerDocumentRenewal(
+  id: string,
+  answer: RenewalAnswer,
+  newExpiryDate?: string,
+): Promise<DocumentRecord> {
+  const record = await answerRenewal(id, answer, newExpiryDate);
+  bumpRevision('documents');
+  resyncReminders();
   return record;
 }
 

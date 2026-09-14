@@ -23,7 +23,7 @@
  * sorts. A receipt journal is the list in this app most likely to reach a
  * thousand rows (§33), which is exactly why none of that may drift into JS.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import type { MinorUnits } from '@/db';
 import {
@@ -37,74 +37,10 @@ import {
   type ReceiptTotals,
   type ReceiptTotalsOptions,
 } from '@/features/receipts';
-import { log } from '@/lib/log';
+import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
 import { useRevision } from '@/stores/revision-store';
 
 /** Loading is the first read only. After that a refresh keeps the old rows. */
-export type AsyncStatus = 'loading' | 'ready' | 'error';
-
-export interface AsyncValue<T> {
-  status: AsyncStatus;
-  /** The last successful value. `null` until the first read resolves. */
-  value: T | null;
-  error: unknown;
-  /** Re-run the read now. Safe to call from an event handler. */
-  reload: () => void;
-}
-
-/**
- * Run an async read, re-running it when `deps` change, with the last in-flight
- * read winning.
- *
- * The generation counter is not ceremony: two reads started a frame apart can
- * resolve out of order, and without it a fast filter change can be overwritten
- * by the slower read it replaced. Typing in the merchant box is exactly that.
- */
-function useAsyncRead<T>(read: () => Promise<T>, deps: readonly unknown[]): AsyncValue<T> {
-  const [state, setState] = useState<{ status: AsyncStatus; value: T | null; error: unknown }>({
-    status: 'loading',
-    value: null,
-    error: null,
-  });
-  const [nonce, setNonce] = useState(0);
-  const generation = useRef(0);
-
-  // `read` is rebuilt every render by design — the caller closes over its own
-  // arguments — so the effect keys on `deps`, and the ref carries the current
-  // function into it without adding an identity that changes every frame.
-  const readRef = useRef(read);
-  readRef.current = read;
-
-  useEffect(() => {
-    generation.current += 1;
-    const mine = generation.current;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const value = await readRef.current();
-        if (cancelled || mine !== generation.current) return;
-        setState({ status: 'ready', value, error: null });
-      } catch (error) {
-        if (cancelled || mine !== generation.current) return;
-        // No URI reaches this line: the data layer never puts one in an error,
-        // and `log.error` redacts by key name regardless (§10).
-        log.error('receipts: read failed', error);
-        setState((previous) => ({ status: 'error', value: previous.value, error }));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
-
-  const reload = useCallback(() => setNonce((value) => value + 1), []);
-
-  return { status: state.status, value: state.value, error: state.error, reload };
-}
-
 /* -------------------------------------------------------------------------- */
 /* The list (§23)                                                              */
 /* -------------------------------------------------------------------------- */
@@ -197,6 +133,7 @@ export function useReceiptList(filter: ReceiptFilter): ReceiptListView {
   const slice = useAsyncRead<ListSlice>(
     () => readPages(filter, requested),
     [key, revision, requested],
+    'receipts',
   );
 
   const loadMore = useCallback(() => setPages((current) => current + 1), []);
@@ -230,7 +167,7 @@ export function useReceiptTotals(options: ReceiptTotalsOptions = {}): AsyncValue
   // By VALUE, not by identity: a screen rebuilds its options object every
   // render, and keying the read on the object would re-query every frame.
   const key = JSON.stringify(options);
-  return useAsyncRead(() => receiptTotals(options), [key, revision]);
+  return useAsyncRead(() => receiptTotals(options), [key, revision], 'receipts');
 }
 
 /**
@@ -244,7 +181,7 @@ export function useReceiptTotals(options: ReceiptTotalsOptions = {}): AsyncValue
  */
 export function useReceiptRecord(id: string): AsyncValue<ReceiptRecord | null> {
   const revision = useRevision('receipts');
-  return useAsyncRead(() => getReceipt(id), [id, revision]);
+  return useAsyncRead(() => getReceipt(id), [id, revision], 'receipts');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -347,3 +284,6 @@ export function totalsOptionsFor(filter: ReceiptFilter): ReceiptTotalsOptions {
   const { sort: _sort, limit: _limit, offset: _offset, ...rest } = filter;
   return rest;
 }
+
+// Re-exported so every screen keeps importing these from its own feature.
+export type { AsyncStatus, AsyncValue };

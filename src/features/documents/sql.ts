@@ -10,7 +10,7 @@
  *
  * NO STRING INTERPOLATION OF USER DATA. Every value is a bound parameter; the
  * only text this file builds is column and view names it owns. A search term is
- * escaped for LIKE (see `escapeLike`) and then bound.
+ * becomes a GLOB pattern via `globContains()` and is then bound.
  *
  * ── THE SEARCH DOES NOT TOUCH `document_number` ────────────────────────────
  * §14's rule, enforced at the one place it can be. A search box that matches a
@@ -19,6 +19,8 @@
  * its COUNT cannot disagree about it either.
  */
 import type { SqlStatement, SqlValue } from './store';
+import { globContains } from '@/lib/search';
+
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, type DocumentFilter } from './types';
 
 /** The only relation any read in this feature selects from. */
@@ -29,15 +31,9 @@ export const DOCUMENTS_TABLE = 'documents';
 
 const DOCUMENT_COLUMNS =
   '"id", "name", "type", "document_number", "issue_date", "expiry_date",' +
-  ' "notes", "local_file_uri", "file_mime_type", "created_at", "updated_at"';
-
-/**
- * `%`, `_` and the escape character itself, so a search for "50%" matches a
- * literal "50%" instead of everything.
- */
-function escapeLike(term: string): string {
-  return term.replace(/[\\%_]/g, (char) => `\\${char}`);
-}
+  ' "notes", "local_file_uri", "file_mime_type",' +
+  ' "renewal_state", "renewal_remind_after", "renewal_prompted_for",' +
+  ' "created_at", "updated_at"';
 
 interface Clause {
   readonly text: string;
@@ -69,12 +65,13 @@ function whereFor(filter: DocumentFilter, todayISO: string): Clause {
 
   const search = filter.search?.trim();
   if (search !== undefined && search.length > 0) {
-    const pattern = `%${escapeLike(search)}%`;
+    const pattern = globContains(search) ?? '*';
     // NAME and NOTES only. See the module header for why `document_number` is
     // absent, and keep it absent.
     parts.push(
-      '(lower("name") LIKE lower(?) ESCAPE \'\\\'' +
-        ' OR lower(coalesce("notes", \'\')) LIKE lower(?) ESCAPE \'\\\')',
+      // GLOB, not `lower() LIKE lower()` — both folded ASCII only. See
+      // `globContains()`.
+      '("name" GLOB ? OR coalesce("notes", \'\') GLOB ?)',
     );
     params.push(pattern, pattern);
   }
@@ -171,13 +168,30 @@ export function selectDocument(id: string): SqlStatement {
  * documents would otherwise report the first fifty's ladder as though it were
  * the whole one. `todayISO` is bound for the same reason it is bound above.
  */
+/**
+ * A retired document is not a deadline.
+ *
+ * "I don't need this any more" is the one answer to §15's expiry prompt that
+ * has to change what OTHER screens do. A passport the user has told Keeply they
+ * no longer hold must stop being counted as expired on Home, stop appearing in
+ * the expiring list, and stop firing notifications — otherwise the answer was
+ * a button that did nothing, which is worse than not offering it.
+ *
+ * The row itself stays: it is still the proof of what the number was, still
+ * searchable, still in the documents list. Only its DEADLINE retires.
+ */
+const NOT_RETIRED = `"renewal_state" <> 'retired'`;
+
 export function selectExpirySummary(todayISO: string): SqlStatement {
   return {
     text:
+      // `total` and `undated` count EVERY document — they answer "what do you
+      // have", and a retired passport is still one you have. Only the two
+      // DEADLINE counters drop it, because a deadline is what retiring ends.
       'SELECT count(*) AS "total",' +
-      ' sum(CASE WHEN "expiry_date" IS NOT NULL AND "expiry_date" < ? THEN 1 ELSE 0 END)' +
-      ' AS "expired",' +
-      ' sum(CASE WHEN "expiry_date" IS NOT NULL AND "expiry_date" >= ?' +
+      ` sum(CASE WHEN ${NOT_RETIRED} AND "expiry_date" IS NOT NULL AND "expiry_date" < ?` +
+      ' THEN 1 ELSE 0 END) AS "expired",' +
+      ` sum(CASE WHEN ${NOT_RETIRED} AND "expiry_date" IS NOT NULL AND "expiry_date" >= ?` +
       " AND \"expiry_date\" <= date(?, '+90 days') THEN 1 ELSE 0 END) AS \"expiring_soon\"," +
       ' sum(CASE WHEN "expiry_date" IS NULL THEN 1 ELSE 0 END) AS "undated"' +
       ` FROM "${DOCUMENTS_LIVE_VIEW}"`,
@@ -213,7 +227,7 @@ export function selectExpiring(
   return {
     text:
       `SELECT ${DOCUMENT_COLUMNS} FROM "${DOCUMENTS_LIVE_VIEW}"` +
-      ' WHERE "expiry_date" IS NOT NULL AND "expiry_date" <= date(?, ?)' +
+      ` WHERE ${NOT_RETIRED} AND "expiry_date" IS NOT NULL AND "expiry_date" <= date(?, ?)` +
       `${lowerBound}` +
       ' ORDER BY "expiry_date" ASC, "name" COLLATE NOCASE ASC, "id" ASC LIMIT ?',
     params: excludeExpired
@@ -278,6 +292,12 @@ const PATCH_COLUMNS: Readonly<Record<string, string>> = {
   notes: 'notes',
   localFileUri: 'local_file_uri',
   fileMimeType: 'file_mime_type',
+  // §15's renewal prompt. On the allowlist because `answerRenewal()` writes
+  // them through the same builder every other edit goes through — a second
+  // UPDATE path is a second place the `updated_at` bump can be forgotten.
+  renewalState: 'renewal_state',
+  renewalRemindAfter: 'renewal_remind_after',
+  renewalPromptedFor: 'renewal_prompted_for',
 };
 
 /**

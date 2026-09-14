@@ -40,6 +40,7 @@ import {
   type BillStateFilter,
 } from '@/features/bills/ui';
 import { formatMoney, useThemedStyles, type Theme } from '@/theme';
+import { useDebounced } from '@/lib/use-debounced';
 
 /**
  * The bills list (§7, §23, §33).
@@ -245,8 +246,13 @@ export default function BillListScreen() {
   // Soonest due first, which is the question this list is opened to answer.
   const [sort, setSort] = useState<BillSort>('due-date');
 
+  // Debounced before it reaches the query, not before it reaches the box: the
+  // field stays instant, the search runs once the typing stops. Search is the
+  // only read left in the app that cannot use an index (§33).
+  const query = useDebounced(search);
+
   const filter = useBillFilter({
-    search,
+    search: query,
     state,
     category: category ?? undefined,
     sort,
@@ -258,7 +264,8 @@ export default function BillListScreen() {
   const list = useBillList(filter);
   const totals = useBillTotals();
 
-  const filtered = search.trim().length > 0 || state !== 'all' || category !== null;
+  // `query`, not `search` — see the note at `useDebounced`.
+  const filtered = query.trim().length > 0 || state !== 'all' || category !== null;
 
   const rows = useMemo(
     () =>

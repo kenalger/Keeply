@@ -146,10 +146,10 @@ describe('receipts / statements', () => {
     }
     // And the search clause itself names only the three text columns §23 lists.
     const searched = statements.selectReceipts({ search: 'x' }).text;
-    assert.match(searched, /"merchant" LIKE \?/);
-    assert.match(searched, /"payment_method", ''\) LIKE \?/);
-    assert.match(searched, /"notes", ''\) LIKE \?/);
-    assert.doesNotMatch(searched, /uri" LIKE/);
+    assert.match(searched, /"merchant" GLOB \?/);
+    assert.match(searched, /"payment_method", ''\) GLOB \?/);
+    assert.match(searched, /"notes", ''\) GLOB \?/);
+    assert.doesNotMatch(searched, /uri" GLOB/);
   });
 });
 

@@ -290,10 +290,16 @@ describe('bills / statements', () => {
     assert.throws(() => statements.updateBillPayment('id', new Map(), 1), /no assignments/);
   });
 
-  test('a search term cannot smuggle a LIKE wildcard', () => {
-    assert.equal(statements.escapeLikePattern('50%'), '50\\%');
-    assert.equal(statements.escapeLikePattern('a_b'), 'a\\_b');
-    assert.equal(statements.escapeLikePattern('c\\d'), 'c\\\\d');
+  test('a search term cannot smuggle a wildcard', () => {
+    // The predicate is GLOB now, so the metacharacters are `*`, `?` and `[`
+    // rather than `%` and `_`. `tests/search-folding.test.ts` pins the escaping
+    // itself; this checks the bills clause actually goes through it.
+    const clause = statements.buildFilterClause({ search: '50%*' }, DATES);
+    assert.match(clause.text, /GLOB/, 'bills must search with GLOB');
+    assert.doesNotMatch(clause.text, /LIKE/, 'and not with LIKE');
+    // `%` is nothing to GLOB, so it stays literal; `*` is the wildcard and is
+    // escaped into a class of its own. Digits have no case, so no class.
+    assert.equal(clause.params[0], '*50%[*]*');
   });
 });
 

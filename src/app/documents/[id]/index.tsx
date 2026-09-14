@@ -1,8 +1,9 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
+  Button,
   Card,
   EmptyState,
   IconButton,
@@ -13,16 +14,31 @@ import {
   StatusPill,
   Text,
 } from '@/components/ui';
-import { daysUntilExpiry, expiryBucket } from '@/features/documents';
+import {
+  canOfferRenewal,
+  daysUntilExpiry,
+  expiryBucket,
+  shouldPromptForRenewal,
+  type RenewalAnswer,
+} from '@/features/documents';
 import {
   DOCUMENT_TYPE_LABELS,
   DocumentFile,
   EXPIRY_BUCKET_LABELS,
   EXPIRY_BUCKET_STATUS,
+  RenewalSheet,
+  answerDocumentRenewal,
   describeDaysLeft,
   useDocument,
 } from '@/features/documents/ui';
-import { formatDate, maskIdentifier, useThemedStyles, type Theme } from '@/theme';
+import { log } from '@/lib/log';
+import {
+  formatDate,
+  maskIdentifier,
+  todayCalendarString,
+  useThemedStyles,
+  type Theme,
+} from '@/theme';
 
 /**
  * One document (Phase 6, §14–§16).
@@ -53,6 +69,22 @@ export default function DocumentScreen() {
   // One clock reading for the whole render, so the bucket and the sentence
   // under it can never come from two different moments.
   const now = useMemo(() => new Date(), []);
+  const today = useMemo(() => todayCalendarString(now), [now]);
+
+  /**
+   * ── WHY THIS IS DERIVED AND NOT AN EFFECT ────────────────────────────────
+   * The prompt opens because of what the RECORD says, so it is computed from
+   * the record rather than pushed into state by an effect that fires after the
+   * read lands. An effect would flash the screen first and trip this project's
+   * "no setState in an effect" rule besides.
+   *
+   * `answered` is the only state: it closes the sheet for the rest of this
+   * mount, covering the gap between writing the answer and the re-read that
+   * makes `shouldPromptForRenewal` false on its own. `reopened` is the button.
+   */
+  const [answered, setAnswered] = useState(false);
+  const [reopened, setReopened] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const leave = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -82,6 +114,29 @@ export default function DocumentScreen() {
       </Screen>
     );
   }
+
+  const autoPrompt = !answered && shouldPromptForRenewal(record, today);
+  const offerRenewal = canOfferRenewal(record, today);
+  const daysExpired = Math.max(0, -(daysUntilExpiry(record.expiryDate, now) ?? 0));
+
+  const onAnswer = (answer: RenewalAnswer, newExpiryDate?: string) => {
+    setAnswered(true);
+    setReopened(false);
+    setSaving(true);
+    void (async () => {
+      try {
+        await answerDocumentRenewal(record.id, answer, newExpiryDate);
+        document.reload();
+      } catch (error) {
+        // The sheet is already closed and the record is unchanged, so the
+        // screen is not lying — it just did not take. No identifier reaches
+        // this line: §10's rule holds in a catch like anywhere else.
+        log.error('documents: recording the renewal answer failed', error);
+      } finally {
+        setSaving(false);
+      }
+    })();
+  };
 
   const bucket = expiryBucket(record.expiryDate, now);
   const daysLeft = daysUntilExpiry(record.expiryDate, now);
@@ -130,10 +185,50 @@ export default function DocumentScreen() {
               <Text variant="body" color="textSecondary">
                 {describeDaysLeft(daysLeft)}
               </Text>
+              {record.renewalState === 'in_progress' ? (
+                // The state is visible, not just quiet. "I told it I was
+                // dealing with this" has to be checkable, or the silence reads
+                // as the app having forgotten.
+                <Text variant="caption" color="textSecondary">
+                  {record.renewalRemindAfter === null
+                    ? 'You said you are sorting this out.'
+                    : `You are sorting this out — Keeply will ask again on ${formatDate(record.renewalRemindAfter)}.`}
+                </Text>
+              ) : null}
+              {record.renewalState === 'retired' ? (
+                <Text variant="caption" color="textSecondary">
+                  No longer tracked. The details and scan are kept.
+                </Text>
+              ) : null}
+              {offerRenewal ? (
+                <Button
+                  title="What do you want to do?"
+                  variant="secondary"
+                  onPress={() => setReopened(true)}
+                  loading={saving}
+                  testID="document-renewal-open"
+                />
+              ) : null}
             </>
           )}
         </Card>
       </View>
+
+      <RenewalSheet
+        visible={autoPrompt || reopened}
+        documentName={record.name}
+        daysExpired={daysExpired}
+        onAnswer={onAnswer}
+        onDismiss={() => {
+          setAnswered(true);
+          setReopened(false);
+          // Dismissing is still an answer — it is what stops the prompt
+          // auto-opening for THIS expiry again. Without this write it would
+          // reappear on the next visit.
+          onAnswer('dismiss');
+        }}
+        testID="document-renewal-sheet"
+      />
 
       <View style={styles.block}>
         <ListSectionHeader title="Details" />

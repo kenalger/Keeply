@@ -10,13 +10,13 @@
  * polls, nothing subscribes to SQLite, and no write ever renders a spinner
  * (§25) — `loading` is the FIRST read of a screen and nothing else.
  *
- * ⚠ This is the SIXTH copy of `useAsyncRead` in the app. It is copied rather
- * than extracted for the reason the handoff gives: ~60 lines of subtle
- * concurrency logic wants extracting across all six at once, and smuggling the
- * extraction into whichever feature happens to be under construction is how one
- * feature's refactor becomes five features' regression.
+ * `useAsyncRead` was the SIXTH copy of itself when this comment was first
+ * written, and the warning it carried — that extracting it mid-feature turns
+ * one refactor into five regressions — is why it stayed copied until all six
+ * could move at once. They have: it lives in `src/lib/use-async-read.ts` now.
+ * All six copies were byte-identical apart from their log label.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import {
   expirySummary,
@@ -29,68 +29,8 @@ import {
   type DocumentSort,
   type DocumentType,
 } from '@/features/documents';
-import { log } from '@/lib/log';
+import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
 import { useRevision } from '@/stores/revision-store';
-
-export type AsyncStatus = 'loading' | 'ready' | 'error';
-
-export interface AsyncValue<T> {
-  status: AsyncStatus;
-  /** The last successful value. `null` until the first read resolves. */
-  value: T | null;
-  error: unknown;
-  reload: () => void;
-}
-
-/**
- * Run an async read, re-running it when `deps` change, last read wins.
- *
- * The generation counter is not ceremony: two reads started a frame apart can
- * resolve out of order, and without it a fast filter change can be overwritten
- * by the slower read it replaced. Typing in the search box is exactly that.
- */
-function useAsyncRead<T>(read: () => Promise<T>, deps: readonly unknown[]): AsyncValue<T> {
-  const [state, setState] = useState<{ status: AsyncStatus; value: T | null; error: unknown }>({
-    status: 'loading',
-    value: null,
-    error: null,
-  });
-  const [nonce, setNonce] = useState(0);
-  const generation = useRef(0);
-
-  const readRef = useRef(read);
-  readRef.current = read;
-
-  useEffect(() => {
-    generation.current += 1;
-    const mine = generation.current;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const value = await readRef.current();
-        if (cancelled || mine !== generation.current) return;
-        setState({ status: 'ready', value, error: null });
-      } catch (error) {
-        if (cancelled || mine !== generation.current) return;
-        // No document number and no file path reaches this line: the data layer
-        // never puts one in an error, and `log.error` redacts by key name
-        // regardless (§14, §16).
-        log.error('documents: read failed', error);
-        setState((previous) => ({ status: 'error', value: previous.value, error }));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
-
-  const reload = useCallback(() => setNonce((value) => value + 1), []);
-
-  return { status: state.status, value: state.value, error: state.error, reload };
-}
 
 /** Rows per fetch. Comfortably more than one screenful, well under the cap. */
 export const LIST_PAGE_SIZE = 40;
@@ -195,6 +135,7 @@ export function useDocumentList(filter: DocumentFilter): DocumentListView {
   const slice = useAsyncRead<ListSlice>(
     () => readPages(stable, requested),
     [key, revision, requested],
+    'documents',
   );
 
   const loadMore = useCallback(() => setPages((current) => current + 1), []);
@@ -223,6 +164,7 @@ export function useDocument(id: string | undefined): AsyncValue<DocumentRecord |
   return useAsyncRead<DocumentRecord | null>(
     () => (id === undefined || id === '' ? Promise.resolve(null) : getDocument(id)),
     [id, revision],
+    'documents',
   );
 }
 
@@ -234,7 +176,7 @@ export function useDocument(id: string | undefined): AsyncValue<DocumentRecord |
  */
 export function useExpirySummary(): AsyncValue<DocumentExpirySummary> {
   const revision = useRevision('documents');
-  return useAsyncRead(() => expirySummary(), [revision]);
+  return useAsyncRead(() => expirySummary(), [revision], 'documents');
 }
 
 /** Documents with a deadline inside the window, soonest first. */
@@ -247,6 +189,7 @@ export function useExpiringDocuments(
   return useAsyncRead(
     () => expiringDocuments(withinDays, limit, excludeExpired),
     [withinDays, limit, excludeExpired, revision],
+  'documents',
   );
 }
 
@@ -254,3 +197,6 @@ export function useExpiringDocuments(
 export type TypeFilter = DocumentType | null;
 /** Re-exported so a screen can type its sort state without a second import. */
 export type { DocumentSort };
+
+// Re-exported so every screen keeps importing these from its own feature.
+export type { AsyncStatus, AsyncValue };

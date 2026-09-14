@@ -25,6 +25,32 @@ import type { schema } from '@/db';
 /* -------------------------------------------------------------------------- */
 
 export type DocumentType = schema.DocumentType;
+export type DocumentRenewalState = schema.DocumentRenewalState;
+
+/**
+ * The three answers, as a runtime list.
+ *
+ * Duplicated from the schema's tuple for the same reason `DOCUMENT_TYPES` is —
+ * `@/db/schema/*` is off limits outside `src/db` — and kept honest the same
+ * way, by `satisfies` plus the completeness constant below.
+ */
+export const DOCUMENT_RENEWAL_STATES = [
+  'none',
+  'in_progress',
+  'retired',
+] as const satisfies readonly DocumentRenewalState[];
+
+type AllRenewalStatesListed =
+  Exclude<DocumentRenewalState, (typeof DOCUMENT_RENEWAL_STATES)[number]> extends never
+    ? true
+    : never;
+export const RENEWAL_STATE_LIST_IS_COMPLETE: AllRenewalStatesListed = true;
+
+export function isDocumentRenewalState(value: unknown): value is DocumentRenewalState {
+  return (
+    typeof value === 'string' && (DOCUMENT_RENEWAL_STATES as readonly string[]).includes(value)
+  );
+}
 
 /**
  * The types as a runtime list, for validating a value that arrives as a plain
@@ -81,6 +107,15 @@ export interface DocumentRecord {
   localFileUri: string | null;
   /** What the file is, so a screen knows whether to render it or icon it. */
   fileMimeType: string | null;
+  /**
+   * What the user answered when Keeply asked about the expiry. See
+   * `renewal.ts` — `'none'` is both "never asked" and "renewed since".
+   */
+  renewalState: DocumentRenewalState;
+  /** Quiet until this `'YYYY-MM-DD'`. Only meaningful while `'in_progress'`. */
+  renewalRemindAfter: string | null;
+  /** The expiry the prompt was last opened for. Not a boolean, on purpose. */
+  renewalPromptedFor: string | null;
   createdAt: number;
   updatedAt: number;
 }

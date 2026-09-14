@@ -67,3 +67,4 @@ export {
   saveNewBill,
   undoBillPayment,
 } from './mutations';
+export { PaymentEditSheet, type PaymentEditSheetProps } from './payment-edit-sheet';

@@ -43,6 +43,7 @@ import {
   type ReminderLeadTime,
 } from '@/stores/settings-store';
 import { useThemedStyles, type Theme } from '@/theme';
+import { useDebounced } from '@/lib/use-debounced';
 
 /**
  * Documents tab (§4, §14–§16): expiry tracking for important papers.
@@ -150,7 +151,12 @@ export default function DocumentsScreen() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<DocumentSort>('expiry');
 
-  const list = useDocumentList({ search, sort });
+  // Debounced before it reaches the query, not before it reaches the box: the
+  // field stays instant, the search runs once the typing stops. Search is the
+  // only read left in the app that cannot use an index (§33).
+  const query = useDebounced(search);
+
+  const list = useDocumentList({ search: query, sort });
   const summary = useExpirySummary();
 
   const retry = useCallback(() => {
@@ -186,7 +192,7 @@ export default function DocumentsScreen() {
       built.push({
         kind: 'note',
         key: 'no-match',
-        text: search.trim() === '' ? 'Nothing here yet.' : 'Nothing matches that search.',
+        text: query.trim() === '' ? 'Nothing here yet.' : 'Nothing matches that search.',
       });
       // NOT an early return. When every row on the page is damaged the list is
       // empty AND `damagedCount` is the only signal the user gets — returning
@@ -243,7 +249,8 @@ export default function DocumentsScreen() {
     list.damagedCount,
     list.hasMore,
     list.total,
-    search,
+    // `query`, not `search`: the empty state describes the search that RAN.
+    query,
   ]);
 
   const renderRow = useCallback(

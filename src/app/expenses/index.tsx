@@ -38,6 +38,7 @@ import {
   type ReceiptFilterState,
 } from '@/features/receipts/ui';
 import { formatDateShort, formatMoney, useThemedStyles, type Theme } from '@/theme';
+import { useDebounced } from '@/lib/use-debounced';
 
 /**
  * The receipt journal (§9, §23, §33).
@@ -260,14 +261,26 @@ export default function ReceiptListScreen() {
   const [filters, setFilters] = useState<ReceiptFilterState>(EMPTY_FILTER);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  const filter = useReceiptFilter(filters);
+  // ONLY `search` is debounced. A category chip or a date range is a decision
+  // the user already made and must apply on the tap; a half-typed word is not.
+  // Search is also the only one of them that cannot use an index (§33).
+  const debouncedSearch = useDebounced(filters.search);
+  const queried = useMemo<ReceiptFilterState>(
+    () => ({ ...filters, search: debouncedSearch }),
+    [filters, debouncedSearch],
+  );
+
+  const filter = useReceiptFilter(queried);
   const list = useReceiptList(filter);
   // Derived from the LIST's filter, not rebuilt from the controls — see the
   // header. Rebuilding it is how a sum and its rows drift apart.
   const totalsOptions = useMemo(() => totalsOptionsFor(filter), [filter]);
   const totals = useReceiptTotals(totalsOptions);
 
-  const filtered = isFiltered(filters);
+  // What actually RAN, so the empty state cannot contradict the list. The
+  // chip count stays on `filters`: it counts controls the user set, and a badge
+  // that lags the tap that caused it reads as a dropped tap.
+  const filtered = isFiltered(queried);
   const setCount = activeFilterCount(filters);
 
   const rows = useMemo(

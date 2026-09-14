@@ -13,7 +13,7 @@
  * only `allowance` is the bug where the card is right when you set it and stale
  * for the rest of the day.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
   ALLOWANCE_PERIODS,
@@ -26,19 +26,10 @@ import {
 } from '@/features/allowance';
 import { ALLOWANCE_PERIOD, getSetting, setSetting } from '@/features/settings';
 import { log } from '@/lib/log';
+import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
 import { useRevisionStore } from '@/stores/revision-store';
 
 /** Loading is the first read only. After that a refresh keeps the old value. */
-export type AsyncStatus = 'loading' | 'ready' | 'error';
-
-export interface AsyncValue<T> {
-  status: AsyncStatus;
-  /** The last successful value. `null` until the first read resolves. */
-  value: T | null;
-  error: unknown;
-  reload: () => void;
-}
-
 /**
  * The cadence the user budgets on, when they have not chosen one.
  *
@@ -47,54 +38,6 @@ export interface AsyncValue<T> {
  * ask someone to divide their salary before they have seen the screen work.
  */
 export const DEFAULT_CADENCE: AllowancePeriod = 'monthly';
-
-/**
- * Run an async read, re-running it when `deps` change, last read wins.
- *
- * The generation counter is not ceremony: two reads started a frame apart can
- * resolve out of order, and without it switching cadence twice quickly can
- * leave the slower, older answer on screen.
- */
-function useAsyncRead<T>(read: () => Promise<T>, deps: readonly unknown[]): AsyncValue<T> {
-  const [state, setState] = useState<{ status: AsyncStatus; value: T | null; error: unknown }>({
-    status: 'loading',
-    value: null,
-    error: null,
-  });
-  const [nonce, setNonce] = useState(0);
-  const generation = useRef(0);
-
-  const readRef = useRef(read);
-  readRef.current = read;
-
-  useEffect(() => {
-    generation.current += 1;
-    const mine = generation.current;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const value = await readRef.current();
-        if (cancelled || mine !== generation.current) return;
-        setState({ status: 'ready', value, error: null });
-      } catch (error) {
-        if (cancelled || mine !== generation.current) return;
-        // `log.error` redacts by key name, so no amount reaches the device log.
-        log.error('allowance: read failed', error);
-        setState((previous) => ({ status: 'error', value: previous.value, error }));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
-
-  const reload = useCallback(() => setNonce((value) => value + 1), []);
-
-  return { status: state.status, value: state.value, error: state.error, reload };
-}
 
 /**
  * The whole answer for one cadence: period, allowance, spend, what is left.
@@ -110,7 +53,7 @@ export function useAllowanceStatus(period: AllowancePeriod): AsyncValue<Allowanc
     period,
     allowanceRevision,
     receiptsRevision,
-  ]);
+  ], 'allowance');
 }
 
 /** Every allowance ever set for a cadence, newest effective date first. */
@@ -118,7 +61,7 @@ export function useAllowanceHistory(
   period: AllowancePeriod,
 ): AsyncValue<readonly AllowanceRecord[]> {
   const revision = useRevisionStore((state) => state.revisions.allowance);
-  return useAsyncRead(() => allowanceHistory(period), [period, revision]);
+  return useAsyncRead(() => allowanceHistory(period), [period, revision], 'allowance');
 }
 
 /**
@@ -179,3 +122,6 @@ export function useAllowanceCadence(): {
 
   return { cadence, ready, setCadence };
 }
+
+// Re-exported so every screen keeps importing these from its own feature.
+export type { AsyncStatus, AsyncValue };
