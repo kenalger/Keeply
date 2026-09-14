@@ -36,6 +36,7 @@
 import bundle from '../../drizzle/migrations';
 import { MIGRATIONS_TABLE, getRawConnection } from './client';
 import { DatabaseInitError } from './errors';
+import { pendingMigrations } from './migration-order';
 import { logFailure, logOperation } from './log';
 
 const CREATE_MIGRATIONS_TABLE = `CREATE TABLE IF NOT EXISTS \`${MIGRATIONS_TABLE}\` (
@@ -72,7 +73,8 @@ export function shippedSchemaVersions(): readonly {
  * Apply every pending migration.
  *
  * Idempotent and safe on every boot: already-applied migrations are skipped by
- * `created_at`, and each pending one runs inside a single transaction.
+ * TAG (see `readAppliedTags` for why not by timestamp), and each pending one
+ * runs inside a single transaction.
  *
  * @throws {DatabaseInitError} if a migration is missing from the bundle or a
  *         statement fails. The failing SQL is NOT included in the message.
@@ -91,19 +93,13 @@ export async function runMigrations(): Promise<void> {
     });
   }
 
-  const lastAppliedAt = await readLastAppliedAt(db);
+  const appliedTags = await readAppliedTags(db);
 
-  // Journal order is authoritative; sort defensively so an out-of-order entry
-  // can never apply a later migration before an earlier one.
-  const entries = [...bundle.journal.entries].sort((a, b) => a.idx - b.idx);
+  const entries = pendingMigrations(bundle.journal.entries, appliedTags);
 
   let applied = 0;
 
   for (const entry of entries) {
-    if (lastAppliedAt !== null && entry.when <= lastAppliedAt) {
-      continue;
-    }
-
     const key = `m${entry.idx.toString().padStart(4, '0')}`;
     const sqlText = bundle.migrations[key];
 
@@ -139,19 +135,40 @@ export async function runMigrations(): Promise<void> {
   logOperation(applied === 0 ? 'db.migrate.skip' : 'db.migrate.done');
 }
 
-/** `created_at` of the most recently applied migration, or null if none. */
-async function readLastAppliedAt(
+/**
+ * The tags already applied to THIS database.
+ *
+ * ── WHY A SET OF TAGS AND NOT A TIMESTAMP ──────────────────────────────────
+ * This used to read the newest `created_at` and skip every entry whose journal
+ * `when` was not later than it. That is a proxy for "already applied", and the
+ * proxy broke the first time a migration file was regenerated.
+ *
+ * Regenerating gives the entry a NEW `when`. The database still holds the old
+ * one against the same tag, so the entry stops looking applied, runs a second
+ * time, and dies on `index ... already exists` — which rolls back and aborts
+ * the loop, so every LATER migration is blocked too. Observed exactly that:
+ * `0005` re-ran, failed, and `0006` never got the chance. The app kept working
+ * because the read path tolerated the missing columns, so nothing said a word.
+ *
+ * The tag is what the table already records and what drizzle's own runner
+ * compares. It is exact, it does not care about clocks or ordering, and a
+ * regenerated file with the same tag is correctly recognised as applied.
+ *
+ * A tag that is in the DATABASE but not in this bundle is ignored rather than
+ * an error: that is a downgrade, and refusing to boot is a worse answer than
+ * running the ones this build does know.
+ */
+async function readAppliedTags(
   db: ReturnType<typeof getRawConnection>,
-): Promise<number | null> {
-  const result = await db.execute(
-    `SELECT created_at FROM \`${MIGRATIONS_TABLE}\` ORDER BY created_at DESC LIMIT 1`,
-  );
+): Promise<ReadonlySet<string>> {
+  const result = await db.execute(`SELECT hash FROM \`${MIGRATIONS_TABLE}\``);
 
-  const row = result.rows?.[0];
-  if (!row) return null;
-
-  const value = Number(row.created_at);
-  return Number.isFinite(value) ? value : null;
+  const tags = new Set<string>();
+  for (const row of result.rows ?? []) {
+    const hash = row.hash;
+    if (typeof hash === 'string' && hash.length > 0) tags.add(hash);
+  }
+  return tags;
 }
 
 /**

@@ -196,6 +196,26 @@ export const DOCUMENT_TYPE_VALUES = [
   'membership',
   'other',
 ] as const;
+/**
+ * What the user said about an expired document, when Keeply asked.
+ *
+ * NOT a lifecycle: a document is not "in progress" the way a task is. These are
+ * three answers to one question — "this has expired, what now?" — and the only
+ * reason they are stored is that Keeply must stop behaving the same way after
+ * it has been told.
+ *
+ *  - `none`        never asked, or answered and since renewed. The default.
+ *  - `in_progress` the user is dealing with it. Suppresses the nagging until
+ *                  `renewal_remind_after`, and says so on screen so the state
+ *                  is visible rather than just quiet.
+ *  - `retired`     no longer held. Keeps the record and its scan — it is still
+ *                  the proof of what the number WAS — and stops every expiry
+ *                  surface from counting it. Distinct from a delete, which
+ *                  throws the history away.
+ */
+export const DOCUMENT_RENEWAL_STATE_VALUES = ['none', 'in_progress', 'retired'] as const;
+export type DocumentRenewalState = (typeof DOCUMENT_RENEWAL_STATE_VALUES)[number];
+
 export type DocumentType = (typeof DOCUMENT_TYPE_VALUES)[number];
 
 // ---------------------------------------------------------------------------

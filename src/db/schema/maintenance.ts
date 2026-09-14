@@ -47,6 +47,7 @@
  * `identifier` is SENSITIVE — it holds a plate number or a serial number, and
  * both are §10 material: masked in the UI, never logged, never searched.
  */
+import { sql } from 'drizzle-orm';
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import {
   createdAtColumn,
@@ -139,6 +140,11 @@ export const maintenanceItems = sqliteTable(
     // browsed BY KIND ("show me the appliances"), which is the one access path
     // worth an index. Partial, to match `maintenance_items_live` (§A8).
     index('maintenance_items_kind_idx').on(t.kind).where(liveRows()),
+    // ── PAGING INDEX (§33) ──────────────────────────────────────────────────
+    // See `src/db/schema/receipts.ts` for why this is `sql` and partial.
+    index('maintenance_items_page_idx')
+      .on(sql`"is_active" desc`, sql`"name" collate nocase asc`, sql`"id" asc`)
+      .where(liveRows()),
   ],
 );
 
@@ -209,6 +215,12 @@ export const maintenanceCosts = sqliteTable(
       .where(liveRows()),
     index('maintenance_costs_item_type_idx').on(t.itemId, t.type).where(liveRows()),
     index('maintenance_costs_cost_date_idx').on(t.costDate).where(liveRows()),
+    // ── PAGING INDEXES (§33) ────────────────────────────────────────────────
+    // See `src/db/schema/receipts.ts` for why these are `sql` and partial.
+    // Each child list is one item's history, so `item_id` leads.
+    index('maintenance_costs_page_idx')
+      .on(sql`"item_id" asc`, sql`"cost_date" desc`, sql`"id" desc`)
+      .where(liveRows()),
   ],
 );
 
@@ -274,6 +286,10 @@ export const maintenanceServices = sqliteTable(
       .where(liveRows()),
     index('maintenance_services_next_service_date_idx')
       .on(t.nextServiceDate)
+      .where(liveRows()),
+    // ── PAGING INDEX (§33) ──────────────────────────────────────────────────
+    index('maintenance_services_page_idx')
+      .on(sql`"item_id" asc`, sql`"service_date" desc`, sql`"id" desc`)
       .where(liveRows()),
   ],
 );
@@ -342,6 +358,17 @@ export const maintenanceRenewals = sqliteTable(
       .where(liveRows()),
     index('maintenance_renewals_kind_expiry_idx')
       .on(t.kind, t.expiryDate)
+      .where(liveRows()),
+    // ── PAGING INDEX (§33) ──────────────────────────────────────────────────
+    // The leading expression is the nulls-LAST rule: a renewal with no expiry
+    // must sort after every dated one, and an ASC index puts NULLs first.
+    index('maintenance_renewals_page_idx')
+      .on(
+        sql`"item_id" asc`,
+        sql`("expiry_date" is null) asc`,
+        sql`"expiry_date" asc`,
+        sql`"id" asc`,
+      )
       .where(liveRows()),
   ],
 );

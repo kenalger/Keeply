@@ -11,6 +11,7 @@
  * payments through that view and a soft-deleted bill's payments disappear with
  * it; read the base table and they are still there, still countable.
  */
+import { sql } from 'drizzle-orm';
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import {
   createdAtColumn,
@@ -97,6 +98,27 @@ export const bills = sqliteTable(
       .on(t.isActive, t.dueDate)
       .where(liveRows()),
     index('bills_category_idx').on(t.category).where(liveRows()),
+    // ── PAGING INDEXES (§33) ────────────────────────────────────────────────
+    // One per ORDER BY a list screen can ask for, column-for-column and
+    // direction-for-direction. Without an exact match SQLite answers a page by
+    // sorting the WHOLE table in a temp B-tree and throwing all but 40 rows
+    // away — `EXPLAIN QUERY PLAN` said `USE TEMP B-TREE FOR ORDER BY` for every
+    // list in this app, so every page cost grew with the table.
+    //
+    // Written as `sql` rather than `.on(t.column)` because the direction and
+    // the collation are the whole point: an index on `name` cannot order
+    // `name COLLATE NOCASE`, and one on `(purchase_date)` cannot resolve the
+    // tiebreakers after it. drizzle-kit emits these verbatim.
+    //
+    // Partial on `deleted_at is null`, matching the `*_live` views — the index
+    // holds live rows only, which is both smaller and what the planner needs
+    // to use it through the view.
+    index('bills_page_due_idx')
+      .on(sql`"due_date" asc`, sql`"name" collate nocase asc`, sql`"id" asc`)
+      .where(liveRows()),
+    index('bills_page_name_idx')
+      .on(sql`"name" collate nocase asc`, sql`"id" asc`)
+      .where(liveRows()),
   ],
 );
 
@@ -143,6 +165,16 @@ export const billPayments = sqliteTable(
     // Payment history for one bill, newest period first.
     index('bill_payments_bill_id_due_date_idx')
       .on(t.billId, t.dueDate)
+      .where(liveRows()),
+
+    // ── PAGING INDEXES (§33) ────────────────────────────────────────────────
+    // See the note on the `bills` table above. This one serves the correlated
+    // subqueries that decide a bill's payment state: each is
+    // `ORDER BY due_date DESC, id DESC LIMIT 1` for ONE bill, and without the
+    // matching direction the planner sorted that bill's whole payment history
+    // to take the first row — once per bill, per page.
+    index('bill_payments_page_latest_idx')
+      .on(sql`"bill_id" asc`, sql`"due_date" desc`, sql`"id" desc`)
       .where(liveRows()),
   ],
 );

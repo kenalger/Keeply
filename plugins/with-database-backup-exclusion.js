@@ -47,6 +47,45 @@
  * prebuild. Never hand-edit ios/.
  *
  * ---------------------------------------------------------------------------
+ * Data Protection: two classes, on purpose
+ * ---------------------------------------------------------------------------
+ * The same launch hook also sets the iOS Data Protection class, because it is
+ * the same directory and the same "must happen before op-sqlite opens the
+ * file" constraint. Without it everything here takes the OS default,
+ * `CompleteUntilFirstUserAuthentication` — encrypted at rest, but readable
+ * from the moment the phone is first unlocked after a reboot until it powers
+ * off. For a passport scan that is weaker than it needs to be.
+ *
+ * The DATABASE directory gets `completeUnlessOpen`, NOT `complete`, and the
+ * difference is the whole reason this is written out rather than set once as
+ * an app-wide entitlement:
+ *
+ *   - `complete` evicts the file key whenever the device locks. op-sqlite holds
+ *     `keeply.db` OPEN for the life of the process, so a user who locks their
+ *     phone with Keeply in the background and comes back would hit an I/O error
+ *     on the next read — from the OS, below SQLCipher, with no useful message.
+ *   - `completeUnlessOpen` protects the file at rest and keeps an ALREADY-OPEN
+ *     handle working across a lock. That is exactly this file's lifecycle.
+ *
+ * MEDIA sub-folders (`receipts/`, `documents/` — see `src/lib/private-directory.ts`)
+ * get `complete`. Those files are opened on demand and closed again, never held,
+ * so the strongest class costs nothing and means a locked phone cannot be made
+ * to give up an ID photo even with the filesystem in hand.
+ *
+ * The sub-folders are created later, by JavaScript, so they are stamped on the
+ * NEXT launch rather than the one that created them. That is the trade for not
+ * duplicating their names into this plugin — the folder name already appears in
+ * three places and the header below says why that is dangerous. Media written
+ * today is `completeUnlessOpen` (inherited from the parent) until the next
+ * launch, which is strictly better than the OS default it replaces.
+ *
+ * ⚠ NOT VERIFIABLE ON THE SIMULATOR. The simulator does not implement Data
+ * Protection: the classes are stored but nothing is ever evicted, so a
+ * simulator test proves the attribute was SET and nothing about what it does.
+ * On a device: `ls -lO` shows nothing useful either — read it back with
+ * `FileManager.attributesOfItem(atPath:)[.protectionKey]`.
+ *
+ * ---------------------------------------------------------------------------
  * Options
  * ---------------------------------------------------------------------------
  *   directory  Folder name under Library/Application Support. MUST match
@@ -96,11 +135,22 @@ private func keeplyExcludeDatabaseDirectoryFromBackup() {
 
   do {
     if !fileManager.fileExists(atPath: directory.path) {
-      try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+      try fileManager.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true,
+        // See the plugin header: CompleteUnlessOpen, NOT Complete. The database
+        // is held open across a device lock; Complete would evict the key and
+        // fail the next read on an open handle.
+        attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
+      )
     }
     // The attribute on the directory covers everything inside it, including
     // files created later by SQLCipher on this launch.
     try directory.setResourceValues(values)
+    try fileManager.setAttributes(
+      [.protectionKey: FileProtectionType.completeUnlessOpen],
+      ofItemAtPath: directory.path
+    )
 
     // Belt and braces: re-stamp whatever is already there, so each existing
     // file carries the attribute itself and can be verified with \`xattr -l\`.
@@ -109,6 +159,13 @@ private func keeplyExcludeDatabaseDirectoryFromBackup() {
     for entry in entries {
       var url = entry
       try? url.setResourceValues(values)
+      // A MEDIA sub-folder is never held open, so it takes the strongest class.
+      // Its files are passport scans and receipt photos (§10, §14, §16).
+      var isDirectory: ObjCBool = false
+      let exists = fileManager.fileExists(atPath: entry.path, isDirectory: &isDirectory)
+      let klass: FileProtectionType =
+        exists && isDirectory.boolValue ? .complete : .completeUnlessOpen
+      try? fileManager.setAttributes([.protectionKey: klass], ofItemAtPath: entry.path)
     }
   } catch {
     // Never fatal: a database that is backed up still works. Deliberately no

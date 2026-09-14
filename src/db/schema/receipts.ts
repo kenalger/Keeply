@@ -5,6 +5,7 @@
  * referenced by `local_image_uri`. That URI is sensitive (§10) — never log it.
  * A missing file is a rendering state, not a crash (Phase 4).
  */
+import { sql } from 'drizzle-orm';
 import { index, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import {
   createdAtColumn,
@@ -61,6 +62,39 @@ export const receipts = sqliteTable(
     // Category leads, so a standalone category index would be redundant.
     index('receipts_category_purchase_date_idx')
       .on(t.category, t.purchaseDate)
+      .where(liveRows()),
+
+    // ── PAGING INDEXES (§33) ────────────────────────────────────────────────
+    // One per ORDER BY a list screen can ask for, column-for-column and
+    // direction-for-direction. Without an exact match SQLite answers a page by
+    // sorting the WHOLE table in a temp B-tree and throwing all but 40 rows
+    // away — `EXPLAIN QUERY PLAN` said `USE TEMP B-TREE FOR ORDER BY` for every
+    // list in this app, so every page cost grew with the table.
+    //
+    // Written as `sql` rather than `.on(t.column)` because the direction and
+    // the collation are the whole point: an index on `name` cannot order
+    // `name COLLATE NOCASE`, and one on `(purchase_date)` cannot resolve the
+    // tiebreakers after it. drizzle-kit emits these verbatim.
+    //
+    // Partial on `deleted_at is null`, matching the `*_live` views — the index
+    // holds live rows only, which is both smaller and what the planner needs
+    // to use it through the view.
+    index('receipts_page_date_idx')
+      .on(sql`"purchase_date" desc`, sql`"created_at" desc`, sql`"id" asc`)
+      .where(liveRows()),
+    index('receipts_page_merchant_idx')
+      .on(sql`"merchant" collate nocase asc`, sql`"id" asc`)
+      .where(liveRows()),
+    index('receipts_page_amount_idx')
+      .on(sql`"amount_minor" desc`, sql`"purchase_date" desc`, sql`"id" asc`)
+      .where(liveRows()),
+    index('receipts_page_category_idx')
+      .on(
+        sql`"category" asc`,
+        sql`"purchase_date" desc`,
+        sql`"created_at" desc`,
+        sql`"id" asc`,
+      )
       .where(liveRows()),
   ],
 );

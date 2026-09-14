@@ -6,6 +6,8 @@ import m0001 from './0001_furry_boom_boom.sql';
 import m0002 from './0002_short_human_robot.sql';
 import m0003 from './0003_panoramic_hedge_knight.sql';
 import m0004 from './0004_smooth_midnight.sql';
+import m0005 from './0005_mighty_gressill.sql';
+import m0006 from './0006_lazy_star_brand.sql';
 
   export default {
     journal,
@@ -14,7 +16,9 @@ import m0004 from './0004_smooth_midnight.sql';
 m0001,
 m0002,
 m0003,
-m0004
+m0004,
+m0005,
+m0006
     }
   }
   
