@@ -1,16 +1,31 @@
 # Keeply — Handoff
 
-**State at `dd58151` + UNCOMMITTED WORK.** `tsc --noEmit` 0 · `eslint .` 0 errors ·
-`npm test` **1164/1164**. Runs on the iOS Simulator.
+**State at `b0cf09d`, on the branch `keeply/scale-and-expiry-prompt`.** `tsc --noEmit` 0 ·
+`eslint .` 0 errors, 10 warnings · `npm test` **1291/1291**. Working tree clean. Runs on the iOS
+Simulator, and everything below was exercised there rather than only in the suite.
 
-> ⚠ **24 paths are uncommitted.** `git status` before anything else. They are green and complete —
-> five QA-audit fixes and the whole of Phase 7 — but they are not committed, because the user asked
-> for commits only on an explicit command. Everything up to `dd58151` IS pushed; `origin/main` is
-> level with it.
+> ⚠ **The branch is four commits ahead of `main` and NOTHING IS PUSHED.** `main` and `origin/main`
+> are both still at `d2a8701`. The branch fast-forwards cleanly — it was branched rather than
+> committed to `main` because 78 paths is a lot to put straight onto the default branch. Push it,
+> or fast-forward `main` onto it, whichever you prefer.
+>
+> ```
+> b0cf09d Docs: record what was decided, what it cost, and what is still unverified
+> 6952b7b Documents, bills and shared UI: the expiry prompt, payment corrections, debounce
+> ccf3da9 Maintenance: the odometer regression, mixed currencies, and Home/Money wiring
+> 533f596 Foundations: paging indexes, Unicode search, and a migration runner that skips by tag
+> ```
 
-This session: **Phase 5c** (maintenance records and analytics), **Phase 6** (Documents), **5e**
-(maintenance reminders and the deferred enum rename), **two QA audits** and their fixes, and
-**Phase 7** (Security).
+This session: the **odometer regression**, the **three remaining QA findings** (leaked field
+identifiers, mixed-currency totals, ASCII-only search), **Home and Money wiring** for maintenance,
+**scale** (paging indexes, debounced search, iOS Data Protection), the **document expiry prompt**,
+a **migration-runner bug** found while verifying it, and two small wins (bill payment corrections,
+`useAsyncRead` extracted).
+
+**The most important thing in it** is not a feature: `runMigrations` was skipping by timestamp
+rather than by tag, so a regenerated migration re-ran, failed, and silently blocked every later
+one. The app kept working and the database was three columns short. See
+`src/db/migration-order.ts`.
 
 **EVERY PHASE IS NOW BUILT.** Phases 1–9 are complete. What remains is polish, the audit findings
 listed under Known gaps, and the two "not in this phase" items each plan records.
@@ -21,8 +36,8 @@ listed under Known gaps, and the two "not in this phase" items each plan records
 | Onboarding | Complete |
 | 9 Expenses & Allowance | **Complete** |
 | 8 Backup | **Complete.** Export and restore, both verified on the device. |
-| 5 Maintenance *(was Vehicles)* | **Complete (5a–5e).** Items, costs, services, renewals, analytics, screens, reminders. Home/Money wiring is the one piece left. |
-| 6 Documents | **Complete.** CRUD, files, §15's ladder, expiry reminders, Home wiring. |
+| 5 Maintenance *(was Vehicles)* | **Complete (5a–5e) and wired.** Items, costs, services, renewals, analytics, screens, reminders, plus Home's "Due for service" and Money's Vehicle line. |
+| 6 Documents | **Complete.** CRUD, files, §15's ladder, expiry reminders, Home wiring, and the "this expired — what now?" prompt. |
 | 7 Security | **Complete**, key rotation deliberately deferred. App lock, privacy cover, `/security`, and the §18/§19 audit. |
 
 Read `CLAUDE.md` for conventions before touching anything. `plan/goal.md` is the product spec.
@@ -104,10 +119,12 @@ A private, offline-first iOS app you can actually use:
 - **Design system** — greyscale plus ONE accent, full form layer, `ThemeLayout` spacing rules, and
   contrast that is now actually measured (`tests/theme-contrast.test.ts`) rather than claimed.
 
-263 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
+270 screenshots in `plan/screenshots/`, numbered by pass (`13-` monochrome, `14-` subscriptions,
 `16-` wizard, `17-` layout pass, `18-` the Phase 4 render, `19-` Phase 9, `20-` Phase 8,
 `21-` filters/sort, `22-` the underline control, `23-24-` reminders, `25-26-` Maintenance,
-`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent, **`42-` Phase 5c**, **`43-` Phase 6**, **`44-` paging, `45-` security**).
+`27-` restore, `28-31-` Bills, `32-38-` reminders, `39-41-` the accent, `42-` Phase 5c,
+`43-` Phase 6, `44-` paging, `45-` security, **`46-` mixed currency, `47-48-` Home wiring,
+`49-50-` the expiry prompt, `51-52-` bill payment corrections**).
 
 **They are NOT in git** — 54MB, deliberately untracked, as in every previous session.
 
@@ -115,53 +132,48 @@ A private, offline-first iOS app you can actually use:
 
 ## Start here
 
-**1. Restore the specialist agents.** `.claude/agents/` holds five mobile specialists
+**1. Land the branch.** Four commits on `keeply/scale-and-expiry-prompt`, nothing pushed, `main`
+still at `d2a8701`. It fast-forwards. Do this before anything else — the rest of this list assumes
+the work is on `main`.
+
+**2. Restore the specialist agents.** `.claude/agents/` holds five mobile specialists
 (`expo-native-engineer`, `mobile-data-engineer`, `mobile-ui-engineer`, `mobile-feature-engineer`,
 `mobile-qa-engineer`), each with web research enabled. **They only register at session start** — a
-session that began before they existed cannot call them. Start a fresh session and they are available
-by name.
+session that began before they existed cannot call them. Start a fresh session and they are
+available by name.
 
-**2. Commit what is in the tree, or review it first.** All green, and in four coherent pieces:
-the odometer regression, the three remaining audit findings, the duplicate-key bug that running it
-turned up, and the Home/Money wiring. **Verified on the simulator** rather than only against
-`node:sqlite` — Unicode search folds on op-sqlite's SQLCipher build, the spend card renders, and
-Home shows both the "Due for service" rows and a live Vehicle line. Nothing is half-done; it is
-uncommitted on purpose.
+**3. Everything else worth doing needs hardware this machine does not have.** That is the honest
+state of the project, and it is why the list below is short. Nothing is half-built and no phase is
+outstanding.
 
-**3. The QA findings are closed.** Two audits ran this session and every finding they raised is
-now fixed: the odometer regression (`plan/phase5-maintenance.md` §13), the leaked field
-identifiers, the mixed-currency totals, and the ASCII-only search (§14 of the same file). The next
-item is not a bug — it is step 4.
+  - **A physical iPhone.** Three things can only be proved there:
+    - **Data Protection.** The launch plugin sets `completeUnlessOpen` on the database directory
+      and `complete` on media. The simulator STORES protection classes and never ENFORCES them, so
+      what is proved today is that the attribute is set, not what it does. The test: lock the phone
+      with Keeply backgrounded, come back, confirm the database still reads. That is the exact case
+      `completeUnlessOpen` exists for, and the case plain `complete` would break.
+    - **Camera capture and the permission-denied paths.** The simulator has no camera, so the
+      viewfinder is a blank rectangle and permission was already granted here. `xcrun simctl
+      keychain <udid> reset` gets part way.
+    - **The two taps inside the file picker.** `File.pickFileAsync` presents correctly and
+      everything behind it is verified, but the Files sheet cannot be tapped from here (Simulator
+      reports zero windows).
+  - **The Android SDK.** Android has NEVER been run — not once, not on any surface. `adb`,
+    `emulator` and `sdkmanager` are all absent and `ANDROID_HOME` is unset, so this needs an
+    install before it needs a developer. Expect real findings: the `no_backup` directory, the
+    notification channel, SQLCipher's Android build and every safe-area assumption are all
+    unexercised.
 
-**4. The one thing left unverified: Data Protection on a real device.** `plugins/with-database-backup-exclusion.js`
-now also sets the iOS file protection class — `completeUnlessOpen` on the database directory,
-`complete` on the media sub-folders, and the difference matters (`plan/phase5-maintenance.md` §16).
-The app was rebuilt and relaunched, the backup exclusion and SQLCipher header still check out, and
-the plugin logged nothing (it logs only on failure). But **the simulator stores protection classes
-and never enforces them**, so what is proved is that the attribute is set, not what it does. The
-real test is a physical device: lock it with Keeply backgrounded, come back, and confirm the
-database still reads. That is the case `completeUnlessOpen` exists for.
+**4. The app icon is still the Expo default.** The one thing every user sees before anything else.
+This wants a concept from you rather than a generated mark.
 
-**5. Small, high-value, any time** — step 6 below is now the top of the list. Home and Money are
-done (`plan/phase5-maintenance.md` §15): Home has a "Due for service" section and the "This month"
-card's Vehicle line is live. Money itself stays a three-row navigation hub, because maintenance has
-its own tab; the spending breakdown is Home's, which is where §5 puts it.
-
-**6. Small wins — done.** The bill ledger row is tappable and opens a correction sheet
-(`plan/phase3-bills-ui.md`), and `useAsyncRead` is one shared hook in `src/lib/use-async-read.ts`
-instead of six copies. "Bills are absent from Home" was stale and has been struck: `readDashboard`
-reads `upcomingBills()` and Home renders them under Overdue and Upcoming payments.
-
-**7. What is actually left.** Android has never been run. The app icon is still the Expo default.
-Camera capture and the permission-denied paths need a real device (the simulator has no camera), as
-do the two taps inside the file picker. Moving a payment to a different PERIOD has no UI — see the
-bills note for why it was left out of the correction sheet.
-
-**Still unverified on a device:** camera capture and the permission-denied paths. The simulator has no
-camera, so the viewfinder is a blank rectangle, and permission was already granted here. Those need a
-real device or `xcrun simctl keychain <udid> reset`. Also **the two taps inside the file picker** —
-`File.pickFileAsync` presents correctly and everything behind it is verified, but the Files sheet
-cannot be tapped from here (Simulator reports zero windows), so choosing a file by hand is untested.
+**5. Two decisions left open on purpose.** Both are written up where they live, not just here:
+  - **Moving a payment to a different PERIOD has no UI.** The correction sheet deliberately omits
+    `dueDate`, because the oldest live payment IS the recurrence anchor every later due date is
+    computed from. It needs its own flow, not a field. `plan/phase3-bills-ui.md`.
+  - **`compareBundle` compares schema versions by timestamp**, and this session proved that
+    assumption breakable. It is not wrong for any ordinary restore; the reasoning and the trade are
+    at the function and under Known gaps.
 
 ---
 
@@ -361,7 +373,36 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 Newest first, labelled by the commit that closed them — "this session" stopped being a useful
 label four commits ago.
 
-### UNCOMMITTED · Phase 7 — Security, and two QA audits
+### `533f596`…`b0cf09d` · scale, the expiry prompt, and a migration bug
+
+- **`runMigrations` was skipping by TIMESTAMP, not by tag.** The most serious thing in the
+  session. A regenerated migration gets a new journal `when`, stops looking applied, re-runs, dies
+  on "index already exists", and — because the failure rolls back AND aborts the loop — blocks
+  every later migration. Observed on a device: `0005` re-ran, failed, `0006` never applied, and
+  **nothing reported it** because the read path tolerated the missing columns and returned a
+  default. The app looked right and the database was three columns short. Skips by tag now;
+  `src/db/migration-order.ts` has the whole story.
+- **Every list in the app sorted the whole table to answer a page.** `USE TEMP B-TREE FOR ORDER BY`
+  on all fifteen. `drizzle/0005` adds seventeen partial paging indexes; page cost stops growing
+  with the table. `tests/query-plans.test.ts` guards it by asserting the PLAN, and its second half
+  drops every index to prove the guard can fail and that none is dead weight.
+- **Search folded case for ASCII only.** `MUÑOZ MARKET` was not found by `muñoz` — no error, just
+  an absent row. `GLOB` with a character class per letter fixes it with no schema change.
+  Parañaque and Las Piñas are cities of a million people each.
+- **The odometer regression** — a replaced instrument cluster printed `1008.3 km/L` as fact.
+  Accept the reading, narrow the measurement. `plan/phase5-maintenance.md` §13.
+- **`itemTotals` counted rows it had not added** across currencies, and fixing it exposed a
+  duplicate-key bug one card lower. §14 of the same file.
+- **Validation messages named variables** — "fuelLitersMilli must be a whole number" under a field
+  labelled Litres.
+- **The document expiry prompt**: three answers instead of an edit form, asked once per expiry.
+  A test caught the first version silently killing its own "ask me again in a week".
+- **Home and Money** are wired for maintenance, and `useDashboardData` now watches all five domains
+  it reads rather than two.
+- **Small wins**: the bill ledger row opens a correction sheet (`saveBillPaymentEdit` had no caller
+  for two phases), and `useAsyncRead` is one hook instead of six byte-identical copies.
+
+### `eb39c7b` + `f3aabb3` · Phase 7 — Security, and two QA audits
 
 - **Phase 7 is built.** App lock, privacy cover, `/security`, and the §18/§19 audit.
   `plan/phase7-security.md`. Key rotation deliberately NOT built — §3 there has the argument.
@@ -558,10 +599,10 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 - **13 lower-tier audit findings** in `plan/phase2-3-remediation.md` (Tier 4 form-layer items and the
   latent list): amount-field selection-delete clearing a committed value, pagination re-fetching from
   offset 0, no caret management, `+N more` undercounting past 24.
-- **A recorded payment cannot be edited from a screen.** `saveBillPaymentEdit()` and
-  `deleteBillPayment()` are wired and exported and the `anchor-row` refusal has its sentence, but a
-  ledger row on the bill detail screen is not tappable yet. The natural next slice.
-- **Bills are not on Home.** `useUpcomingBills()` exists and is exported for exactly that.
+- **`deleteBillPayment()` still has no caller.** Its sibling `saveBillPaymentEdit()` now has one
+  (the correction sheet), but removing a recorded period has no UI. The `anchor-row` refusal — the
+  oldest live payment IS the recurrence anchor — already has its sentence in `messages.ts`, so the
+  hard part is done and the flow is not.
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
   budgets, no rollover.
 - **A maintenance item's odometer is not updated by a cost.** Recording a fill-up at 47,810 km leaves
@@ -569,11 +610,6 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   "what the user last told us" are different facts, and silently overwriting one with the other on
   every fuel entry needs a decision, not a default. The analytics read the cost rows, so nothing is
   wrong; the item's own Odometer row can just look stale.
-- **The `notification_settings.entity_type` enum still names the old vehicle tables**
-  (`vehicle_insurance`, `vehicle_registration`, `vehicle_maintenance`). Renaming them changes a CHECK,
-  which SQLite can only do by rebuilding the table — and drizzle-kit's rebuild does not drop the
-  dependent `notification_settings_live` view first, so the generated RENAME fails. No code reads
-  those values, so it waits for step 5e. The reason is written at the enum.
 - **The QA audits' findings are all closed.** The four that were open — the odometer regression,
   validation messages naming camelCase field keys, `itemTotals` counting rows it did not total
   across currencies, and search folding case for ASCII only — are fixed, each with tests that were
@@ -637,7 +673,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 1164 tests
+npm test                # node --test, 1291 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
