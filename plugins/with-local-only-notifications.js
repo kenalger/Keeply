@@ -18,6 +18,12 @@
  * to APNs callbacks; it never calls `registerForRemoteNotifications`, so
  * removing the entitlement changes no runtime behavior.
  *
+ * ORDER MATTERS. `app.json` lists `expo-notifications` explicitly (for the
+ * Android notification icon and colour), and it must come AFTER this plugin:
+ * mods run in reverse registration order, so a later entry's entitlement write
+ * runs first and this delete runs last. Listed before it, `aps-environment`
+ * reappears. Check `ios/Keeply/Keeply.entitlements` after any reorder.
+ *
  * If push is ever added, delete this plugin rather than working around it.
  */
 const { withEntitlementsPlist } = require('expo/config-plugins');
