@@ -1,8 +1,15 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback } from 'react';
-import { Alert } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, StyleSheet, View } from 'react-native';
 
-import { EmptyState, Screen, ScreenHeader } from '@/components/ui';
+import {
+  BusyOverlay,
+  EmptyState,
+  Screen,
+  ScreenHeader,
+  SkeletonList,
+  holdBusy,
+} from '@/components/ui';
 import {
   ServiceForm,
   removeService,
@@ -13,7 +20,8 @@ import { log } from '@/lib/log';
 
 /**
  * Record or edit one service (Phase 5c). One route for both, keyed by
- * `serviceId` — see the cost route for why.
+ * `serviceId` — see the cost route for why, and for why the delete's
+ * "Deleting…" is mounted here rather than inside the form.
  */
 export default function MaintenanceServiceScreen() {
   const { id, serviceId } = useLocalSearchParams<{ id: string; serviceId?: string }>();
@@ -22,6 +30,8 @@ export default function MaintenanceServiceScreen() {
   const item = useMaintenanceItem(id);
   const service = useService(serviceId);
   const editing = serviceId !== undefined && serviceId !== '';
+  // What the overlay says while a write is in flight, or `null` when idle.
+  const [busy, setBusy] = useState<string | null>(null);
 
   const leave = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -33,7 +43,7 @@ export default function MaintenanceServiceScreen() {
   // still one the user can delete — and the unreadable state below offers
   // exactly that. Reading `service.value` here made that button dead.
   const confirmDelete = useCallback(() => {
-    if (serviceId === undefined || serviceId === '') return;
+    if (serviceId === undefined || serviceId === '' || busy !== null) return;
     // Record-aware when the record is readable, generic when it is not — the
     // whole point of deleting by route id is that it works either way.
     const record = service.value;
@@ -43,25 +53,28 @@ export default function MaintenanceServiceScreen() {
         ? 'This cannot be undone.'
         : 'What it cost leaves the ledger with it. This cannot be undone.',
       [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            try {
-              await removeService(serviceId);
-              leave();
-            } catch (error) {
-              log.error('maintenance: deleting a service failed', error);
-              Alert.alert('Not deleted', 'Keeply could not remove this service. Try again.');
-            }
-          })();
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setBusy('Deleting…');
+            void (async () => {
+              try {
+                await holdBusy(removeService(serviceId));
+                leave();
+              } catch (error) {
+                log.error('maintenance: deleting a service failed', error);
+                Alert.alert('Not deleted', 'Keeply could not remove this service. Try again.');
+              } finally {
+                setBusy(null);
+              }
+            })();
+          },
         },
-      },
       ],
     );
-  }, [serviceId, service.value, leave]);
+  }, [serviceId, service.value, busy, leave]);
 
   // STILL LOADING is not the same as GONE, and neither is a failed read. One
   // branch covering all three rendered a bare header with only Back — no
@@ -74,7 +87,7 @@ export default function MaintenanceServiceScreen() {
 
   if (unreadable) {
     return (
-      <Screen edges={['top']}>
+      <Screen edges={['top']} busy={busy}>
         <ScreenHeader title={editing ? 'Edit service' : 'Record a service'} onBack={leave} />
         <EmptyState
           icon="errorCircle"
@@ -92,21 +105,34 @@ export default function MaintenanceServiceScreen() {
     );
   }
 
+  // The form's shape, held while both reads land.
   if (loading || item.value === null) {
     return (
       <Screen edges={['top']}>
         <ScreenHeader title={editing ? 'Edit service' : 'Record a service'} onBack={leave} />
+        <SkeletonList count={5} leading={false} />
       </Screen>
     );
   }
 
   return (
-    <ServiceForm
-      item={item.value}
-      record={editing ? (service.value ?? undefined) : undefined}
-      onSaved={leave}
-      onCancel={leave}
-      onDelete={editing ? confirmDelete : undefined}
-    />
+    <View style={styles.fill}>
+      <ServiceForm
+        item={item.value}
+        record={editing ? (service.value ?? undefined) : undefined}
+        onSaved={leave}
+        onCancel={leave}
+        onDelete={editing ? confirmDelete : undefined}
+      />
+      <BusyOverlay
+        visible={busy !== null}
+        label={busy ?? ''}
+        testID="maintenance-service-busy"
+      />
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  fill: { flex: 1 },
+});

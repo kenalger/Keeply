@@ -10,6 +10,7 @@ import {
   SelectField,
   Text,
   TextField,
+  holdBusy,
 } from '@/components/ui';
 import {
   MaintenanceError,
@@ -112,9 +113,11 @@ export function MaintenanceForm({ record, onSaved, onCancel }: MaintenanceFormPr
           notes,
         };
 
-        const saved = editing
-          ? await saveItemPatch(record.id, input)
-          : await saveNewItem(input);
+        // Held, not delayed: the row is written at once; "Saving…" stays up
+        // long enough to be seen. See `BusyOverlay`.
+        const saved = await holdBusy(
+          editing ? saveItemPatch(record.id, input) : saveNewItem(input),
+        );
         onSaved(saved);
       } catch (error) {
         // A validation failure names a FIELD and never a value (§10), so it can
@@ -148,6 +151,7 @@ export function MaintenanceForm({ record, onSaved, onCancel }: MaintenanceFormPr
 
   return (
     <FormScreen
+      busy={saving ? 'Saving…' : null}
       footer={
         <FormActions
           primaryLabel={editing ? 'Save changes' : 'Add item'}

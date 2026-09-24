@@ -13,6 +13,7 @@ import {
   SwitchField,
   Text,
   TextField,
+  holdBusy,
 } from '@/components/ui';
 import type { MinorUnits } from '@/db';
 import {
@@ -128,9 +129,11 @@ export function CostForm({ item, record, onSaved, onCancel, onDelete }: CostForm
           isFullTank: showsFuel && litresMilli !== null ? isFullTank : null,
         };
 
-        const saved = editing
-          ? await saveCostPatch(record.id, input)
-          : await saveNewCost(input);
+        // Held, not delayed: the row is written at once; "Saving…" stays up
+        // long enough to be seen. See `BusyOverlay`.
+        const saved = await holdBusy(
+          editing ? saveCostPatch(record.id, input) : saveNewCost(input),
+        );
         onSaved(saved);
       } catch (error) {
         if (error instanceof MaintenanceError && error.code === 'invalid-field') {
@@ -163,6 +166,7 @@ export function CostForm({ item, record, onSaved, onCancel, onDelete }: CostForm
 
   return (
     <FormScreen
+      busy={saving ? 'Saving…' : null}
       footer={
         <FormActions
           primaryLabel={editing ? 'Save changes' : 'Add cost'}

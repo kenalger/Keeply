@@ -55,6 +55,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme, useThemedStyles, type Theme } from '@/theme';
 
+import { BusyOverlay } from './busy-overlay';
 import { FormFocusBoundary } from './form-focus';
 import { IconButton } from './icon-button';
 import { Text } from './text';
@@ -97,6 +98,12 @@ export interface SheetProps {
   maxHeightRatio?: number;
   /** Allow drag and backdrop tap. The header control is never removed. */
   dismissible?: boolean;
+  /**
+   * A write in flight — "Saving…" — or `null`. Covers the sheet from grabber
+   * to footer, so nothing in it can be touched or dismissed mid-write. See
+   * `BusyOverlay`.
+   */
+  busy?: string | null;
   /** Announced instead of `title` when the sheet has no visible title. */
   accessibilityLabel?: string;
   contentContainerStyle?: StyleProp<ViewStyle>;
@@ -160,6 +167,9 @@ const makeStyles = (t: Theme) =>
       borderTopWidth: t.hairline,
       borderTopColor: t.color.border,
     },
+    /* The panel is not clipped (that would take its shadow with it), so the
+       scrim carries the panel's own top radii instead. */
+    busy: { borderTopLeftRadius: t.radius.xl, borderTopRightRadius: t.radius.xl },
   });
 
 export function Sheet({
@@ -172,6 +182,7 @@ export function Sheet({
   scroll = false,
   maxHeightRatio = 0.92,
   dismissible = true,
+  busy = null,
   accessibilityLabel,
   contentContainerStyle,
   testID,
@@ -375,6 +386,13 @@ export function Sheet({
                 {footer}
               </View>
             ) : null}
+
+            <BusyOverlay
+              visible={busy !== null}
+              label={busy ?? ''}
+              style={styles.busy}
+              testID={testID === undefined ? undefined : `${testID}-busy`}
+            />
           </Animated.View>
         </KeyboardAvoidingView>
       </GestureHandlerRootView>

@@ -241,10 +241,17 @@ export default function MoneyScreen() {
         // `<ListGroup/>` draws its own hairlines between grouped rows; a list
         // separator here would also draw between a card and the next heading.
         separator="none"
-        loading={totals.status === 'loading' || receipts.status === 'loading'}
+        // All THREE reads. Bills was missing from both, so while its totals
+        // loaded — or after they failed — the row said "None yet" and the tab
+        // could say "Nothing tracked yet" over bills that exist.
+        loading={
+          totals.status === 'loading' ||
+          bills.status === 'loading' ||
+          receipts.status === 'loading'
+        }
         skeletonLeading={false}
         error={
-          totals.status === 'error' || receipts.status === 'error' ? (
+          totals.status === 'error' || bills.status === 'error' || receipts.status === 'error' ? (
             <EmptyState
               icon="errorCircle"
               title="Keeply could not read your totals"
@@ -253,6 +260,7 @@ export default function MoneyScreen() {
               actionIcon="repeat"
               onAction={() => {
                 totals.reload();
+                bills.reload();
                 receipts.reload();
               }}
               fill={false}

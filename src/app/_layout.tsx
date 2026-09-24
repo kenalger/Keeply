@@ -4,6 +4,7 @@ import { useCallback, useEffect } from 'react';
 import { Alert, AppState } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { LoadingScreen } from '@/components/ui';
 import { DatabaseKeyUnavailableError } from '@/db';
 import { primeSubscriptionDefaults } from '@/features/subscriptions/ui';
 import { AppErrorBoundary } from '@/lib/error-boundary';
@@ -11,7 +12,12 @@ import { toUserMessage } from '@/lib/errors';
 import { FallbackScreen } from '@/lib/fallback-screen';
 import { log } from '@/lib/log';
 import { syncAllReminders } from '@/lib/reminders';
-import { eraseLocalDataAndReboot, runBootSequence, useBootSnapshot } from '@/stores/boot-store';
+import {
+  eraseLocalDataAndReboot,
+  runBootSequence,
+  useBootSnapshot,
+  type BootStage,
+} from '@/stores/boot-store';
 import { watchPermissionOnForeground } from '@/stores/notification-store';
 import { hydrateSettings } from '@/stores/settings-store';
 import { useThemePreferenceSync } from '@/stores/ui-store';
@@ -54,12 +60,29 @@ export default function RootLayout() {
   );
 }
 
+/** What the loading screen says at each point of boot. Never a code, never a path. */
+const BOOT_CAPTIONS: Record<BootStage | 'starting', string> = {
+  starting: 'Starting…',
+  opening: 'Opening your data…',
+  migrating: 'Updating your data…',
+};
+
 /**
- * Holds the splash screen until the encrypted database is open and migrated,
+ * Shows the loading screen until the encrypted database is open and migrated,
  * then hands off to the navigation tree — or, on failure, to a recovery view.
+ *
+ * ── THE SPLASH LIFTS ONTO THE LOADING SCREEN, NOT ONTO THE APP ─────────────
+ * `LoadingScreen` draws the splash's own mark at the splash's own size on the
+ * splash's own canvas colour, so the hand-off is invisible and the caption is
+ * the only thing that appears. Hiding the splash as soon as that screen has
+ * laid out is what makes a slow boot — a migration on an old phone — show
+ * progress instead of a frozen picture, and what gives "Try again" and the
+ * erase-and-start-over path a screen at all: on both, the splash is long gone.
+ * The `ready`/`failed` hide stays as the fallback for a layout event that never
+ * fires; `hideAsync` is idempotent.
  */
 function BootGate() {
-  const { status, error, attempts } = useBootSnapshot();
+  const { status, error, attempts, stage } = useBootSnapshot();
 
   // Keeps the user's stated light/dark preference and the theme runtime in step.
   // Local state only — nothing here reads or writes storage in Phase 1.
@@ -69,19 +92,25 @@ function BootGate() {
     void runBootSequence();
   }, []);
 
-  useEffect(() => {
-    if (status !== 'ready' && status !== 'failed') return;
-    // Hide only once there is something real to show underneath.
+  const liftSplash = useCallback(() => {
     SplashScreen.hideAsync().catch(() => {
       // Already hidden, or the native module is unavailable. Harmless either way.
-      log.warn('splash: hide failed', { status });
+      log.warn('splash: hide failed');
     });
-  }, [status]);
+  }, []);
+
+  useEffect(() => {
+    if (status === 'ready' || status === 'failed') liftSplash();
+  }, [status, liftSplash]);
 
   if (status === 'idle' || status === 'initializing') {
-    // The native splash is still covering the window; rendering nothing avoids
-    // a flash of an empty themed screen behind it. No spinner: local work only.
-    return null;
+    return (
+      <LoadingScreen
+        caption={BOOT_CAPTIONS[stage ?? 'starting']}
+        onReady={liftSplash}
+        testID="boot-loading"
+      />
+    );
   }
 
   if (status === 'failed') {
@@ -106,24 +135,45 @@ function BootGate() {
  * property. It also means no screen runs a query, or a reminder sync, while
  * nobody has proved they are allowed to see the answer.
  *
+ * ── NOTHING MOUNTS UNTIL THE LOCK HAS DECIDED ──────────────────────────────
+ * The decision needs two answers: the stored preference (`appLockEnabled`,
+ * read by `hydrateSettings()`) and what the device can do (`check()`). The
+ * store starts `unlocked` only because SOMETHING has to be the initial value;
+ * until `initialised` is true that value is a placeholder, not a verdict, and
+ * the tree stays off screen behind the loading screen. This gate used to seed
+ * on the capability alone while the settings read raced it — lose the race and
+ * the lock was skipped for the whole session, and either way the tabs painted
+ * for exactly as long as the check took. `lock-machine.ts` states the intent:
+ * the safe direction before the device has answered is closed.
+ *
  * ── THE COVER IS OUTSIDE THE LOCK, AND LAST ────────────────────────────────
  * `PrivacyCover` renders after both branches and absolutely fills the window,
  * because it is up whenever the app is not ACTIVE — whether or not app lock is
  * enabled. Every user's app-switcher snapshot stays private (§19), not only the
  * ones who opted in. Last in the tree because anything mounted after it would
- * draw on top of it.
+ * draw on top of it — including while the decision above is still pending.
  */
 function LockGate() {
   const state = useLockState();
+  const initialised = useLockStore((s) => s.initialised);
   const initialise = useLockStore((s) => s.initialise);
   const watch = useLockStore((s) => s.watch);
 
   useEffect(() => {
-    // Seeded once the capability check has run, so the preference and what the
-    // device can actually do are decided together — see `initialLockState`.
-    void useAppLockStore.getState().check().then(initialise);
+    // Both halves, awaited together, then one seed — see `initialLockState`.
+    // `hydrate()` never throws and `check()` never throws, so this settles.
+    void Promise.all([useAppLockStore.getState().check(), hydrateSettings()]).then(initialise);
     return watch();
   }, [initialise, watch]);
+
+  if (!initialised) {
+    return (
+      <>
+        <LoadingScreen caption="Checking your settings…" testID="lock-pending" />
+        <PrivacyCover />
+      </>
+    );
+  }
 
   return (
     <>
@@ -176,10 +226,10 @@ function AppStack() {
  */
 function AfterBoot() {
   useEffect(() => {
-    // 1. Preferences. Until this resolves the store holds `DEFAULT_SETTINGS`,
-    //    which are honest working values rather than placeholders — so nothing
-    //    has to gate on it.
-    void hydrateSettings();
+    // 1. Preferences are hydrated by `LockGate`, before anything mounts: the
+    //    lock decision needs `appLockEnabled`, and a default read in its place
+    //    is a lock that silently does not happen. By the time this runs, the
+    //    store already holds the user's values.
 
     // 2. What the add form should default its category to.
     void primeSubscriptionDefaults();

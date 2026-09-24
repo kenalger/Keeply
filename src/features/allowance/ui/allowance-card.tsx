@@ -10,7 +10,8 @@
  * ── THE STATES ARE THE DESIGN ──────────────────────────────────────────────
  * Six, all of them reachable and all of them drawn on purpose:
  *
- *   loading         a skeleton, not an empty card that pops
+ *   loading         a skeleton, not an empty card that pops — and not another
+ *                   cadence's figure either (see `allowanceCardState`)
  *   no allowance    an invitation, with the spend still shown — a user logging
  *                   expenses before setting a budget is not an error
  *   normal          amount left, meter, per-day pace
@@ -49,12 +50,19 @@ import { minorUnits } from '@/db/money';
 import {
   remainingPerDay,
   spentFraction,
+  type AllowancePeriod,
   type AllowanceStatus,
 } from '@/features/allowance';
 import { useThemedStyles, type Theme } from '@/theme';
 
+import type { AsyncValue } from './hooks';
+
 export interface AllowanceCardProps {
   status: AllowanceStatus | null;
+  /**
+   * No answer for this cadence yet: draws the skeleton, whatever `status`
+   * holds. Derive both from `allowanceCardState()`.
+   */
   loading: boolean;
   error?: unknown;
   /** Opens the allowance screen. Omit to render the card as a flat panel. */
@@ -112,6 +120,32 @@ function remainingLabel(status: AllowanceStatus): string {
   return `${remainingDays} days left`;
 }
 
+/**
+ * What a card should draw for `cadence`: its status, or no answer yet.
+ *
+ * Shared by the two places that assemble a card — `AllowanceSummary` and the
+ * allowance screen — because both drew the wrong period first. The cadence
+ * preference is read from storage, so for the first frames `cadence` is the
+ * DEFAULT, and the read for the default lands before the preference does:
+ * someone who budgets weekly saw this month's figure, then their week's. A
+ * figure for another cadence is not a stale answer; it answers a different
+ * question, so it is treated as no answer at all.
+ *
+ * `loading` is the first read FOR THIS CADENCE, and only that. A refresh after
+ * a write keeps the last figures on screen (§25), and a read that failed with
+ * nothing to show for this cadence is the card's error state, not a skeleton
+ * that never ends.
+ */
+export function allowanceCardState(
+  read: AsyncValue<AllowanceStatus>,
+  cadence: AllowancePeriod,
+  ready: boolean,
+): { status: AllowanceStatus | null; loading: boolean } {
+  const status =
+    ready && read.value !== null && read.value.period.period === cadence ? read.value : null;
+  return { status, loading: status === null && (!ready || read.status !== 'error') };
+}
+
 export function AllowanceCard({
   status,
   loading,
@@ -123,7 +157,10 @@ export function AllowanceCard({
 }: AllowanceCardProps) {
   const styles = useThemedStyles(makeStyles);
 
-  if (loading && status === null) {
+  // `loading` alone, not `loading && status === null`: that conjunct is what
+  // let the default cadence's figure through while the preference was still
+  // being read. Whether a status is the answer is `allowanceCardState`'s call.
+  if (loading) {
     return (
       <Card testID={testID}>
         <Skeleton width="40%" height={16} />

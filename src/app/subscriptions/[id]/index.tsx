@@ -18,6 +18,7 @@ import {
   StatusPill,
   amountLabel,
   groupPosition,
+  holdBusy,
   type GroupPosition,
 } from '@/components/ui';
 import type { MinorUnits } from '@/db';
@@ -215,7 +216,8 @@ export default function SubscriptionDetailScreen() {
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
   const record = useSubscriptionRecord(id);
-  const [busy, setBusy] = useState(false);
+  // What the overlay says while a write is in flight, or `null` when idle.
+  const [busy, setBusy] = useState<string | null>(null);
 
   const remindersWillFire = useRemindersWillFire();
   const { subscriptionReminderLeadTimes } = useReminderDefaults();
@@ -245,23 +247,31 @@ export default function SubscriptionDetailScreen() {
   );
 
   const togglePause = useCallback(() => {
-    if (value === null || busy) return;
-    setBusy(true);
+    if (value === null || busy !== null) return;
+    setBusy('Saving…');
     void (async () => {
-      const result = await setSubscriptionActive(value.id, !value.isActive);
-      setBusy(false);
-      if (!result.ok) {
-        log.warn('subscriptions: could not change the paused state');
-        Alert.alert(
-          'That did not save',
-          'Keeply could not change this subscription. Try again.',
-        );
+      try {
+        const result = await holdBusy(setSubscriptionActive(value.id, !value.isActive));
+        if (!result.ok) {
+          log.warn('subscriptions: could not change the paused state');
+          Alert.alert(
+            'That did not save',
+            'Keeply could not change this subscription. Try again.',
+          );
+        }
+      } catch (error) {
+        log.error('subscriptions: changing the paused state failed', error);
+        Alert.alert('That did not save', 'Keeply could not change this subscription. Try again.');
+      } finally {
+        // Always. A throw here used to leave the buttons dimmed for good; with
+        // the overlay in front of them it would have locked the whole screen.
+        setBusy(null);
       }
     })();
   }, [value, busy]);
 
   const confirmDelete = useCallback(() => {
-    if (value === null || busy) return;
+    if (value === null || busy !== null) return;
     const monthly =
       value.monthlyEquivalentMinor === null
         ? null
@@ -281,18 +291,27 @@ export default function SubscriptionDetailScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
-            setBusy(true);
+            setBusy('Deleting…');
             void (async () => {
-              const result = await deleteSubscription(value.id);
-              setBusy(false);
-              if (result.ok) {
-                router.replace('/subscriptions');
-                return;
+              try {
+                const result = await holdBusy(deleteSubscription(value.id));
+                if (result.ok) {
+                  router.replace('/subscriptions');
+                  return;
+                }
+                Alert.alert(
+                  'That did not delete',
+                  'Keeply could not remove this subscription. Try again.',
+                );
+              } catch (error) {
+                log.error('subscriptions: delete failed', error);
+                Alert.alert(
+                  'That did not delete',
+                  'Keeply could not remove this subscription. Try again.',
+                );
+              } finally {
+                setBusy(null);
               }
-              Alert.alert(
-                'That did not delete',
-                'Keeply could not remove this subscription. Try again.',
-              );
             })();
           },
         },
@@ -308,7 +327,7 @@ export default function SubscriptionDetailScreen() {
   const missing = record.status === 'ready' && value === null;
 
   return (
-    <Screen edges={['top', 'bottom']} padded={false} keyboardAvoiding={false}>
+    <Screen edges={['top', 'bottom']} padded={false} keyboardAvoiding={false} busy={busy}>
       <List<DetailRow>
         data={rows}
         renderItem={renderRow}
@@ -372,7 +391,7 @@ export default function SubscriptionDetailScreen() {
                 variant="secondary"
                 icon={value.isActive ? 'pause' : 'repeat'}
                 fullWidth
-                disabled={busy}
+                disabled={busy !== null}
                 onPress={togglePause}
                 accessibilityHint={
                   value.isActive
@@ -386,7 +405,7 @@ export default function SubscriptionDetailScreen() {
                 variant="dangerGhost"
                 icon="trash"
                 fullWidth
-                disabled={busy}
+                disabled={busy !== null}
                 onPress={confirmDelete}
                 accessibilityHint="Asks you to confirm before removing it permanently"
                 testID="subscription-delete"

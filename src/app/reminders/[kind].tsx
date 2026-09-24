@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { ReminderPermissionBanner } from '@/components/reminder-permission-banner';
 import { ReminderSchedulePreview } from '@/components/reminder-schedule-preview';
@@ -11,6 +11,7 @@ import {
   FormSection,
   Screen,
   ScreenHeader,
+  Skeleton,
   Text,
   type ChipOption,
 } from '@/components/ui';
@@ -21,7 +22,11 @@ import { maintenanceReminderEntity, type MaintenanceDue } from '@/features/maint
 import { useRemindableMaintenance } from '@/features/maintenance/ui';
 import type { SubscriptionRecord } from '@/features/subscriptions';
 import { useUpcomingBills } from '@/features/bills/ui';
-import { reminderKindFor, type ReminderKind } from '@/features/settings';
+import {
+  reminderKindFor,
+  type ReminderKind,
+  type ReminderKindSlug,
+} from '@/features/settings';
 import {
   subscriptionReminderEntity,
   useSubscriptionList,
@@ -32,6 +37,7 @@ import {
   type EntityPlan,
   type ReminderEntity,
 } from '@/lib/notifications-plan';
+import type { AsyncStatus } from '@/lib/use-async-read';
 import {
   REMINDER_LEAD_SHORT_LABELS,
   REMINDER_LEAD_TIMES,
@@ -109,6 +115,17 @@ export default function ReminderKindScreen() {
   const expiringDocuments = useExpiringDocuments(UPCOMING_WINDOW_DAYS, 1, true);
   const dueMaintenance = useRemindableMaintenance(UPCOMING_WINDOW_DAYS, 1, true);
 
+  // Which read each kind's preview waits on. "Nothing to show yet — add a
+  // bill" is a claim only a read that LANDED can make; it used to be drawn
+  // while the read was still in flight, and after it had failed, to someone
+  // with a dozen bills.
+  const subjectStatus: Record<ReminderKindSlug, AsyncStatus> = {
+    bills: upcomingBills.status,
+    subscriptions: upcomingSubscriptions.status,
+    documents: expiringDocuments.status,
+    maintenance: dueMaintenance.status,
+  };
+
   const byKey: Record<ReminderLeadTimeKey, readonly ReminderLeadTime[]> = {
     billReminderLeadTimes,
     subscriptionReminderLeadTimes,
@@ -172,6 +189,7 @@ export default function ReminderKindScreen() {
 
   const selected = byKey[kind.settingKey];
   const off = selected.length === 0;
+  const previewStatus = subjectStatus[kind.slug];
 
   return (
     <Screen edges={['top']} scroll>
@@ -222,6 +240,12 @@ export default function ReminderKindScreen() {
                 eventLabel={kind.eventLabel}
                 testID={`reminder-preview-${kind.slug}`}
               />
+            ) : previewStatus === 'loading' ? (
+              <PreviewSkeleton />
+            ) : previewStatus === 'error' && subject === null ? (
+              <Text variant="caption" color="textSecondary">
+                {`Keeply could not look up your next ${kind.previewNoun} just now. Everything is stored on this device, so this is not a connection problem.`}
+              </Text>
             ) : (
               <Text variant="caption" color="textSecondary">
                 {emptyPreviewCopy(kind, plan)}
@@ -342,7 +366,27 @@ const LEAD_TIME_CHIPS: readonly ChipOption<ReminderLeadTime>[] = REMINDER_LEAD_T
   (leadTime) => ({ value: leadTime, label: REMINDER_LEAD_SHORT_LABELS[leadTime] }),
 );
 
+/**
+ * The preview's shape while its record is read: the name, the date line, and
+ * two stops on the rail. Not `SkeletonList` — its rows bring their own
+ * gutters, and inside a padded card they would sit indented twice.
+ */
+function PreviewSkeleton() {
+  const styles = useThemedStyles(makeStyles);
+  return (
+    <View style={styles.skeleton} accessibilityLabel="Loading">
+      <Skeleton width="50%" height={18} />
+      <Skeleton width="32%" height={12} />
+      <Skeleton width="62%" height={14} style={styles.skeletonRail} />
+      <Skeleton width="54%" height={14} />
+    </View>
+  );
+}
+
 const makeStyles = (t: Theme) =>
   StyleSheet.create({
     footnote: { marginTop: t.layout.section },
+    skeleton: { gap: t.space.sm },
+    // The rail starts a block below the heading, as it does in the preview.
+    skeletonRail: { marginTop: t.space.md },
   });

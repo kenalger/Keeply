@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View, type ListRenderItemInfo } from 'react-native';
 
 import {
@@ -66,6 +66,18 @@ import { useDebounced } from '@/lib/use-debounced';
  * reasons to add a document, and the reminder line reads the REAL per-document
  * defaults out of the settings store so it cannot drift from what the app will
  * actually schedule.
+ *
+ * ── THE EMPTY PROMISE WAITS FOR THE READ ───────────────────────────────────
+ * `hasAny` is false both when the library is empty and when the summary has
+ * not landed yet, so on its own it painted "No documents yet" over a full
+ * library for the first frames of every visit. The first read is handed to
+ * `<List/>` as `loading`, and a failed one as `error`, like every other list.
+ *
+ * ── THE CONTROLS ARE THE HEADER, NOT A ROW ─────────────────────────────────
+ * As a row, the search box's text and the sort were props of EVERY row — in
+ * `renderItem`'s deps and in `extraData` — so each keystroke re-rendered every
+ * visible document. In the header, which is where the other list screens keep
+ * theirs, a keystroke re-renders the header and nothing else.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -80,8 +92,6 @@ interface PromiseItem {
 }
 
 type DocumentListRow =
-  | { kind: 'controls'; key: string }
-  | { kind: 'error'; key: string }
   | { kind: 'empty'; key: string }
   | { kind: 'sectionHeader'; key: string; title: string }
   | { kind: 'note'; key: string; text: string }
@@ -142,8 +152,17 @@ const SORT_OPTIONS = [
 /* Screen                                                                      */
 /* -------------------------------------------------------------------------- */
 
+const makeStyles = (t: Theme) =>
+  StyleSheet.create({
+    // Air between the search field and the sort control: without it the
+    // field's helper line ("Document numbers are never searched.") sits
+    // directly on the sort's own label, and two fields read as one paragraph.
+    controls: { gap: t.space.md },
+  });
+
 export default function DocumentsScreen() {
   const router = useRouter();
+  const styles = useThemedStyles(makeStyles);
   const contentStyle = useTabScreenContentStyle();
   // Returns the stored array by reference, so no `useShallow` is needed here.
   const leadTimes = useSettingsStore((s) => s.documentReminderLeadTimes);
@@ -181,13 +200,16 @@ export default function DocumentsScreen() {
     (summary.status === 'error' && summary.value === null) ||
     (list.status === 'error' && list.rows.length === 0);
 
+  // The FIRST read of either half. Not a refresh: `useAsyncRead` stays on its
+  // last status while it re-reads, so typing a search never brings this back.
+  const loading = summary.status === 'loading' || list.status === 'loading';
+
   const hasAny = summary.value !== null && summary.value.total > 0;
 
   const rows = useMemo<readonly DocumentListRow[]>(() => {
-    if (failed) return [{ kind: 'error', key: 'error' }];
     if (!hasAny) return promiseRows(leadTimes);
 
-    const built: DocumentListRow[] = [{ kind: 'controls', key: 'controls' }];
+    const built: DocumentListRow[] = [];
     if (list.rows.length === 0) {
       built.push({
         kind: 'note',
@@ -242,7 +264,6 @@ export default function DocumentsScreen() {
     }
     return built;
   }, [
-    failed,
     hasAny,
     leadTimes,
     list.rows,
@@ -253,21 +274,45 @@ export default function DocumentsScreen() {
     query,
   ]);
 
+  // Nothing the rows render depends on the controls any more — see the header.
   const renderRow = useCallback(
     ({ item }: ListRenderItemInfo<DocumentListRow>) => (
-      <DocumentListRowView
-        row={item}
-        search={search}
-        sort={sort}
-        onSearch={setSearch}
-        onSort={setSort}
-        onAdd={add}
-        onOpen={open}
-        onRetry={retry}
-      />
+      <DocumentListRowView row={item} onAdd={add} onOpen={open} />
     ),
-    [search, sort, add, open, retry],
+    [add, open],
   );
+
+  // Only once there is something to search. An empty library gets the
+  // promises instead, and a search box above them is a question nobody can ask
+  // yet. `undefined`, not `null`: `ScreenHeader` draws the gap above its
+  // children for anything that is not `undefined`, `null` included.
+  const controls = hasAny ? (
+    <View style={styles.controls}>
+      <TextField
+        label="Search"
+        content="search"
+        value={search}
+        onChangeText={setSearch}
+        placeholder="Name or notes"
+        // Said out loud, because §14's promise is invisible otherwise and a
+        // user who types a passport number deserves to know it did nothing
+        // rather than to conclude the search is broken.
+        helper="Document numbers are never searched."
+        testID="documents-search"
+      />
+      {/* `underline`, not `segmented`: this chooses which of the same things
+          to look at, and a filled track would read as a form field setting a
+          value on a record. */}
+      <SegmentedField<DocumentSort>
+        label="Sort by"
+        variant="underline"
+        value={sort}
+        onChangeValue={setSort}
+        options={SORT_OPTIONS}
+        testID="documents-sort"
+      />
+    </View>
+  ) : undefined;
 
   return (
     <Screen edges={['top']} padded={false} keyboardAvoiding={false}>
@@ -276,7 +321,22 @@ export default function DocumentsScreen() {
         renderItem={renderRow}
         keyExtractor={documentRowKey}
         separator="none"
-        extraData={`${search}|${sort}`}
+        loading={loading}
+        error={
+          failed ? (
+            <EmptyState
+              icon="errorCircle"
+              title="Keeply could not read your documents"
+              // The database is on the device, so "check your connection" would
+              // send the user to fix something that is not broken.
+              description="The database is on this device, so this is not a connection problem. Try again, and if it keeps happening a restore from a backup will rebuild it."
+              actionLabel="Try again"
+              actionIcon="repeat"
+              onAction={retry}
+              fill={false}
+            />
+          ) : undefined
+        }
         header={
           <ScreenHeader
             title="Documents"
@@ -292,8 +352,9 @@ export default function DocumentsScreen() {
                 onPress={add}
                 testID="documents-add"
               />
-            }
-          />
+            }>
+            {controls}
+          </ScreenHeader>
         }
         onEndReached={list.hasMore ? list.loadMore : undefined}
         contentContainerStyle={contentStyle}
@@ -332,89 +393,21 @@ const documentRowKey = (row: DocumentListRow): string => row.key;
 /* -------------------------------------------------------------------------- */
 
 /**
- * The search field and the sort control, with air between them.
- *
- * `ListBlock` spaces itself from its NEIGHBOURS and not its children, so
- * without this the search field's helper line ("Document numbers are never
- * searched.") sits directly on top of the sort control's own label — two
- * different fields reading as one paragraph.
+ * Stable callbacks only. The search text and the sort used to be props here,
+ * which is what made every keystroke re-render every visible row.
  */
-function ControlsBlock({ children }: { children: ReactNode }) {
-  const styles = useThemedStyles(makeControlStyles);
-  return <View style={styles.controls}>{children}</View>;
-}
-
-const makeControlStyles = (t: Theme) => StyleSheet.create({ controls: { gap: t.space.md } });
-
 interface RowViewProps {
   row: DocumentListRow;
-  search: string;
-  sort: DocumentSort;
-  onSearch: (value: string) => void;
-  onSort: (value: DocumentSort) => void;
   onAdd: () => void;
   onOpen: (id: string) => void;
-  onRetry: () => void;
 }
 
 const DocumentListRowView = memo(function DocumentListRowView({
   row,
-  search,
-  sort,
-  onSearch,
-  onSort,
   onAdd,
   onOpen,
-  onRetry,
 }: RowViewProps) {
   switch (row.kind) {
-    case 'controls':
-      return (
-        <ListBlock>
-          <ControlsBlock>
-          <TextField
-            label="Search"
-            content="search"
-            value={search}
-            onChangeText={onSearch}
-            placeholder="Name or notes"
-            // Said out loud, because §14's promise is invisible otherwise and
-            // a user who types a passport number deserves to know it did
-            // nothing rather than to conclude the search is broken.
-            helper="Document numbers are never searched."
-            testID="documents-search"
-          />
-          {/* `underline`, not `segmented`: this chooses which of the same
-              things to look at, and a filled track would read as a form field
-              setting a value on a record. */}
-          <SegmentedField<DocumentSort>
-            label="Sort by"
-            variant="underline"
-            value={sort}
-            onChangeValue={onSort}
-            options={SORT_OPTIONS}
-            testID="documents-sort"
-          />
-          </ControlsBlock>
-        </ListBlock>
-      );
-
-    case 'error':
-      return (
-        <ListBlock>
-          <EmptyState
-            icon="errorCircle"
-            title="Keeply could not read your documents"
-            // The database is on the device, so "check your connection" would
-            // send the user to fix something that is not broken.
-            description="The database is on this device, so this is not a connection problem. Try again, and if it keeps happening a restore from a backup will rebuild it."
-            actionLabel="Try again"
-            onAction={onRetry}
-            fill={false}
-          />
-        </ListBlock>
-      );
-
     case 'empty':
       return (
         <ListBlock>

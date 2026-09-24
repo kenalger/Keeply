@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { Alert, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import {
@@ -13,11 +13,14 @@ import {
   Row,
   Screen,
   ScreenHeader,
+  Skeleton,
+  SkeletonList,
   StatusPill,
   Text,
   amountLabel,
+  holdBusy,
 } from '@/components/ui';
-import { isVehicle } from '@/features/maintenance';
+import { MaintenanceError, isVehicle } from '@/features/maintenance';
 import {
   ANALYTICS_GAP_MESSAGES,
   COST_TYPE_ICONS,
@@ -38,6 +41,7 @@ import {
   useItemRenewals,
   useItemServices,
   useMaintenanceItem,
+  type AsyncStatus,
 } from '@/features/maintenance/ui';
 import { log } from '@/lib/log';
 import {
@@ -122,6 +126,8 @@ export default function MaintenanceItemScreen() {
   const services = useItemServices(id, SERVICE_PREVIEW);
   const renewals = useItemRenewals(id);
   const costs = useItemCosts(id, COST_PREVIEW);
+  // What the overlay says while a write is in flight, or `null` when idle.
+  const [busy, setBusy] = useState<string | null>(null);
 
   const leave = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -130,7 +136,7 @@ export default function MaintenanceItemScreen() {
 
   const confirmDelete = useCallback(() => {
     const record = item.value;
-    if (record === null) return;
+    if (record === null || busy !== null) return;
 
     Alert.alert(
       `Delete ${record.name}?`,
@@ -141,42 +147,66 @@ export default function MaintenanceItemScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
+            setBusy('Deleting…');
             void (async () => {
               try {
-                await removeItem(record.id);
+                await holdBusy(removeItem(record.id));
                 router.replace('/(tabs)/maintenance');
               } catch (error) {
                 log.error('maintenance: deleting an item failed', error);
                 Alert.alert('Not deleted', 'Keeply could not remove this item. Try again.');
+              } finally {
+                // Always. Without it a throw left the overlay up and the whole
+                // screen untouchable.
+                setBusy(null);
               }
             })();
           },
         },
       ],
     );
-  }, [item.value, router]);
+  }, [item.value, busy, router]);
 
+  // The first read. A bare header with nothing under it read as a screen that
+  // had failed to draw, so the page's shape is held while the row arrives.
   if (item.status === 'loading' && item.value === null) {
     return (
       <Screen edges={['top']}>
         <ScreenHeader title="Item" onBack={leave} />
+        <SkeletonList count={5} leading={false} />
       </Screen>
     );
   }
 
   const record = item.value;
   if (record === null) {
+    // A THROWN read is not a deleted item. `getItem` throws `not-found` for one
+    // that is gone and something else for a read that merely failed; saying
+    // "gone" for the second is the most alarming way to report a hiccup.
+    const gone = item.error instanceof MaintenanceError && item.error.code === 'not-found';
     return (
       <Screen edges={['top']}>
         <ScreenHeader title="Item" onBack={leave} />
-        <EmptyState
-          icon="errorCircle"
-          title="This item is gone"
-          description="It may have been deleted on this device."
-          actionLabel="Back to Maintenance"
-          onAction={() => router.replace('/(tabs)/maintenance')}
-          fill={false}
-        />
+        {gone ? (
+          <EmptyState
+            icon="errorCircle"
+            title="This item is gone"
+            description="It may have been deleted on this device."
+            actionLabel="Back to Maintenance"
+            onAction={() => router.replace('/(tabs)/maintenance')}
+            fill={false}
+          />
+        ) : (
+          <EmptyState
+            icon="errorCircle"
+            title="Keeply could not open this item"
+            description="The record is on this device, so this is not a connection problem."
+            actionLabel="Try again"
+            actionIcon="repeat"
+            onAction={item.reload}
+            fill={false}
+          />
+        )}
       </Screen>
     );
   }
@@ -192,7 +222,7 @@ export default function MaintenanceItemScreen() {
     (dueNext.nextServiceDate !== null || dueNext.nextExpiryDate !== null);
 
   return (
-    <Screen edges={['top']} scroll>
+    <Screen edges={['top']} scroll busy={busy}>
       <ScreenHeader
         title={record.name}
         subtitle={describeItem(record)}
@@ -283,7 +313,28 @@ export default function MaintenanceItemScreen() {
 
       <Block title="What it has cost" style={styles.block}>
         <Card style={styles.spend}>
-          {spend === null || summary === null || summary.isEmpty ? (
+          {/* "Nothing recorded" is a claim only a read that LANDED can make.
+              It used to be drawn for `spend === null` as well — while the
+              figures were still loading, and when they had failed to. */}
+          {spend === null && analytics.status === 'loading' ? (
+            <>
+              <Skeleton width="45%" height={28} />
+              <Skeleton width="30%" height={12} />
+            </>
+          ) : spend === null || summary === null ? (
+            <>
+              <Text variant="caption" color="textSecondary">
+                Keeply could not add this up just now. The costs are still on this device.
+              </Text>
+              <Button
+                title="Try again"
+                variant="secondary"
+                icon="repeat"
+                onPress={analytics.reload}
+                style={styles.stacked}
+              />
+            </>
+          ) : summary.isEmpty ? (
             <Text variant="caption" color="textSecondary">
               Nothing recorded against it yet.
             </Text>
@@ -405,7 +456,7 @@ export default function MaintenanceItemScreen() {
 
       <Block title="Service history" style={styles.block}>
         {services.rows.length === 0 ? (
-          <ListNote>Nothing done to it yet.</ListNote>
+          <PreviewEmpty status={services.status}>Nothing done to it yet.</PreviewEmpty>
         ) : (
           <Card>
             {services.rows.map((service) => (
@@ -473,7 +524,9 @@ export default function MaintenanceItemScreen() {
 
       <Block title="Cover" style={styles.block}>
         {renewals.rows.length === 0 ? (
-          <ListNote>No insurance, registration or warranty on file.</ListNote>
+          <PreviewEmpty status={renewals.status}>
+            No insurance, registration or warranty on file.
+          </PreviewEmpty>
         ) : (
           <Card>
             {renewals.rows.map((renewal) => (
@@ -521,7 +574,7 @@ export default function MaintenanceItemScreen() {
 
       <Block title="Ledger" style={styles.block}>
         {costs.rows.length === 0 ? (
-          <ListNote>No money recorded against it yet.</ListNote>
+          <PreviewEmpty status={costs.status}>No money recorded against it yet.</PreviewEmpty>
         ) : (
           <Card>
             {costs.rows.map((cost) => (
@@ -590,6 +643,32 @@ export default function MaintenanceItemScreen() {
         testID="maintenance-delete"
       />
     </Screen>
+  );
+}
+
+/**
+ * What a capped preview says while it has no rows, by the read behind it.
+ *
+ * "Nothing done to it yet" is a claim about the database, and it was drawn for
+ * `rows.length === 0` alone — while the rows were still loading, and after
+ * they had failed to. Only a read that LANDED can say there is nothing: before
+ * one this is a skeleton row, and after a failed one it says Keeply could not
+ * look, which is a different sentence from "there is nothing to look at".
+ */
+function PreviewEmpty({ status, children }: { status: AsyncStatus; children: string }) {
+  if (status === 'loading') {
+    return (
+      <Card padded={false}>
+        <SkeletonList count={1} />
+      </Card>
+    );
+  }
+  return (
+    <ListNote>
+      {status === 'error'
+        ? 'Keeply could not read these just now. They are still on this device.'
+        : children}
+    </ListNote>
   );
 }
 

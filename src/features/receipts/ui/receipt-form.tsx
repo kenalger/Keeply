@@ -60,6 +60,7 @@ import {
   SelectField,
   Text,
   TextField,
+  holdBusy,
 } from '@/components/ui';
 import type { MinorUnits } from '@/db';
 import {
@@ -293,8 +294,8 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
     setSaving(true);
     void (async () => {
       try {
-        const result = editing
-          ? await saveReceiptEdit(record.id, {
+        const write = editing
+          ? saveReceiptEdit(record.id, {
               merchant: draft.merchant,
               amountMinor,
               category: draft.category,
@@ -304,7 +305,7 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
               localImageUri: draft.imageUri,
               localThumbnailUri: draft.thumbnailUri,
             } satisfies ReceiptPatch)
-          : await saveNewReceipt({
+          : saveNewReceipt({
               merchant: draft.merchant,
               amountMinor,
               category: draft.category,
@@ -316,6 +317,9 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
               localImageUri: draft.imageUri,
               localThumbnailUri: draft.thumbnailUri,
             } satisfies NewReceiptInput);
+        // Held, not delayed: the row is written at once; "Saving…" stays up
+        // long enough to be seen. See `BusyOverlay`.
+        const result = await holdBusy(write);
 
         if (!result.ok) {
           // Every message lands on its field. Nothing modal, nothing lost —
@@ -345,12 +349,13 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
   return (
     <FormScreen
       onSubmit={submit}
+      busy={saving ? 'Saving…' : null}
       testID="receipt-form"
       footer={
         <FormActions
           primaryLabel={editing ? 'Save changes' : 'Save expense'}
           onPrimary={submit}
-          primaryDisabled={saving}
+          primaryLoading={saving}
           secondaryLabel="Cancel"
           onSecondary={onCancel}
           testID="receipt-form-actions"

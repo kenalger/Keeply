@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 
 import {
   Amount,
@@ -35,6 +35,14 @@ import { formatDate } from '@/theme';
  * A figure here would have to either repeat that read or sum the page — and a
  * total that quietly means "of the 40 rows loaded so far" is the kind of number
  * people plan around.
+ *
+ * ── FOUR STATES, NOT TWO ───────────────────────────────────────────────────
+ * The first read is a skeleton and a failed one says so with a retry. Both
+ * used to render as an empty card, which is "nothing recorded" said with no
+ * words — the one thing this screen must not say about a ledger that exists.
+ * A failed REFRESH keeps the rows it already has, for the reason
+ * `useAsyncRead` keeps them: blanking a list the user is reading is worse than
+ * showing it a moment stale.
  */
 export default function MaintenanceCostsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -56,20 +64,7 @@ export default function MaintenanceCostsScreen() {
 
   const renderItem = useCallback(
     ({ item: cost }: { item: MaintenanceCostRecord }) => (
-      <Row
-        icon={COST_TYPE_ICONS[cost.type]}
-        title={cost.description ?? COST_TYPE_LABELS[cost.type]}
-        subtitle={[
-          formatDate(cost.costDate),
-          cost.vendor,
-          cost.odometer === null ? null : formatKilometres(cost.odometer),
-        ]
-          .filter((part): part is string => part !== null)
-          .join(' · ')}
-        value={<Amount minor={cost.amountMinor} currency={cost.currency} size="sm" />}
-        valueLabel={amountLabel(cost.amountMinor, { currency: cost.currency })}
-        onPress={() => openCost(cost.id)}
-      />
+      <CostRow cost={cost} onOpen={openCost} />
     ),
     [openCost],
   );
@@ -122,6 +117,21 @@ export default function MaintenanceCostsScreen() {
           renderItem={renderItem}
           keyExtractor={keyExtractor}
           surface="card"
+          loading={costs.status === 'loading'}
+          error={
+            // Only with nothing to show — see the header.
+            costs.status === 'error' && costs.rows.length === 0 ? (
+              <EmptyState
+                icon="errorCircle"
+                title="Keeply could not read this ledger"
+                description="The costs are on this device, so this is not a connection problem. Trying again usually clears it."
+                actionLabel="Try again"
+                actionIcon="repeat"
+                onAction={costs.reload}
+                fill={false}
+              />
+            ) : undefined
+          }
           footer={footer}
           onEndReached={costs.hasMore ? costs.loadMore : undefined}
         />
@@ -129,3 +139,32 @@ export default function MaintenanceCostsScreen() {
     </Screen>
   );
 }
+
+/**
+ * One ledger line. Memoised, and handed the id-taking `onOpen` rather than a
+ * closure, so a page arriving at the bottom re-renders nothing above it.
+ */
+const CostRow = memo(function CostRow({
+  cost,
+  onOpen,
+}: {
+  cost: MaintenanceCostRecord;
+  onOpen: (costId: string) => void;
+}) {
+  return (
+    <Row
+      icon={COST_TYPE_ICONS[cost.type]}
+      title={cost.description ?? COST_TYPE_LABELS[cost.type]}
+      subtitle={[
+        formatDate(cost.costDate),
+        cost.vendor,
+        cost.odometer === null ? null : formatKilometres(cost.odometer),
+      ]
+        .filter((part): part is string => part !== null)
+        .join(' · ')}
+      value={<Amount minor={cost.amountMinor} currency={cost.currency} size="sm" />}
+      valueLabel={amountLabel(cost.amountMinor, { currency: cost.currency })}
+      onPress={() => onOpen(cost.id)}
+    />
+  );
+});

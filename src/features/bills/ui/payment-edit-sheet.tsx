@@ -57,6 +57,7 @@ export function PaymentEditSheet({
     <Sheet
       visible={visible && payment !== null}
       onClose={onClose}
+      busy={saving ? 'Saving…' : null}
       title="Correct this payment"
       subtitle="What was actually paid, and when."
       testID={testID}

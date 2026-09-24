@@ -15,6 +15,7 @@ import {
   SwitchField,
   Text,
   TextField,
+  holdBusy,
 } from '@/components/ui';
 import type { SegmentedOption } from '@/components/ui';
 import type { MinorUnits } from '@/db';
@@ -374,8 +375,8 @@ export function SubscriptionForm({ record, onSaved, onCancel }: SubscriptionForm
     setSaving(true);
     void (async () => {
       try {
-        const result = editing
-          ? await saveSubscriptionEdit(record.id, {
+        const write = editing
+          ? saveSubscriptionEdit(record.id, {
               name: draft.name,
               category: draft.category,
               amountMinor,
@@ -386,7 +387,7 @@ export function SubscriptionForm({ record, onSaved, onCancel }: SubscriptionForm
               notes: draft.notes,
               isActive: draft.isActive,
             } satisfies SubscriptionPatch)
-          : await saveNewSubscription({
+          : saveNewSubscription({
               name: draft.name,
               category: draft.category,
               amountMinor,
@@ -397,6 +398,9 @@ export function SubscriptionForm({ record, onSaved, onCancel }: SubscriptionForm
               notes: draft.notes,
               isActive: draft.isActive,
             } satisfies NewSubscriptionInput);
+        // Held, not delayed: the row is written at once; "Saving…" stays up
+        // long enough to be seen. See `BusyOverlay`.
+        const result = await holdBusy(write);
 
         if (!result.ok) {
           // Every message lands on its field. Nothing modal, nothing lost.
@@ -460,12 +464,13 @@ export function SubscriptionForm({ record, onSaved, onCancel }: SubscriptionForm
   return (
     <FormScreen
       onSubmit={submit}
+      busy={saving ? 'Saving…' : null}
       testID="subscription-form"
       footer={
         <FormActions
           primaryLabel={editing ? 'Save changes' : 'Add subscription'}
           onPrimary={submit}
-          primaryDisabled={saving}
+          primaryLoading={saving}
           secondaryLabel="Cancel"
           onSecondary={cancel}
           testID="subscription-form-actions"

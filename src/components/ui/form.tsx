@@ -22,6 +22,10 @@
  *  5. **The footer tracks the keyboard on the UI thread.** `useAnimatedKeyboard`
  *     drives the lift, so Save rides up with the keyboard rather than jumping
  *     a frame late.
+ *  6. **A save can be seen.** `busy` mounts a `BusyOverlay` over the whole
+ *     form — header, fields and footer — for as long as the write is in
+ *     flight, and `holdBusy()` keeps that long enough to register. Every
+ *     create and edit in the app goes through this one prop.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -42,6 +46,7 @@ import { useSafeAreaInsets, type Edge } from 'react-native-safe-area-context';
 
 import { useTheme, useThemedStyles, type ColorKey, type Theme } from '@/theme';
 
+import { BusyOverlay } from './busy-overlay';
 import { Button, type ButtonProps } from './button';
 import { FormFocusProvider } from './form-focus';
 import { Text } from './text';
@@ -63,6 +68,12 @@ export interface FormScreenProps {
   footer?: ReactNode;
   /** Run by the return key on the last field. */
   onSubmit?: () => void;
+  /**
+   * A write in flight. The string is what the overlay says — "Saving…" — and
+   * `null` (or nothing) means idle. While it is set nothing on the screen can
+   * be touched: not a field, not Cancel, not Back. See `BusyOverlay`.
+   */
+  busy?: string | null;
   /** Standard horizontal gutter. Defaults to `true`. */
   padded?: boolean;
   edges?: readonly Edge[];
@@ -128,6 +139,7 @@ export function FormScreen({
   children,
   footer,
   onSubmit,
+  busy = null,
   padded = true,
   edges = DEFAULT_EDGES,
   background = 'bg',
@@ -273,6 +285,12 @@ export function FormScreen({
             {footer}
           </Animated.View>
         ) : null}
+
+        <BusyOverlay
+          visible={busy !== null}
+          label={busy ?? ''}
+          testID={testID === undefined ? undefined : `${testID}-busy`}
+        />
       </View>
     </FormFocusProvider>
   );

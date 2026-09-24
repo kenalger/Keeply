@@ -13,6 +13,8 @@ import { useSafeAreaInsets, type Edge } from 'react-native-safe-area-context';
 
 import { useTheme, useThemedStyles, type ColorKey, type Theme } from '@/theme';
 
+import { BusyOverlay } from './busy-overlay';
+
 export interface ScreenProps {
   children: ReactNode;
   /** Wrap the content in a `ScrollView`. Defaults to `false`. */
@@ -30,6 +32,12 @@ export interface ScreenProps {
   keyboardAvoiding?: boolean;
   /** Pinned above the bottom inset — e.g. a primary "Save" action. */
   footer?: ReactNode;
+  /**
+   * A write in flight — "Saving…" — or `null`. Mounts a `BusyOverlay` over the
+   * whole screen, header included, so a detail-screen action ("Mark paid",
+   * pause, a renewal answer) is seen the same way a form's Save is.
+   */
+  busy?: string | null;
   contentContainerStyle?: StyleProp<ViewStyle>;
   style?: StyleProp<ViewStyle>;
   testID?: string;
@@ -74,6 +82,7 @@ export function Screen({
   background = 'bg',
   keyboardAvoiding = true,
   footer,
+  busy = null,
   contentContainerStyle,
   style,
   testID,
@@ -149,6 +158,12 @@ export function Screen({
       ) : (
         content
       )}
+
+      <BusyOverlay
+        visible={busy !== null}
+        label={busy ?? ''}
+        testID={testID === undefined ? undefined : `${testID}-busy`}
+      />
     </View>
   );
 }

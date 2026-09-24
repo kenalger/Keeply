@@ -17,6 +17,7 @@ import {
   ScreenHeader,
   Text,
   amountLabel,
+  holdBusy,
   type GroupPosition,
 } from '@/components/ui';
 import type { MinorUnits } from '@/db';
@@ -166,7 +167,8 @@ export default function ReceiptDetailScreen() {
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
   const record = useReceiptRecord(id);
-  const [busy, setBusy] = useState(false);
+  // What the overlay says while a write is in flight, or `null` when idle.
+  const [busy, setBusy] = useState<string | null>(null);
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -178,7 +180,7 @@ export default function ReceiptDetailScreen() {
   const rows = useMemo(() => (value === null ? [] : buildDetailRows(value)), [value]);
 
   const confirmDelete = useCallback(() => {
-    if (value === null || busy) return;
+    if (value === null || busy !== null) return;
     const amount = formatMoney(value.amountMinor, value.currency);
 
     Alert.alert(
@@ -196,21 +198,33 @@ export default function ReceiptDetailScreen() {
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
-            setBusy(true);
+            setBusy('Deleting…');
             void (async () => {
-              // Row first, file second. `deleteReceipt()` unlinks the URIs the
-              // transaction reported, after it committed — never before.
-              const result = await deleteReceipt(value.id);
-              setBusy(false);
-              if (result.ok) {
-                router.replace('/expenses');
-                return;
+              try {
+                // Row first, file second. `deleteReceipt()` unlinks the URIs
+                // the transaction reported, after it committed — never before.
+                const result = await holdBusy(deleteReceipt(value.id));
+                if (result.ok) {
+                  router.replace('/expenses');
+                  return;
+                }
+                log.warn('receipts: a delete was refused');
+                Alert.alert(
+                  'That did not delete',
+                  'Keeply could not remove this expense. Try again.',
+                );
+              } catch (error) {
+                log.error('receipts: delete failed', error);
+                Alert.alert(
+                  'That did not delete',
+                  'Keeply could not remove this expense. Try again.',
+                );
+              } finally {
+                // Always. A throw used to skip the reset and leave Delete
+                // dimmed for good; with the overlay up it would have locked
+                // the whole screen.
+                setBusy(null);
               }
-              log.warn('receipts: a delete was refused');
-              Alert.alert(
-                'That did not delete',
-                'Keeply could not remove this expense. Try again.',
-              );
             })();
           },
         },
@@ -226,7 +240,7 @@ export default function ReceiptDetailScreen() {
   const missing = record.status === 'ready' && value === null;
 
   return (
-    <Screen edges={['top', 'bottom']} padded={false} keyboardAvoiding={false}>
+    <Screen edges={['top', 'bottom']} padded={false} keyboardAvoiding={false} busy={busy}>
       <List<DetailRow>
         data={rows}
         renderItem={renderRow}
@@ -292,7 +306,7 @@ export default function ReceiptDetailScreen() {
                 variant="dangerGhost"
                 icon="trash"
                 fullWidth
-                disabled={busy}
+                disabled={busy !== null}
                 onPress={confirmDelete}
                 accessibilityHint="Asks you to confirm before removing it and its photo permanently"
                 testID="receipt-delete"

@@ -11,10 +11,13 @@ import {
   Row,
   Screen,
   ScreenHeader,
+  SkeletonList,
   StatusPill,
   Text,
+  holdBusy,
 } from '@/components/ui';
 import {
+  DocumentError,
   canOfferRenewal,
   daysUntilExpiry,
   expiryBucket,
@@ -91,26 +94,48 @@ export default function DocumentScreen() {
     else router.replace('/(tabs)/documents');
   }, [router]);
 
+  // The first read. A bare header with nothing under it read as a screen that
+  // had failed to draw, so the page's shape is held while the row arrives.
   if (document.status === 'loading' && record === null) {
     return (
       <Screen edges={['top']}>
         <ScreenHeader title="Document" onBack={leave} />
+        <SkeletonList count={4} leading={false} />
       </Screen>
     );
   }
 
   if (record === null) {
+    // A THROWN read is not a deleted record. `getDocument` throws `not-found`
+    // for a document that is gone and something else for a read that merely
+    // failed — and telling somebody their passport record was deleted when the
+    // read hiccuped is the most alarming way to report a transient problem.
+    const gone =
+      document.status === 'ready' ||
+      (document.error instanceof DocumentError && document.error.code === 'not-found');
     return (
       <Screen edges={['top']}>
         <ScreenHeader title="Document" onBack={leave} />
-        <EmptyState
-          icon="errorCircle"
-          title="This document is gone"
-          description="It may have been deleted on this device."
-          actionLabel="Back to Documents"
-          onAction={() => router.replace('/(tabs)/documents')}
-          fill={false}
-        />
+        {gone ? (
+          <EmptyState
+            icon="errorCircle"
+            title="This document is gone"
+            description="It may have been deleted on this device."
+            actionLabel="Back to Documents"
+            onAction={() => router.replace('/(tabs)/documents')}
+            fill={false}
+          />
+        ) : (
+          <EmptyState
+            icon="errorCircle"
+            title="Keeply could not open this document"
+            description="The record is on this device, so this is not a connection problem."
+            actionLabel="Try again"
+            actionIcon="repeat"
+            onAction={document.reload}
+            fill={false}
+          />
+        )}
       </Screen>
     );
   }
@@ -122,10 +147,15 @@ export default function DocumentScreen() {
   const onAnswer = (answer: RenewalAnswer, newExpiryDate?: string) => {
     setAnswered(true);
     setReopened(false);
-    setSaving(true);
+    // Dismissing the prompt is bookkeeping, not a save the user asked for, so
+    // it writes silently. The three real answers show "Saving…" like every
+    // other edit in the app — held long enough to be seen (`BusyOverlay`).
+    const silent = answer === 'dismiss';
+    if (!silent) setSaving(true);
     void (async () => {
       try {
-        await answerDocumentRenewal(record.id, answer, newExpiryDate);
+        const write = answerDocumentRenewal(record.id, answer, newExpiryDate);
+        await (silent ? write : holdBusy(write));
         document.reload();
       } catch (error) {
         // The sheet is already closed and the record is unchanged, so the
@@ -133,7 +163,7 @@ export default function DocumentScreen() {
         // this line: §10's rule holds in a catch like anywhere else.
         log.error('documents: recording the renewal answer failed', error);
       } finally {
-        setSaving(false);
+        if (!silent) setSaving(false);
       }
     })();
   };
@@ -142,7 +172,7 @@ export default function DocumentScreen() {
   const daysLeft = daysUntilExpiry(record.expiryDate, now);
 
   return (
-    <Screen edges={['top']} scroll>
+    <Screen edges={['top']} scroll busy={saving ? 'Saving…' : null}>
       <ScreenHeader
         title={record.name}
         subtitle={DOCUMENT_TYPE_LABELS[record.type]}

@@ -13,6 +13,7 @@ import {
   SwitchField,
   Text,
   TextField,
+  holdBusy,
   type SegmentedOption,
   type SelectOption,
 } from '@/components/ui';
@@ -370,9 +371,13 @@ export function BillForm({ record, onSaved, onCancel }: BillFormProps) {
     setSaving(true);
     void (async () => {
       try {
-        const result = editing
-          ? await saveBillEdit(record.id, shared satisfies BillPatch)
-          : await saveNewBill(shared satisfies NewBillInput);
+        // Held, not delayed: the row is written at once; "Saving…" stays up
+        // long enough to be seen. See `BusyOverlay`.
+        const result = await holdBusy(
+          editing
+            ? saveBillEdit(record.id, shared satisfies BillPatch)
+            : saveNewBill(shared satisfies NewBillInput),
+        );
 
         if (!result.ok) {
           // Every message lands on its field. Nothing modal, nothing lost.
@@ -425,12 +430,13 @@ export function BillForm({ record, onSaved, onCancel }: BillFormProps) {
   return (
     <FormScreen
       onSubmit={submit}
+      busy={saving ? 'Saving…' : null}
       testID="bill-form"
       footer={
         <FormActions
           primaryLabel={editing ? 'Save changes' : 'Add bill'}
           onPrimary={submit}
-          primaryDisabled={saving}
+          primaryLoading={saving}
           secondaryLabel="Cancel"
           onSecondary={cancel}
           testID="bill-form-actions"

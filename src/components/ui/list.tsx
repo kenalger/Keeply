@@ -247,6 +247,8 @@ export function List<ItemT>({
   );
 
   // Precedence: an error is the whole truth, then loading, then emptiness.
+  // The skeleton reserves its space at once and paints 150ms later (see
+  // `Skeleton`), so a read that lands inside a frame or two never shows one.
   const emptyComponent = useMemo(() => {
     if (error !== undefined && error !== null) return <View style={styles.stateBox}>{error}</View>;
     if (loading) {

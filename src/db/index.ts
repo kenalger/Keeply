@@ -100,6 +100,19 @@ let initialized = false;
 const IS_DEV: boolean = typeof __DEV__ === 'boolean' ? __DEV__ : false;
 
 /**
+ * The two stretches of `initDatabase()` a user can perceive: unlocking and
+ * opening the file (SQLCipher derives the key here), then bringing the schema
+ * up to date. Reported so the loading screen can say which one it is in —
+ * nothing else reads them, and they carry no data.
+ */
+export type DatabaseInitStage = 'opening' | 'migrating';
+
+export interface InitDatabaseOptions {
+  /** Called as each stage begins. Only the caller that started the init hears it. */
+  onStage?: (stage: DatabaseInitStage) => void;
+}
+
+/**
  * Open the encrypted database, apply connection pragmas, and run any pending
  * migrations. Safe to call any number of times, from any number of callers.
  *
@@ -109,12 +122,14 @@ const IS_DEV: boolean = typeof __DEV__ === 'boolean' ? __DEV__ : false;
  *         or `eraseLocalDatabase()` behind an explicit user confirmation.
  * @throws {DatabaseInitError} opening, configuring, or migrating failed.
  */
-export async function initDatabase(): Promise<void> {
+export async function initDatabase(options: InitDatabaseOptions = {}): Promise<void> {
   if (initialized && isDatabaseOpen()) return;
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
+    options.onStage?.('opening');
     await openDatabase();
+    options.onStage?.('migrating');
     await runMigrations();
     // Development only: prove a real Drizzle round-trip works before any
     // feature code depends on one. See ./selfcheck.ts for why this exists.

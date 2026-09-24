@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
-import { closeDatabase, eraseLocalDatabase, initDatabase } from '@/db';
+import {
+  closeDatabase,
+  eraseLocalDatabase,
+  initDatabase,
+  type DatabaseInitStage,
+} from '@/db';
 import { toErrorCode } from '@/lib/errors';
 import { log } from '@/lib/log';
 
@@ -42,15 +47,26 @@ import { log } from '@/lib/log';
  */
 export type BootStatus = 'idle' | 'initializing' | 'ready' | 'failed';
 
+/**
+ * Where inside `initializing` the boot currently is. What the loading screen
+ * says, and nothing else reads it: the machine above is still the only truth
+ * about whether the database is usable.
+ */
+export type BootStage = DatabaseInitStage;
+
 interface BootState {
   status: BootStatus;
   /** The failure that put us in `failed`. Never rendered raw — see `toUserMessage`. */
   error: unknown;
   /** How many times boot has been attempted, including the current one. */
   attempts: number;
+  /** Only meaningful while `initializing`; cleared by `start()`. */
+  stage: BootStage | null;
 
   /** `idle | failed → initializing`. Returns `false` if the transition was refused. */
   start: () => boolean;
+  /** Progress inside `initializing`. Ignored in any other state. */
+  setStage: (stage: BootStage) => void;
   /** `initializing → ready`. */
   succeed: () => void;
   /** `initializing → failed`. */
@@ -77,6 +93,7 @@ export const useBootStore = create<BootState>()((set, get) => ({
   status: 'idle',
   error: null,
   attempts: 0,
+  stage: null,
 
   start: () => {
     const { status, attempts } = get();
@@ -84,8 +101,14 @@ export const useBootStore = create<BootState>()((set, get) => ({
       log.debug('boot: start ignored', { from: status });
       return false;
     }
-    set({ status: 'initializing', error: null, attempts: attempts + 1 });
+    set({ status: 'initializing', error: null, attempts: attempts + 1, stage: null });
     return true;
+  },
+
+  setStage: (stage) => {
+    // A late report from a superseded attempt must not relabel a failure.
+    if (get().status !== 'initializing') return;
+    set({ stage });
   },
 
   succeed: () => {
@@ -126,8 +149,15 @@ export const useBootStatus = (): BootStatus => useBootStore((s) => s.status);
  * v5 no longer auto-compares object selector results, so a selector that builds
  * a new object every render must be wrapped in `useShallow` or it will loop.
  */
-export const useBootSnapshot = (): { status: BootStatus; error: unknown; attempts: number } =>
-  useBootStore(useShallow((s) => ({ status: s.status, error: s.error, attempts: s.attempts })));
+export const useBootSnapshot = (): {
+  status: BootStatus;
+  error: unknown;
+  attempts: number;
+  stage: BootStage | null;
+} =>
+  useBootStore(
+    useShallow((s) => ({ status: s.status, error: s.error, attempts: s.attempts, stage: s.stage })),
+  );
 
 /* -------------------------------------------------------------------------- */
 /* The sequence itself                                                         */
@@ -152,8 +182,9 @@ export async function runBootSequence(): Promise<void> {
   const startedAt = Date.now();
   try {
     // Generates or loads the SQLCipher key, opens the encrypted database and
-    // runs pending migrations. All on-device.
-    await initDatabase();
+    // runs pending migrations. All on-device. The stages feed the loading
+    // screen's caption and nothing else.
+    await initDatabase({ onStage: (stage) => useBootStore.getState().setStage(stage) });
     useBootStore.getState().succeed();
     log.info('boot: ready', { durationMs: Date.now() - startedAt });
   } catch (error) {

@@ -1,8 +1,15 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback } from 'react';
-import { Alert } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, StyleSheet, View } from 'react-native';
 
-import { EmptyState, Screen, ScreenHeader } from '@/components/ui';
+import {
+  BusyOverlay,
+  EmptyState,
+  Screen,
+  ScreenHeader,
+  SkeletonList,
+  holdBusy,
+} from '@/components/ui';
 import { CostForm, removeCost, useCost, useMaintenanceItem } from '@/features/maintenance/ui';
 import { log } from '@/lib/log';
 
@@ -13,6 +20,15 @@ import { log } from '@/lib/log';
  * fields in the same order either way, and two routes would be two places to
  * fix when a field moves — the pattern `MaintenanceForm` already sets, where
  * `record` being absent is what "adding" means.
+ *
+ * ── THE DELETE IS THIS ROUTE'S WRITE, SO THIS ROUTE SHOWS IT ───────────────
+ * `CostForm` owns its `FormScreen`, and that overlay says "Saving…" for the
+ * form's own write. Delete is handed in as `onDelete` and runs HERE — from the
+ * form, or from the unreadable state below — so "Deleting…" is mounted here:
+ * on the `Screen` in one case, over the form in the other. The same
+ * `BusyOverlay` either way, held by `holdBusy()`, cleared in `finally` so a
+ * throw can never leave the screen untouchable. The service and renewal routes
+ * do the same.
  */
 export default function MaintenanceCostScreen() {
   const { id, costId } = useLocalSearchParams<{ id: string; costId?: string }>();
@@ -21,6 +37,8 @@ export default function MaintenanceCostScreen() {
   const item = useMaintenanceItem(id);
   const cost = useCost(costId);
   const editing = costId !== undefined && costId !== '';
+  // What the overlay says while a write is in flight, or `null` when idle.
+  const [busy, setBusy] = useState<string | null>(null);
 
   const leave = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -32,26 +50,29 @@ export default function MaintenanceCostScreen() {
   // still one the user can delete — and the unreadable state below offers
   // exactly that. Reading `cost.value` here made that button dead.
   const confirmDelete = useCallback(() => {
-    if (costId === undefined || costId === '') return;
+    if (costId === undefined || costId === '' || busy !== null) return;
     Alert.alert('Delete this cost?', 'It leaves every total. This cannot be undone.', [
       { text: 'Keep', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: () => {
+          setBusy('Deleting…');
           void (async () => {
             try {
-              await removeCost(costId);
+              await holdBusy(removeCost(costId));
               leave();
             } catch (error) {
               log.error('maintenance: deleting a cost failed', error);
               Alert.alert('Not deleted', 'Keeply could not remove this cost. Try again.');
+            } finally {
+              setBusy(null);
             }
           })();
         },
       },
     ]);
-  }, [costId, leave]);
+  }, [costId, busy, leave]);
 
   // Both reads have to land before the form can be seeded: the ITEM's kind
   // decides which fields exist, and seeding from a half-loaded record would
@@ -67,7 +88,7 @@ export default function MaintenanceCostScreen() {
 
   if (unreadable) {
     return (
-      <Screen edges={['top']}>
+      <Screen edges={['top']} busy={busy}>
         <ScreenHeader title={editing ? 'Edit cost' : 'Record a cost'} onBack={leave} />
         <EmptyState
           icon="errorCircle"
@@ -85,21 +106,31 @@ export default function MaintenanceCostScreen() {
     );
   }
 
+  // The form's shape, held while both reads land — a bare header with nothing
+  // under it read as a screen that had failed to draw.
   if (loading || item.value === null) {
     return (
       <Screen edges={['top']}>
         <ScreenHeader title={editing ? 'Edit cost' : 'Record a cost'} onBack={leave} />
+        <SkeletonList count={5} leading={false} />
       </Screen>
     );
   }
 
   return (
-    <CostForm
-      item={item.value}
-      record={editing ? (cost.value ?? undefined) : undefined}
-      onSaved={leave}
-      onCancel={leave}
-      onDelete={editing ? confirmDelete : undefined}
-    />
+    <View style={styles.fill}>
+      <CostForm
+        item={item.value}
+        record={editing ? (cost.value ?? undefined) : undefined}
+        onSaved={leave}
+        onCancel={leave}
+        onDelete={editing ? confirmDelete : undefined}
+      />
+      <BusyOverlay visible={busy !== null} label={busy ?? ''} testID="maintenance-cost-busy" />
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  fill: { flex: 1 },
+});

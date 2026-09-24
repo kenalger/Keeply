@@ -11,6 +11,7 @@ import {
   ScreenHeader,
   Text,
   TextField,
+  holdBusy,
 } from '@/components/ui';
 import type { MinorUnits } from '@/db';
 import {
@@ -124,9 +125,11 @@ export function ServiceForm({
           amountMinor: amount,
         };
 
-        const saved = editing
-          ? await saveServicePatch(record.id, input)
-          : await saveNewService(input);
+        // Held, not delayed: the row is written at once; "Saving…" stays up
+        // long enough to be seen. See `BusyOverlay`.
+        const saved = await holdBusy(
+          editing ? saveServicePatch(record.id, input) : saveNewService(input),
+        );
         onSaved(saved);
       } catch (error) {
         if (error instanceof MaintenanceError && error.code === 'invalid-field') {
@@ -157,6 +160,7 @@ export function ServiceForm({
 
   return (
     <FormScreen
+      busy={saving ? 'Saving…' : null}
       footer={
         <FormActions
           primaryLabel={editing ? 'Save changes' : 'Add service'}

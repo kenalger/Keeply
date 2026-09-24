@@ -11,6 +11,7 @@ import {
   SelectField,
   Text,
   TextField,
+  holdBusy,
 } from '@/components/ui';
 import {
   DOCUMENT_NUMBER_MAX_LENGTH,
@@ -139,9 +140,11 @@ export function DocumentForm({ record, onSaved, onCancel, onDelete }: DocumentFo
           fileMimeType: mimeType,
         };
 
-        const saved = editing
-          ? await saveDocumentPatch(record.id, input)
-          : await saveNewDocument(input);
+        // Held, not delayed: the row is written at once; "Saving…" stays up
+        // long enough to be seen. See `BusyOverlay`.
+        const saved = await holdBusy(
+          editing ? saveDocumentPatch(record.id, input) : saveNewDocument(input),
+        );
         onSaved(saved);
       } catch (error) {
         // A validation failure names a FIELD and never a value (§14), so it can
@@ -172,6 +175,7 @@ export function DocumentForm({ record, onSaved, onCancel, onDelete }: DocumentFo
 
   return (
     <FormScreen
+      busy={saving ? 'Saving…' : null}
       footer={
         <FormActions
           primaryLabel={editing ? 'Save changes' : 'Add document'}

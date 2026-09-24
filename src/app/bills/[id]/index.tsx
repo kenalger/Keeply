@@ -22,10 +22,12 @@ import {
   Row,
   Screen,
   ScreenHeader,
+  SkeletonRow,
   StatusPill,
   Text,
   amountLabel,
   groupPosition,
+  holdBusy,
   type GroupPosition,
 } from "@/components/ui";
 import type { MinorUnits } from "@/db";
@@ -52,6 +54,7 @@ import {
   useBillPayments,
   useBillRecord,
   writeFailureMessage,
+  type AsyncStatus,
 } from "@/features/bills/ui";
 import { log } from "@/lib/log";
 import { formatDate, useThemedStyles, type Theme } from "@/theme";
@@ -87,6 +90,7 @@ type DetailRow =
   | { kind: "sectionHeader"; key: string; title: string }
   | { kind: "note"; key: string; text: string }
   | { kind: "reminders"; key: string }
+  | { kind: "historyLoading"; key: string }
   | {
       kind: "amount";
       key: string;
@@ -122,7 +126,7 @@ type DetailRow =
 function buildRows(
   record: BillRecord,
   payments: readonly BillPaymentRecord[],
-  paymentsFailed: boolean,
+  paymentsStatus: AsyncStatus,
 ): readonly DetailRow[] {
   const rows: DetailRow[] = [];
   const state = billState(record);
@@ -248,7 +252,12 @@ function buildRows(
     title: "Payment history",
   });
 
-  if (paymentsFailed) {
+  // The history is its own read, and it can land after the record does. Until
+  // it has, "Nothing recorded yet" would be a claim about rows nobody has
+  // looked at — so the first read holds a skeleton row in the history's place.
+  if (paymentsStatus === "loading") {
+    rows.push({ kind: "historyLoading", key: "history:loading" });
+  } else if (paymentsStatus === "error") {
     rows.push({
       kind: "note",
       key: "history:error",
@@ -299,14 +308,15 @@ export default function BillDetailScreen() {
   const payments = useBillPayments(id);
   const value = record.value;
 
-  const [busy, setBusy] = useState(false);
+  // What the overlay says while a write is in flight, or `null` when idle.
+  const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
   const rows = useMemo(
     () =>
       value === null
         ? []
-        : buildRows(value, payments.value ?? [], payments.status === "error"),
+        : buildRows(value, payments.value ?? [], payments.status),
     [value, payments.value, payments.status],
   );
 
@@ -326,7 +336,7 @@ export default function BillDetailScreen() {
    * show. Correcting it is one tap on the ledger row.
    */
   const confirmPay = useCallback(() => {
-    if (value === null || busy) return;
+    if (value === null || busy !== null) return;
 
     const recorded = amountLine(value);
     Alert.alert(
@@ -344,10 +354,10 @@ export default function BillDetailScreen() {
           text: "Mark paid",
           onPress: () => {
             setFailure(null);
-            setBusy(true);
+            setBusy("Saving…");
             void (async () => {
               try {
-                const result = await markBillPaid(value.id);
+                const result = await holdBusy(markBillPaid(value.id));
                 if (!result.ok) {
                   setFailure(writeFailureMessage(result.errors));
                   return;
@@ -369,7 +379,7 @@ export default function BillDetailScreen() {
                   "Keeply could not record that. Nothing was changed.",
                 );
               } finally {
-                setBusy(false);
+                setBusy(null);
               }
             })();
           },
@@ -380,7 +390,7 @@ export default function BillDetailScreen() {
 
   /** Reverse the most recent settlement, rewinding the due date with it. */
   const confirmUndo = useCallback(() => {
-    if (value === null || busy) return;
+    if (value === null || busy !== null) return;
 
     Alert.alert(
       "Undo the last payment?",
@@ -392,16 +402,16 @@ export default function BillDetailScreen() {
           style: "destructive",
           onPress: () => {
             setFailure(null);
-            setBusy(true);
+            setBusy("Undoing…");
             void (async () => {
               try {
-                const result = await undoBillPayment(value.id);
+                const result = await holdBusy(undoBillPayment(value.id));
                 if (!result.ok) setFailure(writeFailureMessage(result.errors));
               } catch (error) {
                 log.error("bills: undoing a payment failed", error);
                 setFailure("Keeply could not undo that. Nothing was changed.");
               } finally {
-                setBusy(false);
+                setBusy(null);
               }
             })();
           },
@@ -411,24 +421,24 @@ export default function BillDetailScreen() {
   }, [value, busy]);
 
   const toggleArchive = useCallback(() => {
-    if (value === null || busy) return;
+    if (value === null || busy !== null) return;
     setFailure(null);
-    setBusy(true);
+    setBusy("Saving…");
     void (async () => {
       try {
-        const result = await archiveBill(value.id, !value.isActive);
+        const result = await holdBusy(archiveBill(value.id, !value.isActive));
         if (!result.ok) setFailure(writeFailureMessage(result.errors));
       } catch (error) {
         log.error("bills: archiving failed", error);
         setFailure("Keeply could not change that. Nothing was changed.");
       } finally {
-        setBusy(false);
+        setBusy(null);
       }
     })();
   }, [value, busy]);
 
   const confirmDelete = useCallback(() => {
-    if (value === null || busy) return;
+    if (value === null || busy !== null) return;
 
     Alert.alert(
       `Delete ${value.name}?`,
@@ -443,20 +453,20 @@ export default function BillDetailScreen() {
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            setBusy(true);
+            setBusy("Deleting…");
             void (async () => {
               try {
-                const result = await deleteBill(value.id);
+                const result = await holdBusy(deleteBill(value.id));
                 if (!result.ok) {
                   setFailure(writeFailureMessage(result.errors));
-                  setBusy(false);
+                  setBusy(null);
                   return;
                 }
                 router.replace("/bills");
               } catch (error) {
                 log.error("bills: delete failed", error);
                 setFailure("Keeply could not delete this. Try again.");
-                setBusy(false);
+                setBusy(null);
               }
             })();
           },
@@ -480,17 +490,17 @@ export default function BillDetailScreen() {
   const savePaymentEdit = useCallback(
     (paymentId: string, patch: BillPaymentPatch) => {
       setFailure(null);
-      setBusy(true);
+      setBusy("Saving…");
       void (async () => {
         try {
-          const result = await saveBillPaymentEdit(paymentId, patch);
+          const result = await holdBusy(saveBillPaymentEdit(paymentId, patch));
           if (result.ok) setEditing(null);
           else setFailure(writeFailureMessage(result.errors));
         } catch (error) {
           log.error("bills: correcting a payment failed", error);
           setFailure("Keeply could not save that. Nothing was changed.");
         } finally {
-          setBusy(false);
+          setBusy(null);
         }
       })();
     },
@@ -500,7 +510,7 @@ export default function BillDetailScreen() {
   const missing = record.status === "ready" && value === null;
 
   return (
-    <Screen edges={["top", "bottom"]} padded={false} keyboardAvoiding={false}>
+    <Screen edges={["top", "bottom"]} padded={false} keyboardAvoiding={false} busy={busy}>
       <BillActionsContext value={actions}>
         <List<DetailRow>
           data={rows}
@@ -574,7 +584,7 @@ export default function BillDetailScreen() {
                     variant="secondary"
                     icon="arrowUp"
                     fullWidth
-                    disabled={busy}
+                    disabled={busy !== null}
                     onPress={confirmUndo}
                     accessibilityHint="Removes the recorded payment and puts the due date back"
                     testID="bill-unpay"
@@ -585,7 +595,7 @@ export default function BillDetailScreen() {
                     variant="primary"
                     icon="checkCircle"
                     fullWidth
-                    disabled={busy}
+                    disabled={busy !== null}
                     onPress={confirmPay}
                     accessibilityHint="Records this period as settled and moves to the next one"
                     testID="bill-pay"
@@ -599,7 +609,7 @@ export default function BillDetailScreen() {
                   variant="secondary"
                   icon={value.isActive ? "tray" : "repeat"}
                   fullWidth
-                  disabled={busy}
+                  disabled={busy !== null}
                   onPress={toggleArchive}
                   accessibilityHint={
                     value.isActive
@@ -614,7 +624,7 @@ export default function BillDetailScreen() {
                   variant="dangerGhost"
                   icon="trash"
                   fullWidth
-                  disabled={busy}
+                  disabled={busy !== null}
                   onPress={confirmDelete}
                   accessibilityHint="Asks you to confirm before removing it permanently"
                   testID="bill-delete"
@@ -630,7 +640,7 @@ export default function BillDetailScreen() {
         <PaymentEditSheet
           visible={editing !== null}
           payment={editing}
-          saving={busy}
+          saving={busy !== null}
           onSave={savePaymentEdit}
           onClose={() => setEditing(null)}
           testID="bill-payment-edit"
@@ -673,6 +683,13 @@ const DetailRowView = memo(function DetailRowView({ row }: { row: DetailRow }) {
 
     case "reminders":
       return <ReminderPermissionNote />;
+
+    case "historyLoading":
+      return (
+        <ListGroup position="only">
+          <SkeletonRow leading={false} />
+        </ListGroup>
+      );
 
     case "amount":
       return (

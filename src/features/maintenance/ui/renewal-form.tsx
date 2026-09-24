@@ -12,6 +12,7 @@ import {
   SelectField,
   Text,
   TextField,
+  holdBusy,
 } from '@/components/ui';
 import type { MinorUnits } from '@/db';
 import {
@@ -114,9 +115,11 @@ export function RenewalForm({
           amountMinor: amount,
         };
 
-        const saved = editing
-          ? await saveRenewalPatch(record.id, input)
-          : await saveNewRenewal(input);
+        // Held, not delayed: the row is written at once; "Saving…" stays up
+        // long enough to be seen. See `BusyOverlay`.
+        const saved = await holdBusy(
+          editing ? saveRenewalPatch(record.id, input) : saveNewRenewal(input),
+        );
         onSaved(saved);
       } catch (error) {
         if (error instanceof MaintenanceError && error.code === 'invalid-field') {
@@ -145,6 +148,7 @@ export function RenewalForm({
 
   return (
     <FormScreen
+      busy={saving ? 'Saving…' : null}
       footer={
         <FormActions
           primaryLabel={editing ? 'Save changes' : 'Add cover'}

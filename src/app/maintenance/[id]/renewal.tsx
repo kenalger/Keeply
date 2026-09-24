@@ -1,8 +1,15 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback } from 'react';
-import { Alert } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, StyleSheet, View } from 'react-native';
 
-import { EmptyState, Screen, ScreenHeader } from '@/components/ui';
+import {
+  BusyOverlay,
+  EmptyState,
+  Screen,
+  ScreenHeader,
+  SkeletonList,
+  holdBusy,
+} from '@/components/ui';
 import { isMaintenanceRenewalKind } from '@/features/maintenance';
 import {
   RenewalForm,
@@ -19,6 +26,9 @@ import { log } from '@/lib/log';
  * against the union rather than cast, because a link carrying `kind=nonsense`
  * must fall back to the default rather than seed a form with a value the
  * database will refuse at save time.
+ *
+ * The delete's "Deleting…" is mounted here rather than inside the form — see
+ * the cost route for why.
  */
 export default function MaintenanceRenewalScreen() {
   const { id, renewalId, kind } = useLocalSearchParams<{
@@ -31,6 +41,8 @@ export default function MaintenanceRenewalScreen() {
   const item = useMaintenanceItem(id);
   const renewal = useRenewal(renewalId);
   const editing = renewalId !== undefined && renewalId !== '';
+  // What the overlay says while a write is in flight, or `null` when idle.
+  const [busy, setBusy] = useState<string | null>(null);
 
   const leave = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -42,7 +54,7 @@ export default function MaintenanceRenewalScreen() {
   // still one the user can delete — and the unreadable state below offers
   // exactly that. Reading `renewal.value` here made that button dead.
   const confirmDelete = useCallback(() => {
-    if (renewalId === undefined || renewalId === '') return;
+    if (renewalId === undefined || renewalId === '' || busy !== null) return;
     const record = renewal.value;
     Alert.alert(
       'Delete this cover?',
@@ -50,25 +62,28 @@ export default function MaintenanceRenewalScreen() {
         ? 'This cannot be undone.'
         : 'The premium leaves the ledger with it. This cannot be undone.',
       [
-      { text: 'Keep', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            try {
-              await removeRenewal(renewalId);
-              leave();
-            } catch (error) {
-              log.error('maintenance: deleting a renewal failed', error);
-              Alert.alert('Not deleted', 'Keeply could not remove this cover. Try again.');
-            }
-          })();
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setBusy('Deleting…');
+            void (async () => {
+              try {
+                await holdBusy(removeRenewal(renewalId));
+                leave();
+              } catch (error) {
+                log.error('maintenance: deleting a renewal failed', error);
+                Alert.alert('Not deleted', 'Keeply could not remove this cover. Try again.');
+              } finally {
+                setBusy(null);
+              }
+            })();
+          },
         },
-      },
       ],
     );
-  }, [renewalId, renewal.value, leave]);
+  }, [renewalId, renewal.value, busy, leave]);
 
   // STILL LOADING is not the same as GONE, and neither is a failed read. One
   // branch covering all three rendered a bare header with only Back — no
@@ -81,7 +96,7 @@ export default function MaintenanceRenewalScreen() {
 
   if (unreadable) {
     return (
-      <Screen edges={['top']}>
+      <Screen edges={['top']} busy={busy}>
         <ScreenHeader title={editing ? 'Edit cover' : 'Add cover'} onBack={leave} />
         <EmptyState
           icon="errorCircle"
@@ -99,22 +114,35 @@ export default function MaintenanceRenewalScreen() {
     );
   }
 
+  // The form's shape, held while both reads land.
   if (loading || item.value === null) {
     return (
       <Screen edges={['top']}>
         <ScreenHeader title={editing ? 'Edit cover' : 'Add cover'} onBack={leave} />
+        <SkeletonList count={5} leading={false} />
       </Screen>
     );
   }
 
   return (
-    <RenewalForm
-      item={item.value}
-      record={editing ? (renewal.value ?? undefined) : undefined}
-      initialKind={isMaintenanceRenewalKind(kind) ? kind : undefined}
-      onSaved={leave}
-      onCancel={leave}
-      onDelete={editing ? confirmDelete : undefined}
-    />
+    <View style={styles.fill}>
+      <RenewalForm
+        item={item.value}
+        record={editing ? (renewal.value ?? undefined) : undefined}
+        initialKind={isMaintenanceRenewalKind(kind) ? kind : undefined}
+        onSaved={leave}
+        onCancel={leave}
+        onDelete={editing ? confirmDelete : undefined}
+      />
+      <BusyOverlay
+        visible={busy !== null}
+        label={busy ?? ''}
+        testID="maintenance-renewal-busy"
+      />
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  fill: { flex: 1 },
+});

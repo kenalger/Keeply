@@ -311,10 +311,15 @@ export default function HomeScreen() {
           header={
             <ScreenHeader
               title="Home"
+              // Only a read that LANDED may speak. Before the first one `data`
+              // is the zero dashboard, so this said "Nothing needs you today."
+              // over the skeleton — and over the error, when the read failed.
               subtitle={
-                attention === 0
-                  ? 'Nothing needs you today.'
-                  : `${attention} ${attention === 1 ? 'thing needs' : 'things need'} your attention.`
+                snapshot.status !== 'ready'
+                  ? undefined
+                  : attention === 0
+                    ? 'Nothing needs you today.'
+                    : `${attention} ${attention === 1 ? 'thing needs' : 'things need'} your attention.`
               }
               right={
                 <IconButton

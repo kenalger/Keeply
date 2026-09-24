@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useCallback } from 'react';
 
-import { AllowanceCard } from './allowance-card';
+import { AllowanceCard, allowanceCardState } from './allowance-card';
 import { useAllowanceCadence, useAllowanceStatus } from './hooks';
 
 /**
@@ -21,17 +21,19 @@ export function AllowanceSummary({ testID }: { testID?: string }) {
   const router = useRouter();
   const { cadence, ready } = useAllowanceCadence();
   const status = useAllowanceStatus(cadence);
+  // The skeleton is for the FIRST read of the user's OWN cadence only. A
+  // refresh after a write keeps the last figures on screen, because a local
+  // read is a millisecond and a card that blinks on every save is worse than
+  // one that is a frame stale (§25). The default cadence's figure, read before
+  // the preference lands, is not stale — it is wrong; see `allowanceCardState`.
+  const card = allowanceCardState(status, cadence, ready);
 
   const open = useCallback(() => router.push('/allowance'), [router]);
 
   return (
     <AllowanceCard
-      status={status.value}
-      // The skeleton is for the FIRST read only. A refresh after a write keeps
-      // the last figures on screen, because a local read is a millisecond and
-      // a card that blinks on every save is worse than one that is a frame
-      // stale (§25).
-      loading={(status.status === 'loading' && status.value === null) || !ready}
+      status={card.status}
+      loading={card.loading}
       error={status.error}
       onPress={open}
       onRetry={status.reload}

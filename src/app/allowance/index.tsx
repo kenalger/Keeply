@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
 import {
   AmountField,
@@ -14,6 +14,7 @@ import {
   ScreenHeader,
   SegmentedField,
   Text,
+  holdBusy,
   type SegmentedOption,
 } from '@/components/ui';
 import { minorUnits, type MinorUnits } from '@/db/money';
@@ -24,6 +25,7 @@ import {
 } from '@/features/allowance';
 import {
   AllowanceCard,
+  allowanceCardState,
   deleteAllowance,
   saveAllowance,
   useAllowanceCadence,
@@ -63,6 +65,13 @@ import { formatDate, formatMoney, useThemedStyles, type Theme } from '@/theme';
  * on its own terms: two effects can leave the amount updated and the date not.
  * `resetKey` is compared during render, so the pair moves together or not at
  * all. See https://react.dev/learn/you-might-not-need-an-effect.
+ *
+ * ── ONE WRITE AT A TIME ────────────────────────────────────────────────────
+ * Saving and removing a past allowance share one `busy` state, so neither can
+ * start while the other is running, and both are seen through the form's
+ * overlay. Removing used to fire on the tap with no guard and no feedback: two
+ * quick taps were two deletes, and a failure was a line in the log and nothing
+ * on screen.
  */
 export default function AllowanceScreen() {
   const router = useRouter();
@@ -71,16 +80,20 @@ export default function AllowanceScreen() {
   const { cadence, ready, setCadence } = useAllowanceCadence();
   const status = useAllowanceStatus(cadence);
   const history = useAllowanceHistory(cadence);
+  // The status for THIS cadence, or none yet. The fields below seed from it
+  // too, so they never start from the default cadence's figure either.
+  const card = allowanceCardState(status, cadence, ready);
 
   // The default start day follows the cadence: switch to weekly and the date
   // becomes this week's Monday, not the 1st of the month you were just on.
   const periodStart = useMemo(() => currentPeriod(cadence).startIso, [cadence]);
-  const inForceMinor = status.value?.allowanceMinor ?? null;
-  const currency = status.value?.currency ?? 'PHP';
+  const inForceMinor = card.status?.allowanceMinor ?? null;
+  const currency = card.status?.currency ?? 'PHP';
 
   const [amountMinor, setAmountMinor] = useState<MinorUnits | null>(inForceMinor);
   const [effectiveFrom, setEffectiveFrom] = useState<string>(periodStart);
-  const [saving, setSaving] = useState(false);
+  // What the overlay says while a write is in flight, or `null` when idle.
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const resetKey = `${cadence}:${String(inForceMinor)}:${periodStart}`;
@@ -107,15 +120,17 @@ export default function AllowanceScreen() {
   }, [router]);
 
   const save = useCallback(() => {
+    if (busy !== null) return;
     if (amountMinor === null || amountMinor <= 0) {
       setError('Enter how much you have to spend.');
       return;
     }
     setError(null);
-    setSaving(true);
+    setBusy('Saving…');
     void (async () => {
       try {
-        await saveAllowance({ period: cadence, amountMinor, currency, effectiveFrom });
+        // Held, not delayed: written at once, shown long enough to be seen.
+        await holdBusy(saveAllowance({ period: cadence, amountMinor, currency, effectiveFrom }));
         // Back to wherever the user came from. The card there re-reads off the
         // revision bump, so there is nothing to pass back.
         leave();
@@ -124,30 +139,40 @@ export default function AllowanceScreen() {
         log.error('allowance: saving failed', caught);
         setError('That could not be saved. Try again.');
       } finally {
-        setSaving(false);
+        setBusy(null);
       }
     })();
-  }, [amountMinor, cadence, currency, effectiveFrom, leave]);
+  }, [busy, amountMinor, cadence, currency, effectiveFrom, leave]);
 
-  const remove = useCallback((record: AllowanceRecord) => {
-    void (async () => {
-      try {
-        await deleteAllowance(record.id);
-      } catch (caught) {
-        log.error('allowance: removing failed', caught);
-      }
-    })();
-  }, []);
+  const remove = useCallback(
+    (record: AllowanceRecord) => {
+      if (busy !== null) return;
+      setBusy('Removing…');
+      void (async () => {
+        try {
+          await holdBusy(deleteAllowance(record.id));
+        } catch (caught) {
+          log.error('allowance: removing failed', caught);
+          // Said on screen as well as logged — and without the amount (§10).
+          Alert.alert('Not removed', 'Keeply could not remove that allowance. Try again.');
+        } finally {
+          setBusy(null);
+        }
+      })();
+    },
+    [busy],
+  );
 
   const rows = history.value ?? [];
 
   return (
     <FormScreen
+      busy={busy}
       footer={
         <FormActions
           primaryLabel={inForceMinor === null ? 'Set allowance' : 'Save allowance'}
           onPrimary={save}
-          primaryLoading={saving}
+          primaryLoading={busy !== null}
           secondaryLabel="Cancel"
           onSecondary={leave}
         />
@@ -161,8 +186,8 @@ export default function AllowanceScreen() {
 
       <View style={styles.card}>
         <AllowanceCard
-          status={status.value}
-          loading={(status.status === 'loading' && status.value === null) || !ready}
+          status={card.status}
+          loading={card.loading}
           error={status.error}
           onRetry={status.reload}
         />

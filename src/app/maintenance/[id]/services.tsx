@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 
 import {
   Amount,
@@ -21,7 +21,9 @@ import { formatDate } from '@/theme';
  *
  * The same shape and the same reasoning as the ledger screen: unbounded length,
  * so a `<List/>`; and the "due next" answer stays on the detail screen, because
- * it is a property of the LATEST service rather than of the list.
+ * it is a property of the LATEST service rather than of the list. The same four
+ * states too, for the ledger's reasons: a first read is a skeleton, a failed
+ * one says so, and a failed refresh keeps the rows it has.
  */
 export default function MaintenanceServicesScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -35,43 +37,17 @@ export default function MaintenanceServicesScreen() {
     else router.replace({ pathname: '/maintenance/[id]', params: { id } });
   }, [router, id]);
 
+  const openService = useCallback(
+    (serviceId: string) =>
+      router.push({ pathname: '/maintenance/[id]/service', params: { id, serviceId } }),
+    [router, id],
+  );
+
   const renderItem = useCallback(
     ({ item: service }: { item: MaintenanceServiceRecord }) => (
-      <Row
-        icon="wrench"
-        title={service.serviceType}
-        subtitle={[
-          formatDate(service.serviceDate),
-          service.shop,
-          service.odometer === null ? null : formatKilometres(service.odometer),
-        ]
-          .filter((part): part is string => part !== null)
-          .join(' · ')}
-        value={
-          service.costMinor === null ? undefined : (
-            <Amount
-              minor={service.costMinor}
-              currency={service.costCurrency ?? 'PHP'}
-              size="sm"
-            />
-          )
-        }
-        valueLabel={
-          service.costMinor === null
-            ? undefined
-            : amountLabel(service.costMinor, {
-                currency: service.costCurrency ?? undefined,
-              })
-        }
-        onPress={() =>
-          router.push({
-            pathname: '/maintenance/[id]/service',
-            params: { id, serviceId: service.id },
-          })
-        }
-      />
+      <ServiceRow service={service} onOpen={openService} />
     ),
-    [router, id],
+    [openService],
   );
 
   const keyExtractor = useCallback((service: MaintenanceServiceRecord) => service.id, []);
@@ -124,6 +100,21 @@ export default function MaintenanceServicesScreen() {
           renderItem={renderItem}
           keyExtractor={keyExtractor}
           surface="card"
+          loading={services.status === 'loading'}
+          error={
+            // Only with nothing to show — a failed refresh keeps its rows.
+            services.status === 'error' && services.rows.length === 0 ? (
+              <EmptyState
+                icon="errorCircle"
+                title="Keeply could not read this service history"
+                description="The services are on this device, so this is not a connection problem. Trying again usually clears it."
+                actionLabel="Try again"
+                actionIcon="repeat"
+                onAction={services.reload}
+                fill={false}
+              />
+            ) : undefined
+          }
           footer={footer}
           onEndReached={services.hasMore ? services.loadMore : undefined}
         />
@@ -131,3 +122,43 @@ export default function MaintenanceServicesScreen() {
     </Screen>
   );
 }
+
+/** One service. Memoised for the same reason as the ledger's `CostRow`. */
+const ServiceRow = memo(function ServiceRow({
+  service,
+  onOpen,
+}: {
+  service: MaintenanceServiceRecord;
+  onOpen: (serviceId: string) => void;
+}) {
+  return (
+    <Row
+      icon="wrench"
+      title={service.serviceType}
+      subtitle={[
+        formatDate(service.serviceDate),
+        service.shop,
+        service.odometer === null ? null : formatKilometres(service.odometer),
+      ]
+        .filter((part): part is string => part !== null)
+        .join(' · ')}
+      value={
+        service.costMinor === null ? undefined : (
+          <Amount
+            minor={service.costMinor}
+            currency={service.costCurrency ?? 'PHP'}
+            size="sm"
+          />
+        )
+      }
+      valueLabel={
+        service.costMinor === null
+          ? undefined
+          : amountLabel(service.costMinor, {
+              currency: service.costCurrency ?? undefined,
+            })
+      }
+      onPress={() => onOpen(service.id)}
+    />
+  );
+});
