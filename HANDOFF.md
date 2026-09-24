@@ -856,9 +856,19 @@ npm test                # node --test, 1613 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 
-Simulator: `BC119EA8-0D9A-4183-80F7-5123B0EAA301` (iPhone 17 Pro). **Shut down** at the end of this
-session — `xcrun simctl boot <udid>` then `open -a Simulator` brings it back, and the dev client is
-still installed, so no rebuild is needed. Metro was left running on 8081; `npm start` if it is gone.
+Simulator: `BC119EA8-0D9A-4183-80F7-5123B0EAA301` (iPhone 17 Pro). **Shut down and Simulator.app
+quit** at the end of this session — `xcrun simctl boot <udid>` then `open -a Simulator` brings it
+back. The dev client installed on it is this session's last `npx expo run:ios` (the kingfisher icon,
+the splash colours, the notification icon and the plugin order are all in it), so no rebuild is
+needed unless `app.json` or `plugins/` change again. **Metro was stopped** (nothing listens on 8081)
+and Xcode was not left running; `npm start` brings Metro back, then open the dev client and point it
+at `http://127.0.0.1:8081` (or `xcrun simctl openurl booted
+"exp+keeply://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081"`).
+
+The database on that simulator has had every migration through `0007` applied and is on the read
+connection; its test data is unchanged except that Spotify Premium was re-saved unmodified (twice)
+to capture the save overlay, and onboarding was reset and then skipped to capture the first-run
+path.
 
 The app on that simulator holds real test data: an allowance, a month of expenses, four
 maintenance items (a Vios, an aircon, a water heater, a laptop), three subscriptions and three
