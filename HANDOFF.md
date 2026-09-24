@@ -1,31 +1,35 @@
 # Keeply — Handoff
 
-**State at `b0cf09d`, on the branch `keeply/scale-and-expiry-prompt`.** `tsc --noEmit` 0 ·
-`eslint .` 0 errors, 10 warnings · `npm test` **1291/1291**. Working tree clean. Runs on the iOS
-Simulator, and everything below was exercised there rather than only in the suite.
+**State at `21e610c` PLUS AN UNCOMMITTED WORKING TREE, on the branch `keeply/scale-and-expiry-prompt`.**
+`tsc --noEmit` 0 · `eslint .` 0 errors, 10 warnings · `npm test` **1490/1490**. Runs on the iOS
+Simulator; the icon, splash, loading screen, save overlay, theme and the rewired screens were all
+exercised there rather than only in the suite. The paging rewrite is proven in the suite (real
+SQLite, every list × every sort × every filter) and rendered once on the simulator, not scrolled.
 
-> ⚠ **The branch is four commits ahead of `main` and NOTHING IS PUSHED.** `main` and `origin/main`
-> are both still at `d2a8701`. The branch fast-forwards cleanly — it was branched rather than
-> committed to `main` because 78 paths is a lot to put straight onto the default branch. Push it,
-> or fast-forward `main` onto it, whichever you prefer.
+> ⚠ **Sixty-odd paths are uncommitted, and the branch is five commits ahead of `main` with
+> NOTHING PUSHED.** `main` and `origin/main` are both still at `d2a8701`. Commit the tree first —
+> it is one coherent piece of work (see "The uncommitted session" under Recently closed) — then
+> push, or fast-forward `main` onto it, whichever you prefer.
 >
 > ```
+> 21e610c Handoff: state it as it is now, and strike four claims that stopped being true
 > b0cf09d Docs: record what was decided, what it cost, and what is still unverified
 > 6952b7b Documents, bills and shared UI: the expiry prompt, payment corrections, debounce
 > ccf3da9 Maintenance: the odometer regression, mixed currencies, and Home/Money wiring
 > 533f596 Foundations: paging indexes, Unicode search, and a migration runner that skips by tag
 > ```
 
-This session: the **odometer regression**, the **three remaining QA findings** (leaked field
-identifiers, mixed-currency totals, ASCII-only search), **Home and Money wiring** for maintenance,
-**scale** (paging indexes, debounced search, iOS Data Protection), the **document expiry prompt**,
-a **migration-runner bug** found while verifying it, and two small wins (bill payment corrections,
-`useAsyncRead` extracted).
+This session (uncommitted): the **kingfisher icon and splash** (iOS, Android layers, notification
+silhouette, dark splash), a **light theme reversed** to a white canvas with grey islands, **every
+create/edit/delete visibly saving** (`BusyOverlay` + `holdBusy`), a **boot loading screen** with
+stage captions that also covers the retry/erase paths, **flicker-free skeletons**, honest
+loading/empty/error states on a dozen screens, **keyset paging** that appends instead of re-reading
+from offset 0, **coalesced reminder rebuilds**, and a **lock-gate race** closed.
 
-**The most important thing in it** is not a feature: `runMigrations` was skipping by timestamp
-rather than by tag, so a regenerated migration re-ran, failed, and silently blocked every later
-one. The app kept working and the database was three columns short. See
-`src/db/migration-order.ts`.
+**The most important thing in it** is the last one: `LockGate` mounted the app tree while the
+settings read and the capability check were still in flight, so on a lost race the app lock was
+skipped for the session and content painted for as long as the check took. Nothing mounts now until
+both have answered (`src/app/_layout.tsx`, `LockGate`).
 
 **EVERY PHASE IS NOW BUILT.** Phases 1–9 are complete. What remains is polish, the audit findings
 listed under Known gaps, and the two "not in this phase" items each plan records.
@@ -132,9 +136,10 @@ A private, offline-first iOS app you can actually use:
 
 ## Start here
 
-**1. Land the branch.** Four commits on `keeply/scale-and-expiry-prompt`, nothing pushed, `main`
-still at `d2a8701`. It fast-forwards. Do this before anything else — the rest of this list assumes
-the work is on `main`.
+**1. Commit the working tree, then land the branch.** This session's work is uncommitted (sixty-odd
+paths, one coherent change — see Recently closed). Five commits on `keeply/scale-and-expiry-prompt`,
+nothing pushed, `main` still at `d2a8701`. It fast-forwards. Do this before anything else — the rest
+of this list assumes the work is on `main`.
 
 **2. Restore the specialist agents.** `.claude/agents/` holds five mobile specialists
 (`expo-native-engineer`, `mobile-data-engineer`, `mobile-ui-engineer`, `mobile-feature-engineer`,
@@ -164,8 +169,21 @@ outstanding.
     notification channel, SQLCipher's Android build and every safe-area assumption are all
     unexercised.
 
-**4. The app icon is still the Expo default.** The one thing every user sees before anything else.
-This wants a concept from you rather than a generated mark.
+**4. Two performance decisions are yours, and neither is started.** Both came out of the
+read-only review in this session and both change behaviour, not just speed:
+  - **Every database read runs synchronously on the JS thread.** Drizzle's op-sqlite driver calls
+    `execute` synchronously and `src/db/client.ts` maps it to `executeSync`; every feature port
+    reads through `db.all(bindStatement(…))`, so `readDashboard`'s ~15 statements and every GLOB
+    search block touch handling. Moving reads to op-sqlite's async `execute` — one seam per
+    feature — is the biggest scalability win left and needs care around transaction isolation
+    (a read dispatched to the background thread can execute between the statements of a
+    `withTransaction()` on the same connection). A second, read-only connection in WAL mode is the
+    clean answer; decide that before starting.
+  - **All five tabs mount and query at cold start.** NativeTabs renders every tab's content at
+    once, so Home, Money (which repeats Home's totals), two `AllowanceSummary` instances,
+    Maintenance and Documents all read in the first effect flush, alongside `AfterBoot`'s reminder
+    rebuild. Reading on first focus would roughly halve cold-start work; it changes when each tab
+    first paints.
 
 **5. Two decisions left open on purpose.** Both are written up where they live, not just here:
   - **Moving a payment to a different PERIOD has no UI.** The correction sheet deliberately omits
@@ -369,6 +387,52 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 ---
 
 ## Recently closed (do not re-fix)
+
+### The uncommitted session · icon, theme, saves, loading, paging, reminders
+
+- **Icon and splash.** `assets/images/*` are all generated from the kingfisher mark (the source
+  PNG had its checkerboard baked in; it was unmixed against the reconstructed 25.6px grid, not
+  thresholded). iOS icon = slate `#3A4550` on white; Android foreground/background/monochrome
+  layers; `notification-icon.png` white silhouette with tint `#3A4550`; `splash-icon.png` and
+  `splash-icon-dark.png` (light bird for dark mode). `assets/expo.icon/` (the Expo placeholder) is
+  deleted. `app.json`: `ios.icon` → the PNG, splash `#FFFFFF` / `#0A0A0A` = the theme canvases,
+  `expo-notifications` listed **after** `./plugins/with-local-only-notifications` — the order is
+  load-bearing (mods run in reverse; listed before, `aps-environment` came back). Verified in the
+  generated project and on the simulator.
+- **Theme.** `lightColor.bg` `#FFFFFF`, `surface` `#F1F1F1` (islands), `surfaceAlt` `#E8E8E8`,
+  `pressed` `#DEDEDE`; the four semantic `*Bg` fills and the `dueSoon`/`expiringSoon`/`inactive`
+  status fills stepped one shade darker so a pill still reads on a grey island; dark `inactive`
+  fill `#262626` (was 1.03:1 on its island). `tests/theme-contrast.test.ts` now covers every status
+  label, outline and un-outlined fill (project floor 1.08:1 against the island).
+- **Saves.** `src/components/ui/busy-overlay.tsx` (`BusyOverlay`, `holdBusy`,
+  `BUSY_MIN_VISIBLE_MS` = 400) and `src/lib/at-least.ts`. `FormScreen`, `Sheet` and `Screen` take
+  `busy?: string | null`. Every form, the allowance screen, the payment sheet and every
+  detail-screen write and delete go through it; `busy` is `string | null` everywhere, and every
+  async path ends in `finally { setBusy(null) }`. Convention recorded in CLAUDE.md.
+- **Loading.** `src/components/ui/loading-screen.tsx` draws the splash's mark at the splash's
+  size (`LOADING_MARK_SIZE` = `imageWidth` = 180 — keep them equal); `BootGate` renders it for
+  `idle`/`initializing` and lifts the native splash onto it; `initDatabase({ onStage })` reports
+  `opening` → `migrating` into `boot-store.stage` for the caption. `LockGate` shows it with
+  "Checking your settings…" until `initialised`. `Skeleton` reserves its box on mount and paints
+  150ms later (`src/lib/use-delayed.ts`); `Skeleton` uses Reanimated's shared `useReducedMotion`.
+- **Screens made honest** (by the UI specialist; see its list in the diff): Documents tab has
+  `loading`/`error` and its search field in the header (rows no longer re-render per keystroke);
+  maintenance costs/services lists have `loading`/`error` and memoised rows; document and
+  maintenance detail/edit screens show skeletons and split "gone" from "could not open" (both
+  ports throw `not-found`, they do not return null); bill history, maintenance spend and previews,
+  the reminders preview, the Money bills row, the Home subtitle and the allowance card no longer
+  show empty copy before their read lands (`allowanceCardState()` in `features/allowance/ui`).
+- **Paging** (by the data specialist): `src/lib/keyset.ts`, `paged-list.ts`, `use-paged-list.ts`.
+  Every `list*()` accepts `after?: string` and returns `next: string | null`; continuations wrap
+  the existing page statement as a flattened subquery with a keyset predicate that seeks on the
+  existing `*_page_*_idx` (`tests/query-plans-keyset.test.ts`: 20/20 index seeks, 0 temp
+  B-trees). `count(*)` once per filter; a revision bump re-reads only the loaded window. Page 6 of
+  a searched 1,000-row list: 12 statements → 1. Damaged, unbindable keys fall back to OFFSET for
+  that page rather than blanking the list. Cursor tokens hold row values: never log them.
+- **Reminders.** `src/lib/coalesce.ts`: one `syncAllReminders` in flight plus one trailing run
+  with the newest arguments. `settings-store.persist()` no longer awaits the rebuild inside its
+  write queue (the planner reads settings from the store, not the table), so a burst of chip taps
+  is two rebuilds, not five.
 
 Newest first, labelled by the commit that closed them — "this session" stopped being a useful
 label four commits ago.
@@ -628,12 +692,39 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   capture screen is receipt-shaped. Choosing a photo and choosing a file both work on the device.
 - **`strayDocumentFiles()` has no caller.** Deliberate: it is for a considered cleanup, not a launch
   sweep — a sweep at boot can delete a file a half-finished form is about to reference.
-- **`app.json` needs the Android notification icon wired.** The asset exists at
-  `assets/images/notification-icon.png` (96×96, white-on-transparent, verified legible at 24px). It must sit
-  **before** `./plugins/with-local-only-notifications` so the entitlement strip runs last, and needs a
-  `prebuild --clean` to confirm ordering. Without it Android renders the app icon as a white blob.
-- **The app icon is still Expo's default template.** `assets/images/icon.png`, `assets/expo.icon/` and the
-  Android adaptive layers are all scaffold defaults. Invisible until submission day, then blocking.
+- **Every save takes at least 400ms, by design.** `holdBusy()` holds a write's outcome so the
+  "Saving…" overlay registers; a 5ms SQLite write would otherwise show nothing. One constant
+  (`BUSY_MIN_VISIBLE_MS`) if the product decision changes.
+- **"Checking your settings…" lasts ~1s in a DEV build**, because `LockGate` awaits two lazy
+  `import()`s that Metro serves on demand. In a release bundle they are in-bundle; the real cost
+  (three native calls plus one settings read) is unmeasured on a release build.
+- **Bills sorted by amount has no paging index**: first page and every continuation sort. The
+  keyset is exact (NULL-amount bucket tested); making it fast needs
+  `bills_page_amount_idx ((amount_minor is null) asc, amount_minor desc, name collate nocase asc, id asc) WHERE deleted_at is null`
+  — a migration nobody has generated.
+- **The Maintenance tab list is not paged**: it reads 40 items while the header shows the full
+  count. The data layer already accepts `after` for items; the screen needs a footer and
+  `onEndReached`.
+- **Bills and documents continuations pin the first page's "today"** in the cursor, so a list left
+  open across midnight keeps one day until the next revision bump or filter change. Deliberate — one
+  list never mixes two days — and reversible by dropping `d` from the token.
+- **The Home/Money allowance card keeps its old cadence** after the cadence is changed in the
+  allowance editor: `useAllowanceCadence` reads the preference once per mount. Pre-existing; the
+  fix is in `features/allowance/ui/hooks.ts`.
+- **Removing a past allowance has no confirmation** — one tap on the row, no undo. It is now
+  guarded and held, but the interaction is unchanged.
+- **Home and Money blank the whole tab on a failed refresh** even when older rows are available;
+  the Documents tab only errors when it has nothing to show. Left as it was.
+- **A damaged document cannot be deleted from its own screens**: detail and edit say "could not
+  open" with a retry and offer no delete. The maintenance child screens do offer one for this case.
+- **Two dark-theme semantic fills are near-invisible on their island**: `successBg` `#1E1E1E` and
+  `infoBg` `#202020` sit at 1.03–1.06:1 against `#1B1B1B`. Untouched (the light theme was the
+  brief); the same one-step-darker treatment applies.
+- **`runOnJS` is deprecated in Reanimated 4.5** in favour of `scheduleOnRN`; `sheet.tsx` still
+  uses it three times. Works today.
+- **First run still paints Home, then replaces it with the wizard**, which itself paints nothing
+  until `begin()` resolves. The onboarding check runs after the navigator mounts; deciding it in
+  `LockGate`'s pending promise (one settings read) would remove both flashes.
 - **Untested by design**: `src/db/client.ts`, `migrate.ts`, `key.ts` import op-sqlite and expo-secure-store,
   which cannot load under plain Node. `withTransaction()`'s atomicity rests on the lint rule and the
   type-level `Omit`, not a test.
@@ -660,6 +751,12 @@ are not available at all. Drive the app over CDP instead — it worked reliably 
   takes a drizzle `SQL`, not `{sql, params}`.
 - An unhandled rejection inside an eval raises a LogBox toast that `__expo_dev_resetErrors()` does not
   clear. Relaunch the app. Before blaming the app for a toast, check it is not yours.
+- **To TAP something, walk the fibers.** From `globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__`, iterate
+  `hook.renderers.keys()` → `hook.getFiberRoots(id)` → `.current`, depth-first over `child`/`sibling`,
+  and call `memoizedProps.onPress()` on the fiber whose `memoizedProps.testID` (or
+  `accessibilityLabel`, which every `Row` and `Button` carries) matches. This is how the
+  `save-overlay.png` capture was taken: push `/subscriptions`, press the row by label, press
+  `subscription-edit`, press `subscription-form-actions-primary`, and screenshot in a burst.
 - **To SCREENSHOT A LONG SCREEN, scroll it through the React DevTools hook.** `simctl` cannot scroll
   and there are no synthetic taps, so a tall screen used to be capturable only down to the fold.
   `globalThis.__REACT_DEVTOOLS_GLOBAL_HOOK__` is present in any dev bundle: walk
@@ -673,7 +770,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 1291 tests
+npm test                # node --test, 1490 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 

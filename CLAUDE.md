@@ -60,6 +60,18 @@ plan/           Product spec and phase plan
   which redacts by key name.
 - Encryption keys live in SecureStore (Keychain/Keystore) only. Never hard-coded, never logged.
 - A missing local file renders "Image unavailable" — it is never a crash.
+- **Every create, edit and delete is seen.** A write goes `setBusy('Saving…')` →
+  `await holdBusy(write)` → `setBusy(null)` in `finally`, and the screen passes `busy` to its
+  `FormScreen` / `Sheet` / `Screen`, which mount the `BusyOverlay`. `holdBusy` keeps the outcome
+  back for at least 400ms so the overlay registers and never flickers. No form owns its own
+  spinner, and nothing is disabled-only (a 40% button reads as broken, not busy).
+- **Loading indicators are delayed, never immediate.** Reads here finish inside a frame or two, so
+  a skeleton drawn at once is a one-commit flash. Every `Skeleton` reserves its box on mount and
+  paints 150ms later (`useDelayedTrue`), so anything built from `Skeleton*` — `List loading`, a
+  detail screen's `SkeletonList`, a card's placeholder — inherits the delay. Never a raw
+  `ActivityIndicator` — `Button loading`, `Skeleton*`, `List loading` or `BusyOverlay`. Boot shows
+  `LoadingScreen`, which draws the splash's mark at the splash's size so the hand-off from native
+  is invisible.
 
 ## Where the data lives — and why it is not in a backup
 
@@ -174,6 +186,15 @@ npm run test:watch
   `src/db/schema/` does not — widen the index, do not delete the case. Its
   second half drops all seventeen indexes and asserts every plan regresses,
   which proves the guard can fail and that no index in the set is dead weight.
+- `keyset` / `keyset-pages` / `query-plans-keyset` / `paged-list` — keyset paging:
+  cursor encoding with NULL sort keys, ties, NOCASE and Unicode; every list × every
+  sort × every filter paged at sizes 1/2/3/7/40 against real SQLite over the committed
+  migrations and compared with one full read; every continuation's plan is an index
+  seek with no temp B-tree; the paged-list controller (no overlapping reads, superseded
+  reads discarded, `loadMore` queued) and its statement counts.
+- `coalesce` / `at-least` / `theme-contrast` — one reminder rebuild in flight plus one
+  trailing; the ≥400ms hold behind `holdBusy()`; every text, chip, outline and fill pair
+  in both themes measured against WCAG, and fills against the island they sit on.
 
 `tests/hooks/resolve-ts.mjs` teaches Node the `@/` alias and extensionless
 imports; `tests/node-types.d.ts` requests `@types/node` for the program.
