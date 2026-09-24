@@ -335,6 +335,17 @@ export interface BillFilter {
   /** Rows per page. Defaults to `DEFAULT_PAGE_SIZE`, capped at `MAX_PAGE_SIZE`. */
   limit?: number;
   offset?: number;
+  /**
+   * Continue after the page that returned this cursor ({@link BillPage.next}).
+   *
+   * A keyset read — one statement, through the paging index, and NOT counted
+   * again: `total` is the count the first page took. It is also read against
+   * the first page's "today" unless `todayISO` says otherwise, so a list
+   * scrolled across midnight does not label half its rows by yesterday and
+   * half by today. Pass the same filter and sort the cursor came from; never
+   * combined with `offset`.
+   */
+  after?: string;
 }
 
 export interface BillPage {
@@ -352,12 +363,22 @@ export interface BillPage {
    * removable.
    */
   damagedCount: number;
-  /** Matching rows in total, counted in SQL — not `rows.length`. */
+  /**
+   * Matching rows in total, counted in SQL — not `rows.length`. A page read
+   * with `after` reports the count its first page took, without re-counting.
+   */
   total: number;
   /** The limit actually applied after clamping. */
   limit: number;
+  /** Rows before this page — the one passed, or the cursor's position. */
   offset: number;
   hasMore: boolean;
+  /**
+   * Pass as `after` to read the page that follows; `null` exactly when
+   * `hasMore` is false. Opaque, in-memory only, never logged — it is built
+   * from the last row's sort keys (`@/lib/keyset`).
+   */
+  next: string | null;
 }
 
 export interface BillPaymentFilter {

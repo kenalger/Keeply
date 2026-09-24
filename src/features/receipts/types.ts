@@ -277,6 +277,16 @@ export interface ReceiptFilter {
   /** Rows per page. Defaults to `DEFAULT_PAGE_SIZE`, capped at `MAX_PAGE_SIZE`. */
   limit?: number;
   offset?: number;
+  /**
+   * Continue after the page that returned this cursor ({@link ReceiptPage.next}).
+   *
+   * A keyset read: the page starts where the last one ended, by sort key and
+   * through the same paging index, instead of skipping `offset` rows — and it
+   * is NOT counted again. `total` is the `count(*)` the first page took,
+   * carried in the cursor. Pass the SAME filter and sort the cursor came from;
+   * a cursor from another sort is refused. Never combined with `offset`.
+   */
+  after?: string;
 }
 
 /**
@@ -286,7 +296,7 @@ export interface ReceiptFilter {
  * One type, so "the total under this list" is provably the total OF this list —
  * `sql.ts` builds both WHERE clauses from a single function.
  */
-export type ReceiptTotalsOptions = Omit<ReceiptFilter, 'sort' | 'limit' | 'offset'>;
+export type ReceiptTotalsOptions = Omit<ReceiptFilter, 'sort' | 'limit' | 'offset' | 'after'>;
 
 export interface ReceiptPage {
   rows: readonly ReceiptRecord[];
@@ -302,12 +312,24 @@ export interface ReceiptPage {
    * `softDeleteReceipt()` never maps, so a counted row is always removable.
    */
   damagedCount: number;
-  /** Matching rows in total, counted in SQL — not `rows.length`. */
+  /**
+   * Matching rows in total, counted in SQL — not `rows.length`. A page read
+   * with `after` reports the count its first page took, without re-counting.
+   */
   total: number;
   /** The limit actually applied after clamping. */
   limit: number;
+  /** Rows before this page — the one passed, or the cursor's position. */
   offset: number;
   hasMore: boolean;
+  /**
+   * Pass as `after` to read the page that follows. `null` exactly when
+   * `hasMore` is false.
+   *
+   * Opaque, in-memory only, and never logged: it is built from the last row's
+   * sort keys, so it holds a merchant name or an amount (`@/lib/keyset`).
+   */
+  next: string | null;
 }
 
 export const MAX_PAGE_SIZE = 200;

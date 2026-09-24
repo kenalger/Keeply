@@ -28,6 +28,14 @@
  *    still a record they can remove.
  */
 import { minorUnits, type MinorUnits } from '@/db/money';
+import {
+  continuationStatement,
+  defineKeyset,
+  nextCursor,
+  readCursor,
+  splitPeek,
+  type KeysetSpec,
+} from '@/lib/keyset';
 import type { ReminderEntity } from '@/lib/notifications-plan';
 
 import { latestMonotonicRun, type OdometerReading } from './odometer';
@@ -601,6 +609,82 @@ export function maintenanceReminderEntity(due: MaintenanceDue): ReminderEntity {
   };
 }
 
+/** The shape all four paged reads return. */
+interface PageOf<TRecord> {
+  rows: TRecord[];
+  damagedCount: number;
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  next: string | null;
+}
+
+/**
+ * Map a page's raw rows, skipping — and counting — the ones that are damaged.
+ * The list half of the damaged-row policy; see `readPage`.
+ */
+function mapSkipping<TRow, TRecord>(
+  rows: readonly TRow[],
+  map: (row: TRow) => TRecord,
+): { mapped: TRecord[]; damagedCount: number } {
+  const mapped: TRecord[] = [];
+  let damagedCount = 0;
+  for (const row of rows) {
+    try {
+      mapped.push(map(row));
+    } catch {
+      damagedCount += 1;
+    }
+  }
+  return { mapped, damagedCount };
+}
+
+/**
+ * Each paged list's order as keys, for paging after a cursor (`@/lib/keyset`).
+ *
+ * These restate the ORDER BYs in `sql.ts`, and `continuationStatement()`
+ * checks on every continuation that they still do — a spec that drifted from
+ * its statement would skip or repeat rows at page boundaries. A renewal's
+ * `expiry_date` is `nullsLast`, exactly as `selectRenewals` lifts it: a
+ * warranty with no end date sorts after every one that has one.
+ */
+export const MAINTENANCE_KEYSETS = {
+  items: defineKeyset({
+    tag: 'maintenance:items',
+    qualifier: '',
+    keys: [
+      { column: 'is_active', direction: 'desc' },
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  costs: defineKeyset({
+    tag: 'maintenance:costs',
+    qualifier: '',
+    keys: [
+      { column: 'cost_date', direction: 'desc' },
+      { column: 'id', direction: 'desc' },
+    ],
+  }),
+  services: defineKeyset({
+    tag: 'maintenance:services',
+    qualifier: '"s".',
+    keys: [
+      { column: 'service_date', direction: 'desc' },
+      { column: 'id', direction: 'desc' },
+    ],
+  }),
+  renewals: defineKeyset({
+    tag: 'maintenance:renewals',
+    qualifier: '"r".',
+    keys: [
+      { column: 'expiry_date', direction: 'asc', nullsLast: true },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+} as const satisfies Readonly<Record<string, KeysetSpec>>;
+
 export interface MaintenanceApi {
   listItems(filter?: MaintenanceItemFilter): Promise<MaintenanceItemPage>;
   /** @throws {MaintenanceError} `not-found`, or `damaged-row`. */
@@ -804,37 +888,51 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
    * that `damagedCount` is reported rather than swallowed, and the screen says
    * so out loud.
    */
-  async function readPage<TRow, TRecord>(
+  async function readPage<TRow extends object, TRecord>(
     rowsStatement: SqlStatement,
     countStatement: SqlStatement,
     map: (row: TRow) => TRecord,
-    filter: { limit?: number; offset?: number },
-  ): Promise<{
-    rows: TRecord[];
-    damagedCount: number;
-    total: number;
-    limit: number;
-    offset: number;
-    hasMore: boolean;
-  }> {
+    filter: { limit?: number; offset?: number; after?: string },
+    spec: KeysetSpec,
+  ): Promise<PageOf<TRecord>> {
+    // `after`: the page that follows a cursor — one keyset statement, an
+    // index seek, and NO count. `rowsStatement` is still the one the filter
+    // builds; the continuation is layered on top of it (`@/lib/keyset`).
+    if (filter.after !== undefined) {
+      if (filter.offset !== undefined) {
+        throw new TypeError('A page starts after a cursor or at an offset, not both');
+      }
+      const cursor = readCursor(spec, filter.after);
+      const limit = resolvePageSize(filter.limit);
+      const read = await store.all<TRow>(
+        continuationStatement(rowsStatement, spec, cursor, limit),
+      );
+      const { page, hasMore } = splitPeek(read, limit);
+      const { mapped, damagedCount } = mapSkipping(page, map);
+      const position = { seen: cursor.seen + page.length, total: cursor.total };
+      return {
+        rows: mapped,
+        damagedCount,
+        total: cursor.total,
+        limit,
+        offset: cursor.seen,
+        hasMore,
+        next: hasMore ? nextCursor(spec, page, position) : null,
+      };
+    }
+
     const [rows, counts] = await Promise.all([
       store.all<TRow>(rowsStatement),
       store.all<{ total: unknown }>(countStatement),
     ]);
 
-    const mapped: TRecord[] = [];
-    let damagedCount = 0;
-    for (const row of rows) {
-      try {
-        mapped.push(map(row));
-      } catch {
-        damagedCount += 1;
-      }
-    }
-
+    const { mapped, damagedCount } = mapSkipping(rows, map);
     const total = numberOr(counts[0]?.total, mapped.length);
     const limit = resolvePageSize(filter.limit);
     const offset = resolveOffset(filter.offset);
+    // From the COUNT and from `rows.length` BEFORE mapping: a page whose rows
+    // were all damaged still has more behind it.
+    const hasMore = offset + rows.length < total;
 
     return {
       rows: mapped,
@@ -842,9 +940,9 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
       total,
       limit,
       offset,
-      // From the COUNT and from `rows.length` BEFORE mapping: a page whose rows
-      // were all damaged still has more behind it.
-      hasMore: offset + rows.length < total,
+      hasMore,
+      // From the RAW last row, so a damaged row is continued past, not re-read.
+      next: hasMore ? nextCursor(spec, rows, { seen: offset + rows.length, total }) : null,
     };
   }
 
@@ -976,7 +1074,13 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
 
   return {
     async listItems(filter: MaintenanceItemFilter = {}) {
-      return readPage(selectItems(filter), selectItemCount(filter), mapItemRow, filter);
+      return readPage(
+        selectItems(filter),
+        selectItemCount(filter),
+        mapItemRow,
+        filter,
+        MAINTENANCE_KEYSETS.items,
+      );
     },
 
     getItem: readItem,
@@ -1068,6 +1172,7 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
         selectCostCount(itemId, filter),
         mapCostRow,
         filter,
+        MAINTENANCE_KEYSETS.costs,
       );
     },
 
@@ -1110,6 +1215,7 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
         selectServiceCount(itemId, filter),
         mapServiceRow,
         filter,
+        MAINTENANCE_KEYSETS.services,
       );
     },
 
@@ -1205,6 +1311,7 @@ export function createMaintenanceApi(deps: MaintenanceApiDeps): MaintenanceApi {
         selectRenewalCount(itemId, filter),
         mapRenewalRow,
         filter,
+        MAINTENANCE_KEYSETS.renewals,
       );
     },
 

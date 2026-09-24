@@ -38,6 +38,7 @@ import { billTotals, remindableBills } from '@/features/bills';
 import { documentReminderEntity, expiringDocuments } from '@/features/documents';
 import { maintenanceReminderEntity, remindableMaintenance } from '@/features/maintenance';
 import { upcomingRenewals } from '@/features/subscriptions';
+import { coalesce } from '@/lib/coalesce';
 import { log } from '@/lib/log';
 import { rescheduleAll, type ScheduleResult } from '@/lib/notifications';
 import type { ReminderEntity } from '@/lib/notifications-plan';
@@ -69,11 +70,34 @@ const GATHER_ROW_LIMIT = 200;
  * resulting queue is a function of the arguments, so calling it twice in a row
  * changes nothing.
  *
+ * ── CALLS COALESCE ─────────────────────────────────────────────────────────
+ * At most one rebuild runs at a time, and at most one waits behind it
+ * (`@/lib/coalesce`). A call made mid-rebuild joins the next one — which
+ * STARTS after the call, so it reads the settings and records the call was
+ * made about — and every further call before that start collapses into it.
+ * Boot and the first foreground, or a burst of document writes, now cost two
+ * rebuilds rather than one each. The promise settles when the rebuild that
+ * covers this call has finished, with that rebuild's result.
+ *
+ * Only calls that OVERLAP can collapse. A caller that awaits this inside its
+ * own serial queue — each call made only after the last one finished — still
+ * gets one full rebuild per call. `persist()` in `src/stores/settings-store.ts`
+ * does exactly that today: it awaits the rebuild inside its write queue, so
+ * five lead-time toggles are still five rebuilds until it fires this without
+ * awaiting. The write order that queue protects does not depend on the
+ * rebuild, which reads the settings from the store, not from the database.
+ *
  * The four reads run together — they are independent and on one connection.
  * A failure in any of them is swallowed with a reason code: a boot must not
  * fail because a reminder could not be planned.
  */
-export async function syncAllReminders(options: { now?: Date } = {}): Promise<ScheduleResult | null> {
+export function syncAllReminders(options: { now?: Date } = {}): Promise<ScheduleResult | null> {
+  return rebuildCoalesced(options);
+}
+
+const rebuildCoalesced = coalesce(rebuildQueue);
+
+async function rebuildQueue(options: { now?: Date } = {}): Promise<ScheduleResult | null> {
   try {
     const [renewals, bills, documents, maintenance] = await Promise.all([
       upcomingRenewals(GATHER_WINDOW_DAYS, { limit: GATHER_ROW_LIMIT }),

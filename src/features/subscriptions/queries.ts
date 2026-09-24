@@ -33,6 +33,14 @@
  */
 import { minorUnits, type MinorUnits } from '@/db/money';
 import {
+  continuationStatement,
+  defineKeyset,
+  nextCursor,
+  readCursor,
+  splitPeek,
+  type KeysetSpec,
+} from '@/lib/keyset';
+import {
   addCalendarDays,
   advanceToFuture,
   daysBetweenDates,
@@ -57,6 +65,7 @@ import {
   type SubscriptionPatch,
   type SubscriptionRecord,
   type SubscriptionResult,
+  type SubscriptionSort,
   type SubscriptionTotals,
   type UpcomingRenewal,
 } from './types';
@@ -64,6 +73,48 @@ import { validateNewSubscription, validatePatch } from './validation';
 
 /** The longest renewal window a caller may ask for. Ten years. */
 export const MAX_RENEWAL_WINDOW_DAYS = 3650;
+
+/**
+ * Each list order as keys, for paging after a cursor (`@/lib/keyset`).
+ *
+ * These restate `orderBy()` in `sql.ts`, and `continuationStatement()` checks
+ * that they still do on every continuation — a spec that drifted from its
+ * ORDER BY would skip or repeat subscriptions at page boundaries.
+ */
+export const SUBSCRIPTION_KEYSETS: Readonly<Record<SubscriptionSort, KeysetSpec>> = {
+  'next-billing': defineKeyset({
+    tag: 'subscriptions:next-billing',
+    qualifier: '',
+    keys: [
+      { column: 'next_billing_date', direction: 'asc' },
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  name: defineKeyset({
+    tag: 'subscriptions:name',
+    qualifier: '',
+    keys: [
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  amount: defineKeyset({
+    tag: 'subscriptions:amount',
+    qualifier: '',
+    keys: [
+      { column: 'amount_minor', direction: 'desc' },
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+};
+
+function keysetFor(sort: SubscriptionSort = 'next-billing'): KeysetSpec {
+  const spec = SUBSCRIPTION_KEYSETS[sort] as KeysetSpec | undefined;
+  if (spec === undefined) throw new Error(`Unknown subscription sort: ${JSON.stringify(sort)}`);
+  return spec;
+}
 
 export interface SubscriptionsApiDeps {
   store: SubscriptionStore;
@@ -244,6 +295,60 @@ export function createSubscriptionsApi(deps: SubscriptionsApiDeps): Subscription
     return ok(record);
   }
 
+  /** Map a page's raw rows, skipping — and counting — the ones that are damaged. */
+  function mapSkipping(rows: readonly statements.SubscriptionRow[]): {
+    mapped: SubscriptionRecord[];
+    damagedCount: number;
+  } {
+    // Skip, do not throw — see `SubscriptionPage.damagedCount`.
+    const mapped: SubscriptionRecord[] = [];
+    let damagedCount = 0;
+    for (const row of rows) {
+      try {
+        mapped.push(mapSubscriptionRow(row));
+      } catch {
+        damagedCount += 1;
+      }
+    }
+    return { mapped, damagedCount };
+  }
+
+  /**
+   * The page after a cursor: one statement, an index seek, and no `count(*)`.
+   * See `SubscriptionFilter.after` and `@/lib/keyset`.
+   */
+  async function listAfter(
+    filter: SubscriptionFilter,
+    after: string,
+  ): Promise<SubscriptionPage> {
+    if (filter.offset !== undefined) {
+      throw new TypeError('A subscription page starts after a cursor or at an offset, not both');
+    }
+    const spec = keysetFor(filter.sort);
+    const cursor = readCursor(spec, after);
+    const limit = statements.resolvePageSize(filter.limit);
+    const read = await store.all<statements.SubscriptionRow>(
+      continuationStatement(
+        statements.selectSubscriptions({ ...filter, limit, offset: 0 }),
+        spec,
+        cursor,
+        limit,
+      ),
+    );
+    const { page, hasMore } = splitPeek(read, limit);
+    const { mapped, damagedCount } = mapSkipping(page);
+    const position = { seen: cursor.seen + page.length, total: cursor.total };
+    return {
+      rows: mapped,
+      damagedCount,
+      total: cursor.total,
+      limit,
+      offset: cursor.seen,
+      hasMore,
+      next: hasMore ? nextCursor(spec, page, position) : null,
+    };
+  }
+
   /**
    * A partial edit, validated against the row it applies to.
    *
@@ -298,8 +403,12 @@ export function createSubscriptionsApi(deps: SubscriptionsApiDeps): Subscription
      * fact from SQLite rather than a guess. The two statements are not wrapped
      * in a transaction: this is a single-user, single-connection app, and a
      * read does not need to lock out a write that cannot be concurrent.
+     *
+     * `next` continues it: with `after`, one keyset statement and no count.
      */
     async listSubscriptions(filter: SubscriptionFilter = {}): Promise<SubscriptionPage> {
+      if (filter.after !== undefined) return listAfter(filter, filter.after);
+
       const limit = statements.resolvePageSize(filter.limit);
       const offset = statements.resolveOffset(filter.offset);
       const rows = await store.all<statements.SubscriptionRow>(
@@ -309,23 +418,19 @@ export function createSubscriptionsApi(deps: SubscriptionsApiDeps): Subscription
         statements.countSubscriptions(filter),
       );
       const total = counted.length === 0 ? 0 : readAggregate(counted[0].n, 'count');
-      // Skip, do not throw — see `SubscriptionPage.damagedCount`.
-      const mapped: SubscriptionRecord[] = [];
-      let damagedCount = 0;
-      for (const row of rows) {
-        try {
-          mapped.push(mapSubscriptionRow(row));
-        } catch {
-          damagedCount += 1;
-        }
-      }
+      const { mapped, damagedCount } = mapSkipping(rows);
+      const hasMore = offset + rows.length < total;
       return {
         rows: mapped,
         damagedCount,
         total,
         limit,
         offset,
-        hasMore: offset + rows.length < total,
+        hasMore,
+        // From the RAW last row, so a damaged row is continued past, not re-read.
+        next: hasMore
+          ? nextCursor(keysetFor(filter.sort), rows, { seen: offset + rows.length, total })
+          : null,
       };
     },
 

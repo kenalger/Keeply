@@ -14,11 +14,14 @@
  * written, and the warning it carried — that extracting it mid-feature turns
  * one refactor into five regressions — is why it stayed copied until all six
  * could move at once. They have: it lives in `src/lib/use-async-read.ts` now.
- * All six copies were byte-identical apart from their log label.
+ * All six copies were byte-identical apart from their log label. The paged
+ * list followed the same road: five copies of `readPages`, now one machine in
+ * `src/lib/paged-list.ts`.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import {
+  MAX_PAGE_SIZE,
   expirySummary,
   expiringDocuments,
   getDocument,
@@ -29,7 +32,9 @@ import {
   type DocumentSort,
   type DocumentType,
 } from '@/features/documents';
+import type { PageReader } from '@/lib/paged-list';
 import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
+import { usePagedList } from '@/lib/use-paged-list';
 import { useRevision } from '@/stores/revision-store';
 
 /** Rows per fetch. Comfortably more than one screenful, well under the cap. */
@@ -56,41 +61,17 @@ export interface DocumentListView {
   loadMore: () => void;
 }
 
-interface ListSlice {
-  rows: readonly DocumentRecord[];
-  total: number;
-  damagedCount: number;
-  hasMore: boolean;
-}
-
-const NO_ROWS: readonly DocumentRecord[] = [];
-
 /**
- * Read `pages` pages of the filtered list as ONE answer.
+ * How to page one filter.
  *
- * Every page from the first, rather than appending a freshly-fetched tail to
- * rows read minutes ago: a document whose expiry date moved between two reads
- * would otherwise appear twice or vanish — and this list is SORTED by that
- * date, so an edit reshuffles the very thing the offsets are counting.
+ * Built from the KEY — the filter by value — rather than from the filter
+ * object. Every `DocumentFilter` field is a string, a number or a boolean, so
+ * the key IS the filter.
  */
-async function readPages(filter: DocumentFilter, pages: number): Promise<ListSlice> {
-  const rows: DocumentRecord[] = [];
-  let damaged = 0;
-  let page = await listDocuments({ ...filter, limit: LIST_PAGE_SIZE, offset: 0 });
-  rows.push(...page.rows);
-  damaged += page.damagedCount;
-
-  for (let index = 1; index < pages && page.hasMore; index += 1) {
-    page = await listDocuments({
-      ...filter,
-      limit: LIST_PAGE_SIZE,
-      offset: index * LIST_PAGE_SIZE,
-    });
-    rows.push(...page.rows);
-    damaged += page.damagedCount;
-  }
-
-  return { rows, total: page.total, damagedCount: damaged, hasMore: page.hasMore };
+function readerFor(key: string): PageReader<DocumentRecord> {
+  const filter = JSON.parse(key) as DocumentFilter;
+  return ({ limit, after }) =>
+    listDocuments(after === undefined ? { ...filter, limit } : { ...filter, limit, after });
 }
 
 /**
@@ -101,6 +82,10 @@ async function readPages(filter: DocumentFilter, pages: number): Promise<ListSli
  * 50 with no footer and no way to reach the rest — while the header, which
  * counts in SQL over every row, cheerfully said how many there were. Same
  * shape as `useBillList`, for the same reasons.
+ *
+ * Sorted by expiry, this is the list where an edit most often MOVES a row —
+ * renewing a passport sends it from the top to the bottom — which is why a
+ * revision re-reads the whole window rather than patching the rows it holds.
  */
 export function useDocumentList(filter: DocumentFilter): DocumentListView {
   const revision = useRevision('documents');
@@ -119,37 +104,16 @@ export function useDocumentList(filter: DocumentFilter): DocumentListView {
   );
 
   const key = JSON.stringify(stable);
-  const [pages, setPages] = useState(1);
-  const [pagesFor, setPagesFor] = useState(key);
+  const read = useMemo(() => readerFor(key), [key]);
 
-  // A new filter is a new list, not more of the old one — and this is React's
-  // documented way to say so: adjust the state DURING the render that noticed
-  // the change, so the read below never runs once with the previous filter's
-  // page count and then again with the right one.
-  if (pagesFor !== key) {
-    setPagesFor(key);
-    setPages(1);
-  }
-  const requested = pagesFor === key ? pages : 1;
-
-  const slice = useAsyncRead<ListSlice>(
-    () => readPages(stable, requested),
-    [key, revision, requested],
-    'documents',
-  );
-
-  const loadMore = useCallback(() => setPages((current) => current + 1), []);
-
-  return {
-    status: slice.status,
-    rows: slice.value?.rows ?? NO_ROWS,
-    total: slice.value?.total ?? 0,
-    damagedCount: slice.value?.damagedCount ?? 0,
-    hasMore: slice.value?.hasMore ?? false,
-    error: slice.error,
-    reload: slice.reload,
-    loadMore,
-  };
+  return usePagedList({
+    key,
+    revision,
+    read,
+    pageSize: LIST_PAGE_SIZE,
+    maxRead: MAX_PAGE_SIZE,
+    label: 'documents',
+  });
 }
 
 /**

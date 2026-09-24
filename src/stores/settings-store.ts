@@ -301,7 +301,13 @@ async function persist(patch: Partial<AppSettings>): Promise<void> {
       // module that imports this store.
       if (REMINDER_AFFECTING_KEYS.some((key) => key in patch)) {
         const { syncAllReminders } = await import('@/lib/reminders');
-        await syncAllReminders();
+        // NOT awaited. This queue exists to order the WRITES; the rebuild
+        // plans from `useSettingsStore.getState()`, which already holds the
+        // newest values, so it does not need to sit inside the chain — and
+        // awaiting it here serialised every rebuild, which is what stopped
+        // `syncAllReminders`' own coalescing from collapsing five chip taps
+        // into two runs. Never rejects; see `@/lib/coalesce`.
+        void syncAllReminders();
       }
       return;
     }

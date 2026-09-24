@@ -66,6 +66,14 @@
  */
 import { minorUnits, type MinorUnits } from '@/db/money';
 import {
+  continuationStatement,
+  defineKeyset,
+  nextCursor,
+  readCursor,
+  splitPeek,
+  type KeysetSpec,
+} from '@/lib/keyset';
+import {
   addCalendarDays,
   advanceToFuture,
   isBillingCycle,
@@ -99,6 +107,7 @@ import {
   type BillRecord,
   type BillReminderEntity,
   type BillResult,
+  type BillSort,
   type BillStatus,
   type BillTotals,
   type NewBillInput,
@@ -112,6 +121,53 @@ import {
 
 /** The longest window `upcomingBills()` will look ahead. Ten years. */
 export const MAX_UPCOMING_WINDOW_DAYS = 3650;
+
+/**
+ * Each list order as keys, for paging after a cursor (`@/lib/keyset`).
+ *
+ * These restate `orderBy()` in `sql.ts`, and `continuationStatement()` checks
+ * that they still do on every continuation — a spec that drifted from its
+ * ORDER BY would skip or repeat bills at page boundaries.
+ *
+ * `amount` has no paging index (it is not in `tests/query-plans.test.ts`
+ * either), so its continuation is correct but still sorts; see the NULL
+ * bucket for a variable bill with no estimate, which is why the key is
+ * `nullsLast`.
+ */
+export const BILL_KEYSETS: Readonly<Record<BillSort, KeysetSpec>> = {
+  'due-date': defineKeyset({
+    tag: 'bills:due-date',
+    qualifier: '"b".',
+    keys: [
+      { column: 'due_date', direction: 'asc' },
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  name: defineKeyset({
+    tag: 'bills:name',
+    qualifier: '"b".',
+    keys: [
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  amount: defineKeyset({
+    tag: 'bills:amount',
+    qualifier: '"b".',
+    keys: [
+      { column: 'amount_minor', direction: 'desc', nullsLast: true },
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+};
+
+function keysetFor(sort: BillSort = 'due-date'): KeysetSpec {
+  const spec = BILL_KEYSETS[sort] as KeysetSpec | undefined;
+  if (spec === undefined) throw new Error(`Unknown bill sort: ${JSON.stringify(sort)}`);
+  return spec;
+}
 
 /**
  * The slice of `@/lib/notifications` this feature uses.
@@ -438,6 +494,71 @@ export function createBillsApi(deps: BillsApiDeps): BillsApi {
     return { todayISO, horizonISO: addCalendarDays(todayISO, days) };
   }
 
+  /** Map a page's raw rows, skipping — and counting — the ones that are damaged. */
+  function mapSkipping(rows: readonly statements.BillRow[]): {
+    mapped: BillRecord[];
+    damagedCount: number;
+  } {
+    // Skip, do not throw. One row with a float amount used to take the whole
+    // list down; the row is still counted so the screen can say a record
+    // could not be read, and `softDeleteBill()` can still remove it.
+    const mapped: BillRecord[] = [];
+    let damagedCount = 0;
+    for (const row of rows) {
+      try {
+        mapped.push(mapBillRow(row));
+      } catch {
+        damagedCount += 1;
+      }
+    }
+    return { mapped, damagedCount };
+  }
+
+  /**
+   * The page after a cursor: one statement, an index seek, and no `count(*)`.
+   *
+   * Read against the FIRST page's "today" (carried in the cursor) unless the
+   * filter overrides it, so `is_overdue`, `days_until_due` and the state
+   * filters agree with the rows already on screen. See `BillFilter.after`.
+   */
+  async function listAfter(filter: BillFilter, after: string): Promise<BillPage> {
+    if (filter.offset !== undefined) {
+      throw new TypeError('A bill page starts after a cursor or at an offset, not both');
+    }
+    const spec = keysetFor(filter.sort);
+    const cursor = readCursor(spec, after);
+    const dates = resolveDates(
+      filter.todayISO === undefined && cursor.todayISO !== null
+        ? { ...filter, todayISO: cursor.todayISO }
+        : filter,
+    );
+    const limit = statements.resolvePageSize(filter.limit);
+    const read = await store.all<statements.BillRow>(
+      continuationStatement(
+        statements.selectBills({ ...filter, limit, offset: 0 }, dates),
+        spec,
+        cursor,
+        limit,
+      ),
+    );
+    const { page, hasMore } = splitPeek(read, limit);
+    const { mapped, damagedCount } = mapSkipping(page);
+    const position = {
+      seen: cursor.seen + page.length,
+      total: cursor.total,
+      todayISO: dates.todayISO,
+    };
+    return {
+      rows: mapped,
+      damagedCount,
+      total: cursor.total,
+      limit,
+      offset: cursor.seen,
+      hasMore,
+      next: hasMore ? nextCursor(spec, page, position) : null,
+    };
+  }
+
   async function readById(
     reader: BillStore,
     id: string,
@@ -624,8 +745,12 @@ export function createBillsApi(deps: BillsApiDeps): BillsApi {
      * fact from SQLite rather than a guess. The two statements are not wrapped
      * in a transaction: this is a single-user, single-connection app, and a
      * read does not need to lock out a write that cannot be concurrent.
+     *
+     * `next` continues it: with `after`, one keyset statement and no count.
      */
     async listBills(filter: BillFilter = {}): Promise<BillPage> {
+      if (filter.after !== undefined) return listAfter(filter, filter.after);
+
       const dates = resolveDates(filter);
       const limit = statements.resolvePageSize(filter.limit);
       const offset = statements.resolveOffset(filter.offset);
@@ -636,25 +761,24 @@ export function createBillsApi(deps: BillsApiDeps): BillsApi {
         statements.countBills(filter, dates),
       );
       const total = counted.length === 0 ? 0 : readAggregate(counted[0].n, 'count');
-      // Skip, do not throw. One row with a float amount used to take the whole
-      // list down; the row is still counted so the screen can say a record
-      // could not be read, and `softDeleteBill()` can still remove it.
-      const mapped: BillRecord[] = [];
-      let damagedCount = 0;
-      for (const row of rows) {
-        try {
-          mapped.push(mapBillRow(row));
-        } catch {
-          damagedCount += 1;
-        }
-      }
+      const { mapped, damagedCount } = mapSkipping(rows);
+      const hasMore = offset + rows.length < total;
       return {
         rows: mapped,
         damagedCount,
         total,
         limit,
         offset,
-        hasMore: offset + rows.length < total,
+        hasMore,
+        // From the RAW last row, so a damaged row is continued past, not
+        // re-read; and with this page's "today", so the next page agrees.
+        next: hasMore
+          ? nextCursor(keysetFor(filter.sort), rows, {
+              seen: offset + rows.length,
+              total,
+              todayISO: dates.todayISO,
+            })
+          : null,
       };
     },
 

@@ -19,13 +19,23 @@
  * inside it come to disagree about whether something is late.
  *
  * ── PAGINATION IS SQL'S JOB ────────────────────────────────────────────────
- * `listBills()` takes a limit and an offset and returns `total` from a
- * `count(*)` over the same WHERE. Nothing is sliced in JavaScript (§33).
+ * `listBills()` returns `total` from a `count(*)` over the same WHERE and a
+ * `next` cursor that continues the list by keyset. Nothing is sliced in
+ * JavaScript (§33).
+ *
+ * The list is `usePagedList()` (`@/lib/paged-list`): a scroll reads the ONE
+ * page after the last row held — one statement, an index seek, no count — and
+ * a revision bump re-reads the rows already on screen from the top, with one
+ * count. `payBill()` moves a bill's due date, which is exactly the edit that
+ * used to justify re-reading every page from offset 0 on every scroll; the
+ * window re-read keeps that guarantee at a fraction of the cost, and the
+ * cursor keeps one "today" for the whole list (see `BillFilter.after`).
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import {
   DEFAULT_UPCOMING_DAYS,
+  MAX_PAGE_SIZE,
   billTotals,
   getBill,
   listBillPayments,
@@ -38,7 +48,9 @@ import {
   type BillState,
   type BillTotals,
 } from '@/features/bills';
+import type { PageReader } from '@/lib/paged-list';
 import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
+import { usePagedList } from '@/lib/use-paged-list';
 import { useRevision } from '@/stores/revision-store';
 
 /** Loading is the first read only. After that a refresh keeps the old rows. */
@@ -66,36 +78,17 @@ export interface BillListView {
   loadMore: () => void;
 }
 
-interface ListSlice {
-  rows: readonly BillRecord[];
-  total: number;
-  damagedCount: number;
-  hasMore: boolean;
-}
-
-const NO_ROWS: readonly BillRecord[] = [];
-
 /**
- * Read `pages` pages of the filtered list as ONE answer.
+ * How to page one filter.
  *
- * Every page from the first, rather than appending a freshly-fetched tail to
- * rows read minutes ago: a bill whose due date moved between two reads — which
- * is what `payBill()` does — would otherwise appear twice or vanish.
+ * Built from the KEY — the filter by value — rather than from the filter
+ * object, which a screen rebuilds every render. Every `BillFilter` field is a
+ * string, a number, a boolean or an array of strings, so the key IS the filter.
  */
-async function readPages(filter: BillFilter, pages: number): Promise<ListSlice> {
-  const rows: BillRecord[] = [];
-  let damaged = 0;
-  let page = await listBills({ ...filter, limit: LIST_PAGE_SIZE, offset: 0 });
-  rows.push(...page.rows);
-  damaged += page.damagedCount;
-
-  for (let index = 1; index < pages && page.hasMore; index += 1) {
-    page = await listBills({ ...filter, limit: LIST_PAGE_SIZE, offset: index * LIST_PAGE_SIZE });
-    rows.push(...page.rows);
-    damaged += page.damagedCount;
-  }
-
-  return { rows, total: page.total, damagedCount: damaged, hasMore: page.hasMore };
+function readerFor(key: string): PageReader<BillRecord> {
+  const filter = JSON.parse(key) as BillFilter;
+  return ({ limit, after }) =>
+    listBills(after === undefined ? { ...filter, limit } : { ...filter, limit, after });
 }
 
 /**
@@ -103,43 +96,22 @@ async function readPages(filter: BillFilter, pages: number): Promise<ListSlice> 
  *
  * `filter` is read by VALUE, not by identity: a screen rebuilds its filter
  * object every render, and keying the read on the object would re-query on
- * every keystroke of an unrelated field.
+ * every keystroke of an unrelated field. A new filter is a new list — the old
+ * rows stay on screen until its first page lands.
  */
 export function useBillList(filter: BillFilter): BillListView {
   const revision = useRevision('bills');
   const key = JSON.stringify(filter);
+  const read = useMemo(() => readerFor(key), [key]);
 
-  const [pages, setPages] = useState(1);
-  const [pagesFor, setPagesFor] = useState(key);
-
-  // A new filter is a new list, not more of the old one — and this is React's
-  // documented way to say so: adjust the state DURING the render that noticed
-  // the change, so the read below never runs once with the previous filter's
-  // page count and then again with the right one.
-  if (pagesFor !== key) {
-    setPagesFor(key);
-    setPages(1);
-  }
-  const requested = pagesFor === key ? pages : 1;
-
-  const slice = useAsyncRead<ListSlice>(
-    () => readPages(filter, requested),
-    [key, revision, requested],
-    'bills',
-  );
-
-  const loadMore = useCallback(() => setPages((current) => current + 1), []);
-
-  return {
-    status: slice.status,
-    rows: slice.value?.rows ?? NO_ROWS,
-    total: slice.value?.total ?? 0,
-    damagedCount: slice.value?.damagedCount ?? 0,
-    hasMore: slice.value?.hasMore ?? false,
-    error: slice.error,
-    reload: slice.reload,
-    loadMore,
-  };
+  return usePagedList({
+    key,
+    revision,
+    read,
+    pageSize: LIST_PAGE_SIZE,
+    maxRead: MAX_PAGE_SIZE,
+    label: 'bills',
+  });
 }
 
 /* -------------------------------------------------------------------------- */

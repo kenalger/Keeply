@@ -17,16 +17,25 @@
  * queries, not in how a screen waits for one.
  *
  * ── PAGINATION AND AGGREGATION ARE SQL'S JOB ───────────────────────────────
- * `listReceipts()` takes a limit and an offset and returns `total` from a
- * `count(*)` over the same WHERE; `receiptTotals()` is three grouped queries
- * and no receipt row crosses into JavaScript. Nothing here slices, sums or
- * sorts. A receipt journal is the list in this app most likely to reach a
- * thousand rows (§33), which is exactly why none of that may drift into JS.
+ * `listReceipts()` returns `total` from a `count(*)` over the same WHERE, and a
+ * `next` cursor that continues the list by keyset; `receiptTotals()` is three
+ * grouped queries and no receipt row crosses into JavaScript. Nothing here
+ * slices, sums or sorts. A receipt journal is the list in this app most likely
+ * to reach a thousand rows (§33), which is exactly why none of that may drift
+ * into JS.
+ *
+ * ── SCROLLING APPENDS; A WRITE RE-READS WHAT IS ON SCREEN ─────────────────
+ * The list is `usePagedList()` (`@/lib/paged-list`): a scroll reads the ONE
+ * page after the last row held — one statement, an index seek, no count — and
+ * a revision bump re-reads the rows already on screen from the top, with one
+ * count. It used to re-read every page from offset 0, with a `count(*)` per
+ * page, on every scroll: page k cost 2k statements.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import type { MinorUnits } from '@/db';
 import {
+  MAX_PAGE_SIZE,
   getReceipt,
   listReceipts,
   receiptTotals,
@@ -37,7 +46,9 @@ import {
   type ReceiptTotals,
   type ReceiptTotalsOptions,
 } from '@/features/receipts';
+import type { PageReader } from '@/lib/paged-list';
 import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
+import { usePagedList } from '@/lib/use-paged-list';
 import { useRevision } from '@/stores/revision-store';
 
 /** Loading is the first read only. After that a refresh keeps the old rows. */
@@ -68,42 +79,19 @@ export interface ReceiptListView {
   loadMore: () => void;
 }
 
-interface ListSlice {
-  rows: readonly ReceiptRecord[];
-  total: number;
-  damagedCount: number;
-  hasMore: boolean;
-}
-
-const NO_ROWS: readonly ReceiptRecord[] = [];
-
 /**
- * Read `pages` pages of the filtered list as ONE answer.
+ * How to page one filter.
  *
- * Every page from the first, rather than appending a freshly-fetched tail to
- * rows read minutes ago: a receipt edited between two reads would otherwise
- * appear twice or vanish. The set stays bounded either way — `pages` only grows
- * when the user scrolls to the end of what is already on screen.
+ * Built from the KEY — the filter by value, `JSON.stringify`-ed — rather than
+ * from the filter object: a screen rebuilds that object every render, and a
+ * reader keyed on its identity would restart the list on every keystroke of an
+ * unrelated field. Every filter field is a string, a number, a boolean or an
+ * array of strings, so the key IS the filter.
  */
-async function readPages(filter: ReceiptFilter, pages: number): Promise<ListSlice> {
-  const rows: ReceiptRecord[] = [];
-  let damagedCount = 0;
-
-  let page = await listReceipts({ ...filter, limit: LIST_PAGE_SIZE, offset: 0 });
-  rows.push(...page.rows);
-  damagedCount += page.damagedCount;
-
-  for (let index = 1; index < pages && page.hasMore; index += 1) {
-    page = await listReceipts({
-      ...filter,
-      limit: LIST_PAGE_SIZE,
-      offset: index * LIST_PAGE_SIZE,
-    });
-    rows.push(...page.rows);
-    damagedCount += page.damagedCount;
-  }
-
-  return { rows, total: page.total, damagedCount, hasMore: page.hasMore };
+function readerFor(key: string): PageReader<ReceiptRecord> {
+  const filter = JSON.parse(key) as ReceiptFilter;
+  return ({ limit, after }) =>
+    listReceipts(after === undefined ? { ...filter, limit } : { ...filter, limit, after });
 }
 
 /**
@@ -111,43 +99,23 @@ async function readPages(filter: ReceiptFilter, pages: number): Promise<ListSlic
  *
  * `filter` is read by VALUE, not by identity: a screen rebuilds its filter
  * object every render, and keying the read on the object would re-query on
- * every keystroke of an unrelated field.
+ * every keystroke of an unrelated field. A new filter is a new list — the
+ * old rows stay on screen until its first page lands, and the count is taken
+ * once for it rather than once per page.
  */
 export function useReceiptList(filter: ReceiptFilter): ReceiptListView {
   const revision = useRevision('receipts');
   const key = JSON.stringify(filter);
+  const read = useMemo(() => readerFor(key), [key]);
 
-  const [pages, setPages] = useState(1);
-  const [pagesFor, setPagesFor] = useState(key);
-
-  // A new filter is a new list, not more of the old one — and this is React's
-  // documented way to say so: adjust the state DURING the render that noticed
-  // the change, so the read below never runs once with the previous filter's
-  // page count and then again with the right one.
-  if (pagesFor !== key) {
-    setPagesFor(key);
-    setPages(1);
-  }
-  const requested = pagesFor === key ? pages : 1;
-
-  const slice = useAsyncRead<ListSlice>(
-    () => readPages(filter, requested),
-    [key, revision, requested],
-    'receipts',
-  );
-
-  const loadMore = useCallback(() => setPages((current) => current + 1), []);
-
-  return {
-    status: slice.status,
-    rows: slice.value?.rows ?? NO_ROWS,
-    total: slice.value?.total ?? 0,
-    damagedCount: slice.value?.damagedCount ?? 0,
-    hasMore: slice.value?.hasMore ?? false,
-    error: slice.error,
-    reload: slice.reload,
-    loadMore,
-  };
+  return usePagedList({
+    key,
+    revision,
+    read,
+    pageSize: LIST_PAGE_SIZE,
+    maxRead: MAX_PAGE_SIZE,
+    label: 'receipts',
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -281,7 +249,7 @@ export function useReceiptFilter(state: ReceiptFilterState): ReceiptFilter {
  * is what stops the sum and the rows drifting apart when a filter is added.
  */
 export function totalsOptionsFor(filter: ReceiptFilter): ReceiptTotalsOptions {
-  const { sort: _sort, limit: _limit, offset: _offset, ...rest } = filter;
+  const { sort: _sort, limit: _limit, offset: _offset, after: _after, ...rest } = filter;
   return rest;
 }
 

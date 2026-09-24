@@ -15,14 +15,17 @@
  * ever the FIRST read of a screen.
  *
  * ── PAGINATION IS SQL'S JOB ────────────────────────────────────────────────
- * `listSubscriptions()` takes a limit and an offset and returns `total` from a
- * `count(*)` over the same WHERE. Rows are appended as the user scrolls;
- * nothing is sliced in JavaScript, and no screen ever holds a set the database
- * was not asked to bound (§33).
+ * `listSubscriptions()` returns `total` from a `count(*)` over the same WHERE
+ * and a `next` cursor that continues the list by keyset. Rows are appended as
+ * the user scrolls — the ONE page after the last row held, one statement, no
+ * count — and a revision bump re-reads the rows already on screen, with one
+ * count (`@/lib/paged-list`). Nothing is sliced in JavaScript, and no screen
+ * ever holds a set the database was not asked to bound (§33).
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import {
+  MAX_PAGE_SIZE,
   getSubscription,
   listSubscriptions,
   subscriptionTotals,
@@ -31,7 +34,9 @@ import {
   type SubscriptionSort,
   type SubscriptionTotals,
 } from '@/features/subscriptions';
+import type { PageReader } from '@/lib/paged-list';
 import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
+import { usePagedList } from '@/lib/use-paged-list';
 import { useRevision } from '@/stores/revision-store';
 
 /** Loading is the first read only. After that a refresh keeps the old rows. */
@@ -54,40 +59,18 @@ export interface SubscriptionListView {
   loadMore: () => void;
 }
 
-interface ListSlice {
-  rows: readonly SubscriptionRecord[];
-  total: number;
-  hasMore: boolean;
-}
-
-const NO_ROWS: readonly SubscriptionRecord[] = [];
-
 /**
- * Read `pages` pages of the filtered list as ONE answer.
+ * How to page one filter.
  *
- * Every page from the first, rather than appending a newly-fetched tail to
- * rows read minutes ago: a row whose renewal date moved between two reads would
- * otherwise appear twice or vanish. The set is bounded either way — `pages` only
- * grows when the user scrolls to the end of what is already on screen.
+ * Built from the KEY — the filter by value — rather than from the filter
+ * object, which a screen rebuilds every render. Every `SubscriptionFilter`
+ * field is a string, a boolean or an array of strings, so the key IS the
+ * filter.
  */
-async function readPages(
-  filter: SubscriptionFilter,
-  pages: number,
-): Promise<ListSlice> {
-  const rows: SubscriptionRecord[] = [];
-  let page = await listSubscriptions({ ...filter, limit: LIST_PAGE_SIZE, offset: 0 });
-  rows.push(...page.rows);
-
-  for (let index = 1; index < pages && page.hasMore; index += 1) {
-    page = await listSubscriptions({
-      ...filter,
-      limit: LIST_PAGE_SIZE,
-      offset: index * LIST_PAGE_SIZE,
-    });
-    rows.push(...page.rows);
-  }
-
-  return { rows, total: page.total, hasMore: page.hasMore };
+function readerFor(key: string): PageReader<SubscriptionRecord> {
+  const filter = JSON.parse(key) as SubscriptionFilter;
+  return ({ limit, after }) =>
+    listSubscriptions(after === undefined ? { ...filter, limit } : { ...filter, limit, after });
 }
 
 /**
@@ -100,37 +83,16 @@ async function readPages(
 export function useSubscriptionList(filter: SubscriptionFilter): SubscriptionListView {
   const revision = useRevision('subscriptions');
   const key = JSON.stringify(filter);
+  const read = useMemo(() => readerFor(key), [key]);
 
-  const [pages, setPages] = useState(1);
-  const [pagesFor, setPagesFor] = useState(key);
-
-  // A new filter is a new list, not more of the old one — and this is React's
-  // documented way to say so: adjust the state DURING the render that noticed
-  // the change, so the read below never runs once with the previous filter's
-  // page count and then again with the right one.
-  if (pagesFor !== key) {
-    setPagesFor(key);
-    setPages(1);
-  }
-  const requested = pagesFor === key ? pages : 1;
-
-  const slice = useAsyncRead<ListSlice>(
-    () => readPages(filter, requested),
-    [key, revision, requested],
-    'subscriptions',
-  );
-
-  const loadMore = useCallback(() => setPages((current) => current + 1), []);
-
-  return {
-    status: slice.status,
-    rows: slice.value?.rows ?? NO_ROWS,
-    total: slice.value?.total ?? 0,
-    hasMore: slice.value?.hasMore ?? false,
-    error: slice.error,
-    reload: slice.reload,
-    loadMore,
-  };
+  return usePagedList({
+    key,
+    revision,
+    read,
+    pageSize: LIST_PAGE_SIZE,
+    maxRead: MAX_PAGE_SIZE,
+    label: 'subscriptions',
+  });
 }
 
 /* -------------------------------------------------------------------------- */

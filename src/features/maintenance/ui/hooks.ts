@@ -10,9 +10,10 @@
  * polls, nothing subscribes to SQLite, and no write ever renders a spinner
  * (§25) — `loading` is the FIRST read of a screen and nothing else.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import {
+  MAX_PAGE_SIZE,
   costPerKilometre,
   dueNext,
   fuelEfficiency,
@@ -43,7 +44,9 @@ import {
   type MaintenanceTypeTotal,
   type MaintenanceYearTotal,
 } from '@/features/maintenance';
+import type { PageReader, PageResult } from '@/lib/paged-list';
 import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
+import { usePagedList } from '@/lib/use-paged-list';
 import { useRevision } from '@/stores/revision-store';
 
 export interface MaintenanceListView {
@@ -127,10 +130,6 @@ export type KindFilter = MaintenanceItemKind | null;
  * and `bumpRevision('receipts')` deliberately does not reach them.
  */
 
-const NO_COSTS: readonly MaintenanceCostRecord[] = [];
-const NO_SERVICES: readonly MaintenanceServiceRecord[] = [];
-const NO_RENEWALS: readonly MaintenanceRenewalRecord[] = [];
-
 /** Rows per fetch for the full-history screens. */
 export const CHILD_PAGE_SIZE = 40;
 
@@ -149,105 +148,59 @@ export interface ChildListView<T> {
   loadMore: () => void;
 }
 
-interface ChildSlice<T> {
-  rows: readonly T[];
-  total: number;
-  damagedCount: number;
-  hasMore: boolean;
-}
+/** One item's children, as the data layer lists them. */
+type ChildLister<T> = (
+  itemId: string,
+  filter: { limit?: number; after?: string },
+) => Promise<PageResult<T>>;
 
 /**
- * Read `pages` pages of one item's children as ONE answer.
+ * The paging half of a child list, shared by costs, services and renewals.
  *
- * Every page from the first, for the reason `useBillList` gives: appending a
- * freshly-fetched tail to rows read minutes ago lets a row edited in between
- * appear twice or vanish.
- *
- * The DETAIL screen still asks for a fixed preview (three services, five
- * costs) and never pages — `preview` is what tells these two apart.
- */
-async function readChildPages<T>(
-  read: (filter: { limit: number; offset: number }) => Promise<{
-    rows: readonly T[];
-    total: number;
-    damagedCount: number;
-    hasMore: boolean;
-  }>,
-  pages: number,
-): Promise<ChildSlice<T>> {
-  const rows: T[] = [];
-  let damaged = 0;
-  let page = await read({ limit: CHILD_PAGE_SIZE, offset: 0 });
-  rows.push(...page.rows);
-  damaged += page.damagedCount;
-
-  for (let index = 1; index < pages && page.hasMore; index += 1) {
-    page = await read({ limit: CHILD_PAGE_SIZE, offset: index * CHILD_PAGE_SIZE });
-    rows.push(...page.rows);
-    damaged += page.damagedCount;
-  }
-
-  return { rows, total: page.total, damagedCount: damaged, hasMore: page.hasMore };
-}
-
-/**
- * The paging half of a child list, shared by costs and services.
+ * Scrolling appends the ONE page after the last row held, by keyset, with no
+ * count; a revision re-reads the rows already on screen (`@/lib/paged-list`).
+ * It used to re-read every page from offset 0 on every scroll, for the reason
+ * `useBillList` gave — a row edited in between must not appear twice or
+ * vanish — and the window re-read keeps that guarantee.
  *
  * `preview` is the detail screen's fixed window: it asks for N rows once and
  * never grows. Without the distinction, "See all 45" opened a screen showing
  * 40 with no footer and no way to reach the rest — which is what an audit
  * found, on a row whose own label promised otherwise.
+ *
+ * `list` is the data layer's own function (`listCosts`), which is what keeps
+ * the reader stable across renders: it changes only when the item does.
  */
 function useChildList<T>(
   itemId: string,
-  read: (filter: { limit: number; offset: number }) => Promise<{
-    rows: readonly T[];
-    total: number;
-    damagedCount: number;
-    hasMore: boolean;
-  }>,
+  list: ChildLister<T>,
   preview: number | undefined,
-  empty: readonly T[],
 ): ChildListView<T> {
   const revision = useRevision('maintenance');
-  const [pages, setPages] = useState(1);
-  const [pagesFor, setPagesFor] = useState(itemId);
-
-  if (pagesFor !== itemId) {
-    setPagesFor(itemId);
-    setPages(1);
-  }
-  const requested = pagesFor === itemId ? pages : 1;
-
-  const slice = useAsyncRead<ChildSlice<T>>(
-    async () =>
-      preview === undefined
-        ? readChildPages(read, requested)
-        : ((p) => ({
-            rows: p.rows,
-            total: p.total,
-            damagedCount: p.damagedCount,
-            hasMore: p.hasMore,
-          }))(await read({ limit: preview, offset: 0 })),
-    [itemId, preview, revision, requested],
-      'maintenance',
+  const read = useMemo<PageReader<T>>(
+    () =>
+      ({ limit, after }) =>
+        list(itemId, after === undefined ? { limit } : { limit, after }),
+    [list, itemId],
   );
 
-  const loadMore = useCallback(() => setPages((current) => current + 1), []);
+  const view = usePagedList<T>({
+    key: itemId,
+    revision,
+    read,
+    pageSize: preview ?? CHILD_PAGE_SIZE,
+    maxRead: MAX_PAGE_SIZE,
+    label: 'maintenance',
+  });
 
-  return {
-    status: slice.status,
-    rows: slice.value?.rows ?? empty,
-    total: slice.value?.total ?? 0,
-    damagedCount: slice.value?.damagedCount ?? 0,
-    // A fixed preview never offers "more" — the detail screen has a
-    // "See all N" row for that, and a footer under a deliberate three-row
-    // window would be two controls saying the same thing.
-    hasMore: preview === undefined && (slice.value?.hasMore ?? false),
-    error: slice.error,
-    reload: slice.reload,
-    loadMore,
-  };
+  // A fixed preview never offers "more" — the detail screen has a "See all N"
+  // row for that, and a footer under a deliberate three-row window would be
+  // two controls saying the same thing.
+  const isPreview = preview !== undefined;
+  return useMemo(
+    () => (isPreview && view.hasMore ? { ...view, hasMore: false } : view),
+    [isPreview, view],
+  );
 }
 
 /** One item's ledger, newest first. */
@@ -255,12 +208,7 @@ export function useItemCosts(
   itemId: string,
   limit?: number,
 ): ChildListView<MaintenanceCostRecord> {
-  return useChildList<MaintenanceCostRecord>(
-    itemId,
-    (filter) => listCosts(itemId, filter),
-    limit,
-    NO_COSTS,
-  );
+  return useChildList<MaintenanceCostRecord>(itemId, listCosts, limit);
 }
 
 /** One item's service history, newest first. */
@@ -268,24 +216,14 @@ export function useItemServices(
   itemId: string,
   limit?: number,
 ): ChildListView<MaintenanceServiceRecord> {
-  return useChildList<MaintenanceServiceRecord>(
-    itemId,
-    (filter) => listServices(itemId, filter),
-    limit,
-    NO_SERVICES,
-  );
+  return useChildList<MaintenanceServiceRecord>(itemId, listServices, limit);
 }
 
 /** One item's renewals, soonest to expire first. */
 export function useItemRenewals(itemId: string): ChildListView<MaintenanceRenewalRecord> {
   // Renewals are not paged: an item has insurance, registration and a warranty,
   // not forty of them. The detail screen shows every one.
-  return useChildList<MaintenanceRenewalRecord>(
-    itemId,
-    (filter) => listRenewals(itemId, filter),
-    undefined,
-    NO_RENEWALS,
-  );
+  return useChildList<MaintenanceRenewalRecord>(itemId, listRenewals, undefined);
 }
 
 /**

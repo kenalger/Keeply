@@ -110,6 +110,14 @@
  * so there is no line to accidentally add one to.
  */
 import { minorUnits, type MinorUnits } from '@/db/money';
+import {
+  continuationStatement,
+  defineKeyset,
+  nextCursor,
+  readCursor,
+  splitPeek,
+  type KeysetSpec,
+} from '@/lib/keyset';
 import { DEFAULT_CURRENCY } from '@/theme/format';
 
 import * as statements from './sql';
@@ -130,12 +138,61 @@ import {
   type ReceiptPatch,
   type ReceiptRecord,
   type ReceiptResult,
+  type ReceiptSort,
   type ReceiptTotals,
   type ReceiptTotalsOptions,
   type ReceiptWrite,
   type NewReceiptInput,
 } from './types';
 import { validateNewReceipt, validateReceiptPatch } from './validation';
+
+/* -------------------------------------------------------------------------- */
+/* Keyset orders — one per ORDER BY `sql.ts` builds                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Each list order as keys, for paging after a cursor (`@/lib/keyset`).
+ *
+ * These RESTATE `orderBy()` in `sql.ts`, and that is checked rather than
+ * trusted: `continuationStatement()` renders each spec's ORDER BY and refuses
+ * a page statement that does not end in exactly that text, so a tiebreaker
+ * added there and not here is a thrown error in `tests/keyset-pages.test.ts`,
+ * not a receipt skipped at a page boundary.
+ */
+export const RECEIPT_KEYSETS: Readonly<Record<ReceiptSort, KeysetSpec>> = {
+  'purchase-date': defineKeyset({
+    tag: 'receipts:purchase-date',
+    qualifier: '"r".',
+    keys: [
+      { column: 'purchase_date', direction: 'desc' },
+      { column: 'created_at', direction: 'desc' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  merchant: defineKeyset({
+    tag: 'receipts:merchant',
+    qualifier: '"r".',
+    keys: [
+      { column: 'merchant', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  amount: defineKeyset({
+    tag: 'receipts:amount',
+    qualifier: '"r".',
+    keys: [
+      { column: 'amount_minor', direction: 'desc' },
+      { column: 'purchase_date', direction: 'desc' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+};
+
+function keysetFor(sort: ReceiptSort = 'purchase-date'): KeysetSpec {
+  const spec = RECEIPT_KEYSETS[sort] as KeysetSpec | undefined;
+  if (spec === undefined) throw new Error(`Unknown receipt sort: ${JSON.stringify(sort)}`);
+  return spec;
+}
 
 export interface ReceiptsApiDeps {
   store: ReceiptStore;
@@ -307,6 +364,59 @@ export function createReceiptsApi(deps: ReceiptsApiDeps): ReceiptsApi {
     return ok(record);
   }
 
+  /** Map a page's raw rows, skipping — and counting — the ones that are damaged. */
+  function mapSkipping(rows: readonly statements.ReceiptRow[]): {
+    mapped: ReceiptRecord[];
+    damagedCount: number;
+  } {
+    // Skip, do not throw. One row with a float amount would otherwise take the
+    // whole journal down; the row is still counted so the screen can say a
+    // record could not be read, and `softDeleteReceipt()` can still remove it.
+    const mapped: ReceiptRecord[] = [];
+    let damagedCount = 0;
+    for (const row of rows) {
+      try {
+        mapped.push(mapReceiptRow(row));
+      } catch {
+        damagedCount += 1;
+      }
+    }
+    return { mapped, damagedCount };
+  }
+
+  /**
+   * The page after a cursor: one statement, an index seek, and no `count(*)`.
+   * See `ReceiptFilter.after` and `@/lib/keyset`.
+   */
+  async function listAfter(filter: ReceiptFilter, after: string): Promise<ReceiptPage> {
+    if (filter.offset !== undefined) {
+      throw new TypeError('A receipt page starts after a cursor or at an offset, not both');
+    }
+    const spec = keysetFor(filter.sort);
+    const cursor = readCursor(spec, after);
+    const limit = statements.resolvePageSize(filter.limit);
+    const read = await store.all<statements.ReceiptRow>(
+      continuationStatement(
+        statements.selectReceipts({ ...filter, limit, offset: 0 }),
+        spec,
+        cursor,
+        limit,
+      ),
+    );
+    const { page, hasMore } = splitPeek(read, limit);
+    const { mapped, damagedCount } = mapSkipping(page);
+    const position = { seen: cursor.seen + page.length, total: cursor.total };
+    return {
+      rows: mapped,
+      damagedCount,
+      total: cursor.total,
+      limit,
+      offset: cursor.seen,
+      hasMore,
+      next: hasMore ? nextCursor(spec, page, position) : null,
+    };
+  }
+
   return {
     /**
      * §23: merchant, category, date range, amount range — paginated, newest
@@ -320,8 +430,14 @@ export function createReceiptsApi(deps: ReceiptsApiDeps): ReceiptsApi {
      * NEVER UNBOUNDED. `resolvePageSize()` clamps to `MAX_PAGE_SIZE` and
      * defaults to `DEFAULT_PAGE_SIZE`, so a receipt journal five years deep
      * cannot be pulled into memory by a caller that forgot a limit (§33).
+     *
+     * `next` continues it. With `after`, the page is one keyset statement and
+     * NO count: scrolling a filtered journal used to re-run a full-table GLOB
+     * `count(*)` for every page, and now runs it once.
      */
     async listReceipts(filter: ReceiptFilter = {}): Promise<ReceiptPage> {
+      if (filter.after !== undefined) return listAfter(filter, filter.after);
+
       const limit = statements.resolvePageSize(filter.limit);
       const offset = statements.resolveOffset(filter.offset);
       const rows = await store.all<statements.ReceiptRow>(
@@ -331,20 +447,8 @@ export function createReceiptsApi(deps: ReceiptsApiDeps): ReceiptsApi {
         statements.countReceipts(filter),
       );
       const total = counted.length === 0 ? 0 : readAggregate(counted[0].n, 'count');
-
-      // Skip, do not throw. One row with a float amount would otherwise take
-      // the whole journal down; the row is still counted so the screen can say
-      // a record could not be read, and `softDeleteReceipt()` can still remove
-      // it.
-      const mapped: ReceiptRecord[] = [];
-      let damagedCount = 0;
-      for (const row of rows) {
-        try {
-          mapped.push(mapReceiptRow(row));
-        } catch {
-          damagedCount += 1;
-        }
-      }
+      const { mapped, damagedCount } = mapSkipping(rows);
+      const hasMore = offset + rows.length < total;
 
       return {
         rows: mapped,
@@ -352,7 +456,12 @@ export function createReceiptsApi(deps: ReceiptsApiDeps): ReceiptsApi {
         total,
         limit,
         offset,
-        hasMore: offset + rows.length < total,
+        hasMore,
+        // From the RAW last row, damaged or not, so the next page starts past
+        // it rather than reading it — and counting it — twice.
+        next: hasMore
+          ? nextCursor(keysetFor(filter.sort), rows, { seen: offset + rows.length, total })
+          : null,
       };
     },
 

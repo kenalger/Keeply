@@ -214,17 +214,34 @@ export interface MaintenanceItemFilter {
   isActive?: boolean;
   limit?: number;
   offset?: number;
+  /**
+   * Continue after the page that returned this cursor (the page's `next`):
+   * one keyset statement through the paging index, NOT counted again —
+   * `total` is the count the first page took. Pass the same filter the cursor
+   * came from; never combined with `offset`.
+   */
+  after?: string;
 }
 
 export interface MaintenanceItemPage {
   rows: readonly MaintenanceItemRecord[];
   /** Rows the page matched but could not read. See `MaintenanceItemTotals`. */
   damagedCount: number;
-  /** Matching rows in total, counted in SQL — not `rows.length`. */
+  /**
+   * Matching rows in total, counted in SQL — not `rows.length`. A page read
+   * with `after` reports the count its first page took, without re-counting.
+   */
   total: number;
   limit: number;
+  /** Rows before this page — the one passed, or the cursor's position. */
   offset: number;
   hasMore: boolean;
+  /**
+   * Pass as `after` to read the page that follows; `null` exactly when
+   * `hasMore` is false. Opaque, in-memory only, never logged — it is built
+   * from the last row's sort keys (`@/lib/keyset`).
+   */
+  next: string | null;
 }
 
 /** Rows per page. Comfortably more than one screenful. */
@@ -346,6 +363,13 @@ export interface MaintenanceCostFilter {
   toISO?: string;
   limit?: number;
   offset?: number;
+  /**
+   * Continue after the page that returned this cursor (the page's `next`):
+   * one keyset statement through the paging index, NOT counted again —
+   * `total` is the count the first page took. Pass the same filter the cursor
+   * came from; never combined with `offset`.
+   */
+  after?: string;
 }
 
 export interface MaintenanceCostPage {
@@ -355,6 +379,12 @@ export interface MaintenanceCostPage {
   limit: number;
   offset: number;
   hasMore: boolean;
+  /**
+   * Pass as `after` to read the page that follows; `null` exactly when
+   * `hasMore` is false. Opaque, in-memory only, never logged — it is built
+   * from the last row's sort keys (`@/lib/keyset`).
+   */
+  next: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -421,6 +451,13 @@ export interface MaintenanceServiceFilter {
   toISO?: string;
   limit?: number;
   offset?: number;
+  /**
+   * Continue after the page that returned this cursor (the page's `next`):
+   * one keyset statement through the paging index, NOT counted again —
+   * `total` is the count the first page took. Pass the same filter the cursor
+   * came from; never combined with `offset`.
+   */
+  after?: string;
 }
 
 export interface MaintenanceServicePage {
@@ -430,6 +467,12 @@ export interface MaintenanceServicePage {
   limit: number;
   offset: number;
   hasMore: boolean;
+  /**
+   * Pass as `after` to read the page that follows; `null` exactly when
+   * `hasMore` is false. Opaque, in-memory only, never logged — it is built
+   * from the last row's sort keys (`@/lib/keyset`).
+   */
+  next: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -473,6 +516,13 @@ export interface MaintenanceRenewalFilter {
   kind?: MaintenanceRenewalKind;
   limit?: number;
   offset?: number;
+  /**
+   * Continue after the page that returned this cursor (the page's `next`):
+   * one keyset statement through the paging index, NOT counted again —
+   * `total` is the count the first page took. Pass the same filter the cursor
+   * came from; never combined with `offset`.
+   */
+  after?: string;
 }
 
 export interface MaintenanceRenewalPage {
@@ -482,6 +532,12 @@ export interface MaintenanceRenewalPage {
   limit: number;
   offset: number;
   hasMore: boolean;
+  /**
+   * Pass as `after` to read the page that follows; `null` exactly when
+   * `hasMore` is false. Opaque, in-memory only, never logged — it is built
+   * from the last row's sort keys (`@/lib/keyset`).
+   */
+  next: string | null;
 }
 
 /* -------------------------------------------------------------------------- */

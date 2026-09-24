@@ -159,17 +159,36 @@ export interface DocumentFilter {
   sort?: DocumentSort;
   limit?: number;
   offset?: number;
+  /**
+   * Continue after the page that returned this cursor ({@link DocumentPage.next}):
+   * one keyset statement through the paging index, NOT counted again, and read
+   * against the first page's "today" so `expiringWithinDays` means the same
+   * window on every page. Pass the same filter and sort the cursor came from;
+   * never combined with `offset`.
+   */
+  after?: string;
 }
 
 export interface DocumentPage {
   rows: readonly DocumentRecord[];
   /** Rows the page matched but could not read. Reported, never swallowed. */
   damagedCount: number;
-  /** Matching rows in total, counted in SQL — not `rows.length`. */
+  /**
+   * Matching rows in total, counted in SQL — not `rows.length`. A page read
+   * with `after` reports the count its first page took, without re-counting.
+   */
   total: number;
   limit: number;
+  /** Rows before this page — the one passed, or the cursor's position. */
   offset: number;
   hasMore: boolean;
+  /**
+   * Pass as `after` to read the page that follows; `null` exactly when
+   * `hasMore` is false. Opaque, in-memory only, never logged — it is built
+   * from the last row's sort keys, which include the document's NAME
+   * (`@/lib/keyset`).
+   */
+  next: string | null;
 }
 
 /**

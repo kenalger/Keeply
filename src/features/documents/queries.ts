@@ -30,6 +30,14 @@
  * THE ROW, so a record the user can see but not read is still one they can
  * remove.
  */
+import {
+  continuationStatement,
+  defineKeyset,
+  nextCursor,
+  readCursor,
+  splitPeek,
+  type KeysetSpec,
+} from '@/lib/keyset';
 import type { ReminderEntity } from '@/lib/notifications-plan';
 
 import {
@@ -55,10 +63,52 @@ import {
   type DocumentPage,
   type DocumentPatch,
   type DocumentRecord,
+  type DocumentSort,
   type NewDocumentInput,
 } from './types';
 import { patchForAnswer, type RenewalAnswer } from './renewal';
 import { validateDocumentPatch, validateNewDocument } from './validation';
+
+/**
+ * Each list order as keys, for paging after a cursor (`@/lib/keyset`).
+ *
+ * These restate `orderFor()` in `sql.ts` — including its fallback: any sort it
+ * does not recognise is ordered by expiry, so it is paged by expiry too — and
+ * `continuationStatement()` checks on every continuation that they still do.
+ * `expiry_date` is `nullsLast`: an undated birth certificate sorts after every
+ * deadline, and a cursor sitting among the undated has to keep going.
+ */
+export const DOCUMENT_KEYSETS: Readonly<Record<DocumentSort, KeysetSpec>> = {
+  expiry: defineKeyset({
+    tag: 'documents:expiry',
+    qualifier: '',
+    keys: [
+      { column: 'expiry_date', direction: 'asc', nullsLast: true },
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  name: defineKeyset({
+    tag: 'documents:name',
+    qualifier: '',
+    keys: [
+      { column: 'name', direction: 'asc', collate: 'nocase' },
+      { column: 'id', direction: 'asc' },
+    ],
+  }),
+  recent: defineKeyset({
+    tag: 'documents:recent',
+    qualifier: '',
+    keys: [
+      { column: 'created_at', direction: 'desc' },
+      { column: 'id', direction: 'desc' },
+    ],
+  }),
+};
+
+function keysetFor(sort: DocumentSort | undefined): KeysetSpec {
+  return (sort === undefined ? undefined : DOCUMENT_KEYSETS[sort]) ?? DOCUMENT_KEYSETS.expiry;
+}
 
 /** A row exactly as the driver hands it back, keyed by column name. */
 interface DocumentRow {
@@ -246,16 +296,10 @@ export function createDocumentsApi(deps: DocumentsApiDeps): DocumentsApi {
     return optionalText(rows[0]?.local_file_uri);
   }
 
-  async function readPage(
-    rowsStatement: SqlStatement,
-    countStatement: SqlStatement,
-    filter: DocumentFilter,
-  ): Promise<DocumentPage> {
-    const [rows, counts] = await Promise.all([
-      store.all<DocumentRow>(rowsStatement),
-      store.all<{ total: unknown }>(countStatement),
-    ]);
-
+  function mapSkipping(rows: readonly DocumentRow[]): {
+    mapped: DocumentRecord[];
+    damagedCount: number;
+  } {
     const mapped: DocumentRecord[] = [];
     let damagedCount = 0;
     for (const row of rows) {
@@ -266,10 +310,27 @@ export function createDocumentsApi(deps: DocumentsApiDeps): DocumentsApi {
         damagedCount += 1;
       }
     }
+    return { mapped, damagedCount };
+  }
 
+  async function readPage(
+    rowsStatement: SqlStatement,
+    countStatement: SqlStatement,
+    filter: DocumentFilter,
+    today: string,
+  ): Promise<DocumentPage> {
+    const [rows, counts] = await Promise.all([
+      store.all<DocumentRow>(rowsStatement),
+      store.all<{ total: unknown }>(countStatement),
+    ]);
+
+    const { mapped, damagedCount } = mapSkipping(rows);
     const total = numberOr(counts[0]?.total, mapped.length);
     const limit = resolvePageSize(filter.limit);
     const offset = resolveOffset(filter.offset);
+    // From the COUNT and from `rows.length` BEFORE mapping: a page whose rows
+    // were all damaged still has more behind it.
+    const hasMore = offset + rows.length < total;
 
     return {
       rows: mapped,
@@ -277,19 +338,62 @@ export function createDocumentsApi(deps: DocumentsApiDeps): DocumentsApi {
       total,
       limit,
       offset,
-      // From the COUNT and from `rows.length` BEFORE mapping: a page whose rows
-      // were all damaged still has more behind it.
-      hasMore: offset + rows.length < total,
+      hasMore,
+      // From the RAW last row, so a damaged row is continued past rather than
+      // re-read; and with this page's "today", so the next page agrees.
+      next: hasMore
+        ? nextCursor(keysetFor(filter.sort), rows, {
+            seen: offset + rows.length,
+            total,
+            todayISO: today,
+          })
+        : null,
+    };
+  }
+
+  /**
+   * The page after a cursor: one statement, an index seek, and no `count(*)`,
+   * against the first page's "today". See `DocumentFilter.after`.
+   */
+  async function listAfter(filter: DocumentFilter, after: string): Promise<DocumentPage> {
+    if (filter.offset !== undefined) {
+      throw new TypeError('A document page starts after a cursor or at an offset, not both');
+    }
+    const spec = keysetFor(filter.sort);
+    const cursor = readCursor(spec, after);
+    const today = cursor.todayISO ?? todayISO();
+    const limit = resolvePageSize(filter.limit);
+    const read = await store.all<DocumentRow>(
+      continuationStatement(
+        selectDocuments({ ...filter, limit, offset: 0 }, today),
+        spec,
+        cursor,
+        limit,
+      ),
+    );
+    const { page, hasMore } = splitPeek(read, limit);
+    const { mapped, damagedCount } = mapSkipping(page);
+    const position = { seen: cursor.seen + page.length, total: cursor.total, todayISO: today };
+    return {
+      rows: mapped,
+      damagedCount,
+      total: cursor.total,
+      limit,
+      offset: cursor.seen,
+      hasMore,
+      next: hasMore ? nextCursor(spec, page, position) : null,
     };
   }
 
   return {
     async listDocuments(filter: DocumentFilter = {}) {
+      if (filter.after !== undefined) return listAfter(filter, filter.after);
       const today = todayISO();
       return readPage(
         selectDocuments(filter, today),
         selectDocumentCount(filter, today),
         filter,
+        today,
       );
     },
 
