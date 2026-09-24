@@ -1,4 +1,4 @@
-import { router, Stack } from 'expo-router';
+import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect } from 'react';
 import { Alert, AppState } from 'react-native';
@@ -19,6 +19,7 @@ import {
   type BootStage,
 } from '@/stores/boot-store';
 import { watchPermissionOnForeground } from '@/stores/notification-store';
+import { useOnboardingStore } from '@/stores/onboarding-store';
 import { hydrateSettings } from '@/stores/settings-store';
 import { useThemePreferenceSync } from '@/stores/ui-store';
 import {
@@ -161,8 +162,15 @@ function LockGate() {
 
   useEffect(() => {
     // Both halves, awaited together, then one seed — see `initialLockState`.
-    // `hydrate()` never throws and `check()` never throws, so this settles.
-    void Promise.all([useAppLockStore.getState().check(), hydrateSettings()]).then(initialise);
+    // The first-run decision rides along: one settings read, and knowing it
+    // BEFORE the tree mounts is what lets `(tabs)/_layout` redirect to the
+    // wizard instead of painting Home and then replacing it. None of the three
+    // throws, so this settles.
+    void Promise.all([
+      useAppLockStore.getState().check(),
+      hydrateSettings(),
+      useOnboardingStore.getState().decide(),
+    ]).then(initialise);
     return watch();
   }, [initialise, watch]);
 
@@ -234,8 +242,11 @@ function AfterBoot() {
     // 2. What the add form should default its category to.
     void primeSubscriptionDefaults();
 
-    // 3. First-run routing (see `useOnboardingGate`).
-    void resolveOnboardingGate();
+    // 3. First-run routing is decided in `LockGate` (one settings read into
+    //    `useOnboardingStore.due`) and acted on by `(tabs)/_layout`, which
+    //    redirects to the wizard instead of mounting the tabs. It used to be
+    //    resolved HERE, after the navigator had mounted — so a first run
+    //    painted Home and then replaced it.
 
     // 4. Rebuild the OS reminder queue from what the database holds.
     //
@@ -293,58 +304,6 @@ function AfterBoot() {
   }, []);
 
   return null;
-}
-
-/* -------------------------------------------------------------------------- */
-/* First-run routing (plan/onboarding.md)                                      */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Whether the onboarding wizard's screens exist yet.
- *
- * They do: `src/app/onboarding.tsx` renders `@/features/onboarding/ui`, over the
- * state machine, the Philippine catalogue, the resumable step plan and the
- * payoff figures that `src/features/onboarding` already provided. The redirect
- * below is therefore live.
- *
- * The flag stays as the single place the routing decision is made, because a
- * guard that navigates to a route that does not exist drops a first-run user on
- * `+not-found` — a far worse failure than not redirecting — and this is the line
- * that has to be checked if the route is ever renamed.
- */
-const ONBOARDING_SCREENS_EXIST = true;
-
-/**
- * Ask whether the wizard should run, and route if it can.
- *
- * `shouldShowOnboarding()` reads one `app_settings` key: the wizard is due
- * unless it has been completed or explicitly skipped, which is what makes an
- * abandoned wizard resumable rather than a broken half-state (F7).
- */
-async function resolveOnboardingGate(): Promise<void> {
-  try {
-    const { shouldShowOnboarding } = await import('@/features/onboarding');
-    const due = await shouldShowOnboarding();
-    if (!due) return;
-
-    if (!ONBOARDING_SCREENS_EXIST) {
-      log.info('onboarding: first run detected; the wizard screens are not built yet');
-      return;
-    }
-    // `replace`, not `push`: the tabs are not somewhere the user chose to be and
-    // Back must not return to a dashboard the gate would redirect away from
-    // again. This runs from an effect AFTER the navigator has mounted — the
-    // dynamic import and the settings read are both awaited above — which is
-    // what keeps it from navigating before there is a root to navigate in.
-    log.info('onboarding: first run detected; routing to the wizard');
-    router.replace('/onboarding');
-  } catch (error) {
-    // Never block launch on this. A user who cannot be onboarded still gets an
-    // app that works.
-    log.warn('onboarding: could not resolve the first-run gate', {
-      reason: String(error instanceof Error ? error.name : 'unknown'),
-    });
-  }
 }
 
 /**

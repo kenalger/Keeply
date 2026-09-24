@@ -22,6 +22,7 @@ import {
 import type { ReminderKindSlug } from '@/features/settings';
 import { isDev } from '@/lib/env';
 import { log } from '@/lib/log';
+import { useOnboardingStore } from '@/stores/onboarding-store';
 import {
   describeReminderLeadTimes,
   formatReminderHour,
@@ -407,6 +408,9 @@ function MoreScreenContent() {
       try {
         const { resetOnboarding } = await import('@/features/onboarding');
         await resetOnboarding();
+        // The gate reads `due` on every mount of the tabs: re-decide it, or a
+        // wizard abandoned from here would land back on the tabs as if done.
+        await useOnboardingStore.getState().decide();
         router.replace('/onboarding');
       } catch (error) {
         log.error('onboarding: could not restart the wizard', error);

@@ -6,11 +6,12 @@ splash, loading screen, save overlay, theme, the rewired screens, lazy tabs and 
 were all exercised there rather than only in the suite. The paging rewrite is proven in the suite
 (real SQLite, every list × every sort × every filter) and rendered on the simulator, not scrolled.
 
-> ⚠ **The branch is sixteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
+> ⚠ **The branch is seventeen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
 > `origin/main` are both still at `d2a8701`. It fast-forwards. Push it, or fast-forward `main`
-> onto it, whichever you prefer. The eleven newest commits are this session's, themed:
+> onto it, whichever you prefer. The twelve newest commits are this session's, themed:
 >
 > ```
+> First run: the wizard is decided before the tree mounts, so Home never paints first
 > Audit findings: T16, T20, and a delete for a document that cannot be read
 > Audit findings: T15, T18, lists that keep their rows, 44pt segments
 > Polish: six gaps the review left …              (allowance, tabs on error, dark fills, paging)
@@ -143,7 +144,7 @@ A private, offline-first iOS app you can actually use:
 
 ## Start here
 
-**1. Land the branch.** Sixteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
+**1. Land the branch.** Seventeen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
 `main` still at `d2a8701`. It fast-forwards. Do this before anything else — the rest of this list
 assumes the work is on `main`.
 
@@ -386,6 +387,19 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 ---
 
 ## Recently closed (do not re-fix)
+
+### This session, part six · a first run that never paints Home
+
+- **The wizard is decided before the tree mounts.** `useOnboardingStore.decide()` (one
+  `app_settings` read) rides in `LockGate`'s pending promise beside the lock check and the
+  settings hydrate; `(tabs)/_layout` renders `<Redirect href="/onboarding" />` instead of the
+  tab bar while `due` is true, so on a first run no tab ever reads or paints. The wizard shows
+  `LoadingScreen` ("Setting up…") for its own first read instead of nothing, so the sequence is
+  splash → loading → wizard with no blank frame. Finishing or skipping sets `due` false in the
+  same transition; More's "run first-run setup again" re-decides after `resetOnboarding()`.
+  `resolveOnboardingGate()` in `_layout.tsx` — which ran after the navigator had mounted — is
+  gone. Verified against the live tree: on a reset launch `WelcomeStep` is mounted and neither
+  `HomeScreenContent` nor `AppTabs` ever was; "Skip setup" lands on a mounted Home.
 
 ### This session, part five · T16, T20, and a way out of an unreadable document
 
@@ -785,9 +799,6 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 - **A read already in flight when `closeDatabase()` runs** is interrupted natively
   (`sqlite3_interrupt`) and rejects; screens treat that like the "not initialized" they saw
   before. Not exercised on a device.
-- **First run still paints Home, then replaces it with the wizard**, which itself paints nothing
-  until `begin()` resolves. The onboarding check runs after the navigator mounts; deciding it in
-  `LockGate`'s pending promise (one settings read) would remove both flashes.
 - **Untested by design**: `src/db/client.ts`, `migrate.ts`, `key.ts` import op-sqlite and expo-secure-store,
   which cannot load under plain Node. `withTransaction()`'s atomicity rests on the lint rule and the
   type-level `Omit`, not a test.

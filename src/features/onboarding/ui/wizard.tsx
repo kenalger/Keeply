@@ -26,6 +26,7 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 
+import { LoadingScreen } from '@/components/ui';
 import { FallbackScreen } from '@/lib/fallback-screen';
 import { useOnboardingStore } from '@/stores/onboarding-store';
 
@@ -108,9 +109,12 @@ export function OnboardingWizard() {
     );
   }
 
-  // The first read of a local table. It is a millisecond, and a spinner for it
-  // would be a spinner for nothing.
-  if (state === null || !entered || completed) return null;
+  // The first read of a local table, or the exit already in flight. Not a
+  // spinner — the same mark boot has been showing, so a first run goes
+  // splash → loading → wizard without a blank frame in between.
+  if (state === null || !entered || completed) {
+    return <LoadingScreen caption="Setting up…" testID="onboarding-loading" />;
+  }
 
   const { progress, step, areas } = state;
   // Back exists wherever there is a step behind this one in THIS user's plan.

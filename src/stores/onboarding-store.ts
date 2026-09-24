@@ -37,6 +37,7 @@ import {
   importCatalogSelections,
   loadOnboardingState,
   setInterestAreas,
+  shouldShowOnboarding,
   skipCurrentStep,
   skipOnboarding,
   type CatalogSelection,
@@ -56,6 +57,14 @@ interface OnboardingUiState {
   error: unknown;
   /** A transition is in flight. A guard against double taps, never a spinner. */
   busy: boolean;
+  /**
+   * Whether the wizard is due on this launch — decided by `decide()` in the
+   * boot path, BEFORE the tab tree mounts, so `(tabs)/_layout` can redirect to
+   * the wizard instead of painting Home and then replacing it. `null` until
+   * decided, and if the read threw; the tabs treat that as "not due".
+   * Finishing or skipping the wizard sets it false; restarting it sets it true.
+   */
+  due: boolean | null;
 
   /* --- the catalogue draft (F3) --- */
 
@@ -69,6 +78,8 @@ interface OnboardingUiState {
   importError: string | null;
 
   load: () => Promise<void>;
+  /** Read whether the wizard is due. Never throws; a failure reads as `null`. */
+  decide: () => Promise<void>;
   begin: () => Promise<void>;
   toggleArea: (area: InterestArea) => Promise<void>;
   next: () => Promise<void>;
@@ -117,7 +128,17 @@ export const useOnboardingStore = create<OnboardingUiState>()((set, get) => {
     if (get().busy) return;
     set({ busy: true });
     try {
-      set({ state: await run(), status: 'ready', error: null, busy: false });
+      const state = await run();
+      // A wizard that has just been completed or skipped is no longer due:
+      // the exit's `router.replace('/')` lands on `(tabs)/_layout`, which
+      // reads this before it renders anything.
+      set({
+        state,
+        status: 'ready',
+        error: null,
+        busy: false,
+        ...(state.completed ? { due: false } : {}),
+      });
     } catch (error) {
       log.error(`onboarding: ${label} failed`, error);
       set({ status: 'error', error, busy: false });
@@ -129,6 +150,7 @@ export const useOnboardingStore = create<OnboardingUiState>()((set, get) => {
     state: null,
     error: null,
     busy: false,
+    due: null,
 
     picked: NO_PICKS,
     amounts: NO_AMOUNTS,
@@ -141,6 +163,23 @@ export const useOnboardingStore = create<OnboardingUiState>()((set, get) => {
       } catch (error) {
         log.error('onboarding: could not read the wizard state', error);
         set({ status: 'error', error });
+      }
+    },
+
+    /**
+     * One `app_settings` read: the wizard is due unless it has been completed
+     * or explicitly skipped, which is what makes an abandoned wizard resumable
+     * rather than a broken half-state (F7). Never throws — a user who cannot
+     * be onboarded still gets an app that works — and never logs a value.
+     */
+    decide: async () => {
+      try {
+        set({ due: await shouldShowOnboarding() });
+      } catch (error) {
+        log.warn('onboarding: could not resolve the first-run gate', {
+          reason: String(error instanceof Error ? error.name : 'unknown'),
+        });
+        set({ due: null });
       }
     },
 
