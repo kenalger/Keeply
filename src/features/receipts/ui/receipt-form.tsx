@@ -281,12 +281,15 @@ export function ReceiptForm({ record, onTakePhoto, onSaved, onCancel }: ReceiptF
     const amountMinor = draft.amountMinor;
     const purchaseDate = draft.purchaseDate;
     if (amountMinor === null || purchaseDate === null) {
-      setErrors({
+      // MERGED, not replaced: an error on another field from the last attempt
+      // is still true and is cleared by editing that field (T16).
+      setErrors((current) => ({
+        ...current,
         ...(amountMinor === null ? { amountMinor: 'Enter an amount greater than zero.' } : {}),
         ...(purchaseDate === null
           ? { purchaseDate: 'Choose the date you spent it.' }
           : {}),
-      });
+      }));
       setFormError(null);
       return;
     }

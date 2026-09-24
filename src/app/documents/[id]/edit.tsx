@@ -43,15 +43,21 @@ export default function EditDocumentScreen() {
     else router.replace({ pathname: '/documents/[id]', params: { id } });
   }, [router, id]);
 
+  // Works off the ROUTE's id, not the loaded record: a document whose row
+  // cannot be read is still one the user can delete, and the unreadable state
+  // below offers exactly that. The record, when there is one, only sharpens
+  // the copy.
   const confirmDelete = useCallback(() => {
+    if (busy !== null) return;
     const record = document.value;
-    if (record === null || busy !== null) return;
 
     Alert.alert(
-      `Delete ${record.name}?`,
-      record.localFileUri === null
-        ? 'This cannot be undone.'
-        : 'The scan goes with it. This cannot be undone.',
+      record === null ? 'Delete this document?' : `Delete ${record.name}?`,
+      record === null
+        ? 'Its details could not be read. The record and any scan stored with it are removed. This cannot be undone.'
+        : record.localFileUri === null
+          ? 'This cannot be undone.'
+          : 'The scan goes with it. This cannot be undone.',
       [
         { text: 'Keep', style: 'cancel' },
         {
@@ -61,7 +67,7 @@ export default function EditDocumentScreen() {
             setBusy('Deleting…');
             void (async () => {
               try {
-                await holdBusy(removeDocument(record.id));
+                await holdBusy(removeDocument(id));
                 router.replace('/(tabs)/documents');
               } catch (error) {
                 log.error('documents: deleting failed', error);
@@ -76,7 +82,7 @@ export default function EditDocumentScreen() {
         },
       ],
     );
-  }, [document.value, busy, router]);
+  }, [document.value, busy, router, id]);
 
   if (document.status === 'loading') {
     return (
@@ -97,7 +103,7 @@ export default function EditDocumentScreen() {
       (document.error instanceof DocumentError && document.error.code === 'not-found');
 
     return (
-      <Screen edges={['top']}>
+      <Screen edges={['top']} busy={busy}>
         <ScreenHeader title="Edit document" onBack={leave} />
         {gone ? (
           <EmptyState
@@ -109,13 +115,19 @@ export default function EditDocumentScreen() {
             onAction={() => router.replace('/(tabs)/documents')}
           />
         ) : (
+          // A way out that is not "keep trying": a row that cannot be read is
+          // still a row that can be removed, which the maintenance screens
+          // already offer for the same state.
           <EmptyState
             icon="warning"
             title="Could not open this document"
-            description="The record is still here — Keeply just could not read it right now. Try again in a moment."
+            description="The record is still here — Keeply just could not read it right now. Try again in a moment, or remove it."
             actionLabel="Try again"
             actionIcon="repeat"
             onAction={document.reload}
+            secondaryActionLabel="Delete this record"
+            secondaryActionHint="Asks you to confirm before removing it permanently"
+            onSecondaryAction={confirmDelete}
           />
         )}
       </Screen>

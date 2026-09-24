@@ -367,12 +367,15 @@ export function SubscriptionForm({ record, onSaved, onCancel }: SubscriptionForm
     const amountMinor = draft.amountMinor;
     const nextBillingDate = draft.nextBillingDate;
     if (amountMinor === null || nextBillingDate === null) {
-      setErrors({
+      // MERGED, not replaced: a name error from the last attempt is still true
+      // and is cleared by editing the name, not by a second tap on Save (T16).
+      setErrors((current) => ({
+        ...current,
         ...(amountMinor === null
           ? { amountMinor: 'Enter an amount greater than zero.' }
           : {}),
         ...(nextBillingDate === null ? { nextBillingDate: 'Choose a renewal date.' } : {}),
-      });
+      }));
       setFormError(null);
       return;
     }

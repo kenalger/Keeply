@@ -175,7 +175,13 @@ export function AmountField({
   const parseMessage = problem === null ? null : describeAmountProblem(problem, currency);
   // The caller's own rule ("greater than zero", "at least last month's reading")
   // outranks a parsing complaint: it is the one the user is actually failing.
-  const shownError = (typeof error === 'string' && error.length > 0 ? error : null) ?? parseMessage;
+  // The field's own diagnosis wins. When the draft is unparseable, the form
+  // only knows the amount is `null` and says "Enter an amount greater than
+  // zero" — which is false, and hid the accurate message ("Use one decimal
+  // point") under a generic one (T16). The form's error shows once the draft
+  // has no problem of its own: an empty field, or a value the form rejects.
+  const shownError =
+    parseMessage ?? (typeof error === 'string' && error.length > 0 ? error : null);
   const invalid = shownError !== null;
 
   return (

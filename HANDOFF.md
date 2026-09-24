@@ -6,11 +6,12 @@ splash, loading screen, save overlay, theme, the rewired screens, lazy tabs and 
 were all exercised there rather than only in the suite. The paging rewrite is proven in the suite
 (real SQLite, every list × every sort × every filter) and rendered on the simulator, not scrolled.
 
-> ⚠ **The branch is fifteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
+> ⚠ **The branch is sixteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
 > `origin/main` are both still at `d2a8701`. It fast-forwards. Push it, or fast-forward `main`
-> onto it, whichever you prefer. The ten newest commits are this session's, themed:
+> onto it, whichever you prefer. The eleven newest commits are this session's, themed:
 >
 > ```
+> Audit findings: T16, T20, and a delete for a document that cannot be read
 > Audit findings: T15, T18, lists that keep their rows, 44pt segments
 > Polish: six gaps the review left …              (allowance, tabs on error, dark fills, paging)
 > Docs …                                          (this file, CLAUDE.md)
@@ -142,7 +143,7 @@ A private, offline-first iOS app you can actually use:
 
 ## Start here
 
-**1. Land the branch.** Fifteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
+**1. Land the branch.** Sixteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
 `main` still at `d2a8701`. It fast-forwards. Do this before anything else — the rest of this list
 assumes the work is on `main`.
 
@@ -385,6 +386,22 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 ---
 
 ## Recently closed (do not re-fix)
+
+### This session, part five · T16, T20, and a way out of an unreadable document
+
+- **T16 — the amount field's own diagnosis now wins.** `AmountField` showed the form's error over
+  its parse message, so an unparseable draft got "Enter an amount greater than zero" — false —
+  instead of "Use one decimal point". The parse message takes precedence; the form's error shows
+  only when the draft has no problem of its own. The three forms also MERGE the guard errors on
+  Save instead of replacing every field error with them.
+- **T20 — Home's section tail is honest and goes somewhere.** Each section reads at most
+  `RENEWAL_READ_LIMIT` (24, now exported from `@/lib/dashboard`); a section that hit it prints
+  "19+ more", never a number the dashboard cannot vouch for. The tail is a `Row` — "See all" — that
+  closes the section's island and opens the list behind it (`HomeActions.openList`; bills sections
+  → `/bills`, documents/maintenance → their tabs, subscriptions and recent activity → their lists).
+- **A document whose row cannot be read can be deleted** from both its detail and its edit screen
+  ("Delete this record" as the secondary action of the "could not open" state), working off the
+  ROUTE's id as the maintenance child screens do.
 
 ### This session, part four · three audit findings and two latent ones
 
@@ -715,13 +732,11 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   squashed-migration bundle `bundle-newer`, so it is a trade rather than a fix. Left deliberately;
   the reasoning is written at `compareBundle`.
 
-- **What is left of the lower-tier audit findings** in `plan/phase2-3-remediation.md`: T16 (Save
-  replaces an accurate parse error with "Enter an amount greater than zero" — the field's problem
-  never reaches the form), T17 (no caret management in the amount field; needs a device), T20
-  ("+N more" on Home undercounts past the 24-row read and has no route to the full list), and from
-  the latent list: currency errors render nowhere, `AmountField` ignores a currency change,
-  `currentMonth()` has no midnight re-render trigger. T15, T18 and T19 are closed (this session),
-  as are the two latent items about `<List/>` blanking on a failed refresh and 38pt segments.
+- **What is left of the lower-tier audit findings** in `plan/phase2-3-remediation.md`: T17 (no
+  caret management in the amount field; needs a device) and, from the latent list: currency errors
+  render nowhere, `AmountField` ignores a currency change, `currentMonth()` has no midnight
+  re-render trigger. T15, T16, T18, T19 and T20 are closed (this session), as are the two latent
+  items about `<List/>` blanking on a failed refresh and 38pt segments.
 - **`deleteBillPayment()` still has no caller.** Its sibling `saveBillPaymentEdit()` now has one
   (the correction sheet), but removing a recorded period has no UI. The `anchor-row` refusal — the
   oldest live payment IS the recurrence anchor — already has its sentence in `messages.ts`, so the
@@ -764,8 +779,6 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 - **Bills and documents continuations pin the first page's "today"** in the cursor, so a list left
   open across midnight keeps one day until the next revision bump or filter change. Deliberate — one
   list never mixes two days — and reversible by dropping `d` from the token.
-- **A damaged document cannot be deleted from its own screens**: detail and edit say "could not
-  open" with a retry and offer no delete. The maintenance child screens do offer one for this case.
 - **The write connection's own unlock probe at boot is still synchronous** (deliberately left:
   migrations and the self-check need that connection first). `exportEncryptedCopy` stays on the
   write connection because it writes the bundle; it already ran async `execute`.

@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
 import {
   Button,
@@ -32,6 +32,7 @@ import {
   RenewalSheet,
   answerDocumentRenewal,
   describeDaysLeft,
+  removeDocument,
   useDocument,
 } from '@/features/documents/ui';
 import { log } from '@/lib/log';
@@ -88,11 +89,44 @@ export default function DocumentScreen() {
   const [answered, setAnswered] = useState(false);
   const [reopened, setReopened] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const leave = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace('/(tabs)/documents');
   }, [router]);
+
+  // The way out of a record that cannot be read. Works off the ROUTE's id: a
+  // row the mapper rejects is still a row the user can remove, and "try again"
+  // forever is not an answer. The edit screen offers the same.
+  const confirmDelete = useCallback(() => {
+    if (deleting) return;
+    Alert.alert(
+      'Delete this document?',
+      'Its details could not be read. The record and any scan stored with it are removed. This cannot be undone.',
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setDeleting(true);
+            void (async () => {
+              try {
+                await holdBusy(removeDocument(id));
+                router.replace('/(tabs)/documents');
+              } catch (error) {
+                log.error('documents: deleting failed', error);
+                Alert.alert('Not deleted', 'Keeply could not remove this document. Try again.');
+              } finally {
+                setDeleting(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [deleting, id, router]);
 
   // The first read. A bare header with nothing under it read as a screen that
   // had failed to draw, so the page's shape is held while the row arrives.
@@ -114,7 +148,7 @@ export default function DocumentScreen() {
       document.status === 'ready' ||
       (document.error instanceof DocumentError && document.error.code === 'not-found');
     return (
-      <Screen edges={['top']}>
+      <Screen edges={['top']} busy={deleting ? 'Deleting…' : null}>
         <ScreenHeader title="Document" onBack={leave} />
         {gone ? (
           <EmptyState
@@ -129,10 +163,13 @@ export default function DocumentScreen() {
           <EmptyState
             icon="errorCircle"
             title="Keeply could not open this document"
-            description="The record is on this device, so this is not a connection problem."
+            description="The record is on this device, so this is not a connection problem. Try again, or remove it."
             actionLabel="Try again"
             actionIcon="repeat"
             onAction={document.reload}
+            secondaryActionLabel="Delete this record"
+            secondaryActionHint="Asks you to confirm before removing it permanently"
+            onSecondaryAction={confirmDelete}
             fill={false}
           />
         )}
@@ -172,7 +209,10 @@ export default function DocumentScreen() {
   const daysLeft = daysUntilExpiry(record.expiryDate, now);
 
   return (
-    <Screen edges={['top']} scroll busy={saving ? 'Saving…' : null}>
+    <Screen
+      edges={['top']}
+      scroll
+      busy={deleting ? 'Deleting…' : saving ? 'Saving…' : null}>
       <ScreenHeader
         title={record.name}
         subtitle={DOCUMENT_TYPE_LABELS[record.type]}

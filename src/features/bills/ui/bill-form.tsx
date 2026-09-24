@@ -354,7 +354,9 @@ export function BillForm({ record, onSaved, onCancel }: BillFormProps) {
     // guarded — `null` is a legal, saved value for a variable bill (§7).
     const dueDate = draft.dueDate;
     if (dueDate === null) {
-      setErrors({ dueDate: 'Choose a due date.' });
+      // MERGED, not replaced: an error on another field from the last attempt
+      // is still true and is cleared by editing that field (T16).
+      setErrors((current) => ({ ...current, dueDate: 'Choose a due date.' }));
       setFormError(null);
       return;
     }

@@ -83,7 +83,12 @@ export const EXPIRY_WINDOW_DAYS = 90;
  * four rows is a bound SQLite applies (`LIMIT`), not a slice taken after
  * pulling everything, which is the part §33 actually cares about.
  */
-const RENEWAL_READ_LIMIT = 24;
+/**
+ * How many rows each dashboard section reads. Exported so Home can tell a
+ * section that HIT the cap — where "+19 more" is a floor, not a count — from
+ * one that did not (T20).
+ */
+export const RENEWAL_READ_LIMIT = 24;
 
 /** Rows of "Recent activity". Applied as a SQL `LIMIT`. */
 const RECENT_ACTIVITY_LIMIT = 5;

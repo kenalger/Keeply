@@ -36,6 +36,7 @@ import {
   type SpendingBucket,
   type UpcomingPaymentItem,
   type UpcomingSubscriptionItem,
+  RENEWAL_READ_LIMIT,
 } from '@/lib/dashboard';
 import { AllowanceSummary } from '@/features/allowance/ui';
 import { formatMonthYear } from '@/theme';
@@ -102,10 +103,20 @@ const MAX_ROWS_PER_SECTION = 5;
 /* Row model                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/** Where a section's "See all" goes. Two of the five sections share the bills list. */
+type HomeListRoute = '/bills' | '/subscriptions' | '/documents' | '/maintenance' | '/expenses';
+
 type HomeRow =
   | { kind: 'allClear'; key: string; firstRun: boolean }
   | { kind: 'sectionHeader'; key: string; title: string }
   | { kind: 'quiet'; key: string; text: string }
+  /**
+   * The tail of a section with more than fits. `hidden` is exact unless the
+   * section's read HIT its cap, in which case it is a floor and `capped` says
+   * so — the row then prints "19+ more" rather than a number that is wrong
+   * (T20). Pressable: it opens the full list.
+   */
+  | { kind: 'more'; key: string; hidden: number; capped: boolean; route: HomeListRoute }
   | { kind: 'allowance'; key: string }
   | { kind: 'overdue'; key: string; group: GroupPosition; item: OverdueItem }
   | { kind: 'payment'; key: string; group: GroupPosition; item: UpcomingPaymentItem }
@@ -144,61 +155,89 @@ function buildHomeRows(data: DashboardData): readonly HomeRow[] {
     rows.push({ kind: 'allClear', key: 'all-clear', firstRun: false });
   }
 
+  /**
+   * `capped`: whether the section's read returned as many rows as it was
+   * allowed to. Then whatever was not shown is a FLOOR — the database may hold
+   * far more — and the tail row says "19+" instead of a number that is wrong.
+   * The tail is part of the section's island (it takes the `last` position),
+   * and it is a row, because it goes somewhere.
+   */
   const section = <T,>(
     title: string,
     items: readonly T[],
+    capped: boolean,
+    route: HomeListRoute,
     toRow: (item: T, group: GroupPosition) => HomeRow,
   ): void => {
     if (items.length === 0) return; // A section with nothing in it is not a section.
     const shown = items.slice(0, MAX_ROWS_PER_SECTION);
-    rows.push({ kind: 'sectionHeader', key: `h:${title}`, title });
-    shown.forEach((item, index) => rows.push(toRow(item, groupPosition(index, shown.length))));
     const hidden = items.length - shown.length;
+    const total = shown.length + (hidden > 0 ? 1 : 0);
+    rows.push({ kind: 'sectionHeader', key: `h:${title}`, title });
+    shown.forEach((item, index) => rows.push(toRow(item, groupPosition(index, total))));
     if (hidden > 0) {
-      rows.push({
-        kind: 'quiet',
-        key: `more:${title}`,
-        text: `+${hidden} more ${hidden === 1 ? 'item' : 'items'}`,
-      });
+      rows.push({ kind: 'more', key: `more:${title}`, hidden, capped, route });
     }
   };
 
-  section('Overdue', data.overdue, (item, group) => ({
+  // The two bill sections are one read, split; either can only be short
+  // because the OTHER took the rest, so the cap is judged on their sum.
+  const billsCapped = data.overdue.length + data.upcomingPayments.length >= RENEWAL_READ_LIMIT;
+
+  section('Overdue', data.overdue, billsCapped, '/bills', (item, group) => ({
     kind: 'overdue',
     key: `overdue:${item.id}`,
     group,
     item,
   }));
 
-  section('Upcoming payments', data.upcomingPayments, (item, group) => ({
+  section('Upcoming payments', data.upcomingPayments, billsCapped, '/bills', (item, group) => ({
     kind: 'payment',
     key: `payment:${item.id}`,
     group,
     item,
   }));
 
-  section('Expiring documents', data.expiringDocuments, (item, group) => ({
-    kind: 'expiry',
-    key: `expiry:${item.id}`,
-    group,
-    item,
-  }));
+  section(
+    'Expiring documents',
+    data.expiringDocuments,
+    data.expiringDocuments.length >= RENEWAL_READ_LIMIT,
+    '/documents',
+    (item, group) => ({
+      kind: 'expiry',
+      key: `expiry:${item.id}`,
+      group,
+      item,
+    }),
+  );
 
   // Above subscriptions and below documents: both of those are deadlines, and a
   // service that is late is nearer to a task than a renewal that is on schedule.
-  section('Due for service', data.maintenanceDue, (item, group) => ({
-    kind: 'maintenance',
-    key: `maintenance:${item.id}`,
-    group,
-    item,
-  }));
+  section(
+    'Due for service',
+    data.maintenanceDue,
+    data.maintenanceDue.length >= RENEWAL_READ_LIMIT,
+    '/maintenance',
+    (item, group) => ({
+      kind: 'maintenance',
+      key: `maintenance:${item.id}`,
+      group,
+      item,
+    }),
+  );
 
-  section('Upcoming subscriptions', data.upcomingSubscriptions, (item, group) => ({
-    kind: 'renewal',
-    key: `renewal:${item.id}`,
-    group,
-    item,
-  }));
+  section(
+    'Upcoming subscriptions',
+    data.upcomingSubscriptions,
+    data.upcomingSubscriptions.length >= RENEWAL_READ_LIMIT,
+    '/subscriptions',
+    (item, group) => ({
+      kind: 'renewal',
+      key: `renewal:${item.id}`,
+      group,
+      item,
+    }),
+  );
 
   // "This month" is the one section that stays when it is empty: a spending
   // block that vanishes reads as a broken total, not as a quiet month. It
@@ -244,7 +283,8 @@ function buildHomeRows(data: DashboardData): readonly HomeRow[] {
     });
   }
 
-  section('Recent activity', data.recentActivity, (item, group) => ({
+  // A window of the newest five by design, not a capped count: never "capped".
+  section('Recent activity', data.recentActivity, false, '/expenses', (item, group) => ({
     kind: 'activity',
     key: `activity:${item.id}`,
     group,
@@ -285,9 +325,10 @@ function HomeScreenContent() {
     (itemId: string) => router.push({ pathname: '/maintenance/[id]', params: { id: itemId } }),
     [router],
   );
+  const openList = useCallback((route: HomeListRoute) => router.push(route), [router]);
   const actions = useMemo<HomeActions>(
-    () => ({ openAdd, openSubscription, openMaintenance }),
-    [openAdd, openSubscription, openMaintenance],
+    () => ({ openAdd, openSubscription, openMaintenance, openList }),
+    [openAdd, openSubscription, openMaintenance, openList],
   );
 
   return (
@@ -367,12 +408,15 @@ interface HomeActions {
   openSubscription: (id: string) => void;
   /** Takes the ITEM's id, not the due row's — see `MaintenanceDueItem`. */
   openMaintenance: (itemId: string) => void;
+  /** A section's "See all": the full list behind it. */
+  openList: (route: HomeListRoute) => void;
 }
 
 const HomeActionsContext = createContext<HomeActions>({
   openAdd: () => undefined,
   openSubscription: () => undefined,
   openMaintenance: () => undefined,
+  openList: () => undefined,
 });
 
 /* Module scope: a new identity per render would defeat row memoization. */
@@ -414,6 +458,9 @@ const HomeRowView = memo(function HomeRowView({ row }: { row: HomeRow }) {
 
     case 'quiet':
       return <ListNote>{row.text}</ListNote>;
+
+    case 'more':
+      return <MoreRow hidden={row.hidden} capped={row.capped} route={row.route} />;
 
     case 'overdue': {
       const { item } = row;
@@ -599,6 +646,38 @@ function SubscriptionLink({
 }): ReactElement {
   const { openSubscription } = useContext(HomeActionsContext);
   return children(() => openSubscription(id));
+}
+
+/**
+ * A section's tail: how much was not shown, and the way to all of it.
+ *
+ * It closes the section's island (`last`) so it reads as part of the same
+ * group, and it is a `Row` rather than a note because it goes somewhere. A
+ * capped count prints as a floor — "19+ more" — never as a number the
+ * dashboard cannot vouch for (T20).
+ */
+function MoreRow({
+  hidden,
+  capped,
+  route,
+}: {
+  hidden: number;
+  capped: boolean;
+  route: HomeListRoute;
+}): ReactElement {
+  const { openList } = useContext(HomeActionsContext);
+  const noun = hidden === 1 && !capped ? 'item' : 'items';
+  return (
+    <ListGroup position="last">
+      <Row
+        title="See all"
+        subtitle={`${hidden}${capped ? '+' : ''} more ${noun}`}
+        onPress={() => openList(route)}
+        accessibilityHint="Opens the full list"
+        testID={`home-see-all:${route}`}
+      />
+    </ListGroup>
+  );
 }
 
 /** The same render-prop shape as `SubscriptionLink`, for the same reason. */
