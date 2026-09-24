@@ -8,8 +8,9 @@
  * migrated-database.ts`). `@/db` cannot be imported from a module a test loads
  * — its barrel reaches `src/db/client.ts`, which imports `react-native`,
  * `expo-file-system` and op-sqlite. So the SQL is written against this
- * interface, `index.ts` implements it over `getDb()` / `withTransaction()`, and
- * the tests implement it over `node:sqlite`. One implementation of the queries,
+ * interface, `index.ts` implements it over `readAll()` (reads, off the JS
+ * thread), `getDb()` (writes) and `withTransaction()`, and the tests implement
+ * it over `node:sqlite`. One implementation of the queries,
  * exercised by the same statements that will run on the device.
  *
  * THE COST, STATED. Reads are raw SQL against `subscriptions_live` rather than

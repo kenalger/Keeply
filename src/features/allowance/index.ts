@@ -15,7 +15,7 @@
  *
  * The date range is INCLUSIVE at both ends, matching `PeriodRange.endIso`.
  */
-import { getDb, newId, nowMs, type KeeplyDatabase } from '@/db';
+import { getDb, newId, nowMs, readAll, type KeeplyDatabase } from '@/db';
 import { bindStatement } from '@/features/subscriptions';
 import { receiptTotals } from '@/features/receipts';
 import { DEFAULT_CURRENCY } from '@/theme/format';
@@ -40,7 +40,9 @@ function storeFor(db: KeeplyDatabase): AllowanceStore {
 
 /** The live store, resolved lazily so importing this module never opens the db. */
 const liveStore: AllowanceStore = {
-  all: (statement) => storeFor(getDb()).all(statement),
+  // Off the JS thread, on the read-only connection (`readAll` in `@/db`).
+  // Writes stay on the write connection. This store has no transactions.
+  all: (statement) => readAll(statement.text, statement.params),
   execute: (statement) => storeFor(getDb()).execute(statement),
 };
 

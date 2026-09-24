@@ -29,7 +29,7 @@
  * subscriptions API over that handle with `createSubscriptionsApi()` — the same
  * factory, the same statements, the same §29 validation, all inside one BEGIN.
  */
-import { getDb, newId, nowMs, withTransaction, type KeeplyDatabase } from '@/db';
+import { getDb, newId, nowMs, readAll, withTransaction, type KeeplyDatabase } from '@/db';
 import {
   billsApiFor,
   billTotals,
@@ -86,7 +86,11 @@ function storeFor(db: KeeplyDatabase, inTransaction: boolean): SettingsStore {
 
 /** The live settings API, resolved lazily so importing this never opens the db. */
 const settings = settingsApiFor({
-  all: (statement) => storeFor(getDb(), false).all(statement),
+  // Off the JS thread, on the read-only connection (`readAll` in `@/db`).
+  // Writes, and every read INSIDE a transaction — `storeFor(tx, true)` above —
+  // stay on the write connection, because a transaction must read its own
+  // uncommitted rows and the read connection only ever sees committed ones.
+  all: (statement) => readAll(statement.text, statement.params),
   execute: (statement) => storeFor(getDb(), false).execute(statement),
   atomically: (body) => storeFor(getDb(), false).atomically(body),
 });

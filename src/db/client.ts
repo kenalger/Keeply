@@ -49,6 +49,15 @@
  * every `db.all()` would silently return `[]` — wrong results, not a crash.
  * `createDrizzleAdapter` presents the legacy surface over the modern `DB`.
  * `selfCheck()` (`./selfcheck.ts`) proves the bridge on every dev boot.
+ *
+ * ---------------------------------------------------------------------------
+ * Two connections
+ * ---------------------------------------------------------------------------
+ * The one above is the WRITE connection: drizzle, every write, every
+ * transaction, the migrations. Because drizzle drives it synchronously, reads
+ * do not use it — they go to a second, read-only connection through
+ * `readAll()`, off the JS thread. "THE READ CONNECTION" below says why it is a
+ * second connection and not async reads on this one.
  */
 import type { DB, Scalar } from '@op-engineering/op-sqlite';
 import { getTableName, is, Table } from 'drizzle-orm';
@@ -62,6 +71,7 @@ import {
 } from './errors';
 import { deleteDatabaseKey, resolveDatabaseKey } from './key';
 import { logFailure, logOperation } from './log';
+import { createReadGate, readStatementProblem } from './read-gate';
 import * as schema from './schema';
 
 /** File name of the encrypted database inside the app sandbox. */
@@ -103,6 +113,11 @@ type OpSqliteModule = typeof import('@op-engineering/op-sqlite');
 let opSqlite: OpSqliteModule | null = null;
 let rawConnection: DB | null = null;
 let drizzleDb: KeeplyDatabase | null = null;
+/**
+ * What `PRAGMA journal_mode = WAL` answered on the write connection. The read
+ * connection is only opened over WAL — see "THE READ CONNECTION".
+ */
+let writeJournalMode: string | null = null;
 
 // ---------------------------------------------------------------------------
 // Native module
@@ -335,8 +350,9 @@ export async function openDatabase(): Promise<void> {
 
   assertKeyUnlocksDatabase(connection);
 
+  let journalMode: string;
   try {
-    applyConnectionPragmas(connection);
+    journalMode = applyConnectionPragmas(connection);
   } catch (error) {
     logFailure('db.pragma', error);
     closeQuietly(connection);
@@ -344,8 +360,15 @@ export async function openDatabase(): Promise<void> {
       cause: error,
     });
   }
+  if (journalMode !== 'wal') {
+    // Not fatal — this connection works in any journal mode, and did before
+    // there was a second one. It does mean reads cannot move to their own
+    // connection (`openReadConnection()` falls back), so it is said out loud.
+    logFailure('db.pragma', new Error('journal_mode'));
+  }
 
   rawConnection = connection;
+  writeJournalMode = journalMode;
   drizzleDb = drizzle(createDrizzleAdapter(connection) as never, {
     schema,
     // Must match `casing` in drizzle.config.ts (see the note there).
@@ -402,15 +425,24 @@ function closeQuietly(connection: DB): void {
  * Per-connection pragmas. `foreign_keys` is OFF by default in SQLite and is a
  * connection-level setting, so it must be re-applied on every open or the
  * cascades declared in the schema would not fire.
+ *
+ * @returns the journal mode the file is now in, lower-cased.
  */
-function applyConnectionPragmas(connection: DB): void {
+function applyConnectionPragmas(connection: DB): string {
   connection.executeSync('PRAGMA foreign_keys = ON;');
-  // WAL: concurrent reads while a write is in flight, and far fewer fsyncs.
-  connection.executeSync('PRAGMA journal_mode = WAL;');
+  // WAL: concurrent reads while a write is in flight, and far fewer fsyncs —
+  // and what the read connection stands on: a reader on its own connection
+  // never blocks this one and only ever sees committed transactions. The mode
+  // is a property of the FILE, so it persists across opens; and this pragma
+  // does not throw when WAL is unavailable, it answers with the mode it kept.
+  // So the answer is read rather than assumed.
+  const answer = connection.executeSync('PRAGMA journal_mode = WAL;').rows?.[0];
+  const journalMode = String(answer?.journal_mode ?? '').toLowerCase();
   connection.executeSync('PRAGMA synchronous = NORMAL;');
   // Fail fast instead of hanging the UI if another connection holds a lock.
   connection.executeSync('PRAGMA busy_timeout = 5000;');
   logOperation('db.pragma');
+  return journalMode;
 }
 
 /**
@@ -508,16 +540,247 @@ export async function withTransaction<T>(
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// The read connection
+// ---------------------------------------------------------------------------
+
+/**
+ * ── WHY A SECOND CONNECTION ────────────────────────────────────────────────
+ * drizzle's op-sqlite session calls `execute()` SYNCHRONOUSLY — the adapter
+ * above maps it to `executeSync` — so every read through `getDb()` ran on the
+ * JS thread: `readDashboard()`'s fifteen statements, every GLOB search, every
+ * page of every list, each one a stretch the user's touches and typing waited
+ * behind. Reads now go through `readAll()`, on this connection, with
+ * op-sqlite's async `execute`, which runs on the connection's own worker
+ * thread (`cpp/OPThreadPool.cpp`: exactly one per connection).
+ *
+ * NOT async reads on the write connection. A SQLite transaction belongs to a
+ * connection, and `withTransaction()` holds one open across `await`s: between
+ * two of its statements the JS thread yields, and an async read on the SAME
+ * connection would run inside that transaction and see a half-applied write —
+ * the payment row, but not the due date it moved. A second connection under
+ * WAL reads only what was committed, and does it in parallel.
+ *
+ * ── WHAT STAYS ON THE WRITE CONNECTION ─────────────────────────────────────
+ * Every write, `withTransaction()`, and every read INSIDE a transaction — a
+ * transaction must see its own uncommitted rows, so the feature bindings hand
+ * the transaction's own handle down (`storeFor(tx, true)`). The migrations and
+ * the dev self-check run there too, before this connection exists.
+ *
+ * ── READ-ONLY, ENCRYPTED, AND NEVER STALE ──────────────────────────────────
+ *  - `readOnly`: `SQLITE_OPEN_READONLY` without `SQLITE_OPEN_CREATE`
+ *    (`cpp/OPBridge.cpp`), so it can neither write the file nor create an
+ *    empty one where an erase has just removed it.
+ *  - The same key, read from the Keychain again rather than held, with the
+ *    same unlock probe. SQLCipher derives the key on the first page read —
+ *    here through the async `execute`, so the derivation runs off the JS
+ *    thread — and `PRAGMA cipher_version` proves the handle is SQLCipher's.
+ *    `assertSQLCipher()` guards the build for both connections.
+ *  - Nothing pins a snapshot. `execute` prepares, steps to the end and
+ *    finalizes every statement (`opsqlite_execute`), and a read may not be a
+ *    `BEGIN` (`readStatementProblem()`), so every read is its own read
+ *    transaction and sees every commit that finished before it started —
+ *    including the one `withTransaction()` has just returned from: op-sqlite
+ *    issues that `COMMIT` with `executeSync` (`src/functions.ts`).
+ *
+ * ── WHEN IT CANNOT BE OPENED ───────────────────────────────────────────────
+ * Reads fall back to the write connection, SYNCHRONOUSLY — exactly what every
+ * read did before this connection existed — and `db.read.degraded` is logged.
+ * Never to the write connection's async `execute`, for the reason above. The
+ * boot does not fail: a faster list is not worth putting anyone in front of
+ * "Erase local data".
+ *
+ * ── CLOSING ────────────────────────────────────────────────────────────────
+ * First, and synchronously, in `closeDatabase()` — which is also how the erase
+ * and the restore swap close. op-sqlite's `close` interrupts the query in
+ * flight, drains the worker, then frees the handle (`cpp/OPDatabase.cpp`); an
+ * interrupted read REJECTS, it does not crash. A read that arrives after the
+ * close finds no handle and rejects before touching anything.
+ */
+const readGate = createReadGate<DB>();
+
+/** The read connection could not be opened; reads run on the write connection, synchronously. */
+let readsOnWriteConnection = false;
+
+/** What a read may bind. Structurally the features' own `SqlValue`. */
+export type ReadValue = string | number | null;
+
+/**
+ * Open the read connection. `initDatabase()` calls this last: after the write
+ * connection has the key and the migrations have run.
+ *
+ * Does not throw for a connection that will not open — see "WHEN IT CANNOT BE
+ * OPENED". Throws only for what would already have stopped the write
+ * connection.
+ *
+ * @throws {DatabaseInitError} the write connection is not open, or the native
+ *         build is not SQLCipher.
+ */
+export async function openReadConnection(): Promise<void> {
+  if (rawConnection === null) {
+    throw new DatabaseInitError('The read connection opens after the database; call initDatabase()');
+  }
+  const ticket = readGate.beginOpen();
+  if (ticket === null) return; // Already open, or already opening.
+
+  let op: OpSqliteModule;
+  try {
+    op = await loadOpSqlite();
+    assertSQLCipher(op);
+  } catch (error) {
+    readGate.abandon(ticket);
+    throw error;
+  }
+
+  if (writeJournalMode !== 'wal') {
+    // Two connections outside WAL is a reader that can hold the writer off
+    // for the whole `busy_timeout`. One connection, as before, instead.
+    degradeReads(ticket, new Error('journal_mode'));
+    return;
+  }
+
+  let connection: DB | null = null;
+  try {
+    const directory = resolveDatabaseDirectory(op);
+    // The write connection has this file open (on a first launch it created
+    // it), so the key is only READ here: `true` makes a missing key throw
+    // rather than mint a replacement. Not held beyond this block.
+    const encryptionKey = await resolveDatabaseKey(true);
+    connection = op.open({
+      name: DATABASE_NAME,
+      location: directory.path,
+      encryptionKey,
+      readOnly: true,
+    });
+    await verifyReadConnection(connection);
+  } catch (error) {
+    if (connection !== null) closeQuietly(connection);
+    degradeReads(ticket, error);
+    return;
+  }
+
+  if (!readGate.adopt(ticket, connection)) {
+    // Closed while it opened: an erase or a restore is moving the file. This
+    // handle is on the file being replaced, so it must not become the reader.
+    closeQuietly(connection);
+    return;
+  }
+  logOperation('db.read.open');
+}
+
+/**
+ * Prove the read connection is what it must be before anything reads through
+ * it. Every step is `execute`, not `executeSync`: the first one is where
+ * SQLCipher derives the key, and that belongs off the JS thread.
+ *
+ * @throws if the key does not unlock the file, the handle is not SQLCipher's,
+ *         or the file is not in WAL mode.
+ */
+async function verifyReadConnection(connection: DB): Promise<void> {
+  await connection.execute('SELECT count(*) FROM sqlite_master');
+
+  // A handle that is not SQLCipher's could only read a plaintext file: the
+  // silent downgrade `assertSQLCipher()` exists to refuse, on this connection
+  // as on the other.
+  const cipher = (await connection.execute('PRAGMA cipher_version')).rows?.[0];
+  if (String(cipher?.cipher_version ?? '').length === 0) {
+    throw new DatabaseInitError('The read connection is not SQLCipher');
+  }
+
+  const mode = (await connection.execute('PRAGMA journal_mode')).rows?.[0];
+  if (String(mode?.journal_mode ?? '').toLowerCase() !== 'wal') {
+    throw new DatabaseInitError('The read connection is not in WAL mode');
+  }
+
+  // WAL readers almost never wait. When they do — the writer recovering the
+  // WAL after a crash — the same patience as the write connection.
+  await connection.execute('PRAGMA busy_timeout = 5000;');
+}
+
+/** Fall back to synchronous reads on the write connection, if still open. */
+function degradeReads(ticket: symbol, error: unknown): void {
+  // A close since the open began means the database is shutting down: there
+  // is nothing to fall back to, and nothing to report.
+  if (!readGate.abandon(ticket) || rawConnection === null) return;
+  readsOnWriteConnection = true;
+  logFailure('db.read.degraded', error);
+}
+
+/**
+ * Close the read connection. Synchronous: `closeDatabase()` relies on it being
+ * gone before the write connection starts to close (see "CLOSING").
+ * op-sqlite's `closeAsync` is this same call behind an `async`
+ * (`src/functions.ts`), so there is no asynchronous version to prefer.
+ */
+function closeReadConnection(): void {
+  readsOnWriteConnection = false;
+  const reader = readGate.detach();
+  if (reader === null) return;
+  try {
+    reader.close();
+    logOperation('db.read.close');
+  } catch (error) {
+    logFailure('db.read.close', error);
+  }
+}
+
+/**
+ * Run one SELECT off the JS thread and return its rows, keyed by column name —
+ * the same row objects `getDb().all()` returned.
+ *
+ * The seam every read outside a transaction goes through. Inside a
+ * transaction, read through the transaction's own handle instead: this
+ * connection cannot see rows that have not been committed yet.
+ *
+ * Rejects — never throws synchronously, never touches a closed handle — when
+ * the database is closed or closing, or while a restore has it shut.
+ *
+ * @throws {Error} if `sql` is not a single SELECT with one parameter per
+ *         placeholder (`readStatementProblem()`).
+ * @throws {DatabaseInitError} the database is not open.
+ */
+export async function readAll<Row = Record<string, unknown>>(
+  sql: string,
+  params: readonly ReadValue[] = [],
+): Promise<Row[]> {
+  const problem = readStatementProblem(sql, params.length);
+  if (problem !== null) throw new Error(problem);
+
+  // Taken and used in the same tick: nothing can close it in between.
+  const reader = readGate.current();
+  if (reader !== null) {
+    const result = await reader.execute(sql, params as Scalar[]);
+    return (result.rows ?? []) as Row[];
+  }
+
+  if (readsOnWriteConnection && rawConnection !== null) {
+    const result = rawConnection.executeSync(sql, params as Scalar[]);
+    return (result.rows ?? []) as Row[];
+  }
+
+  throw new DatabaseInitError('The database is closed');
+}
+
 /** Whether the connection is currently open. */
 export function isDatabaseOpen(): boolean {
   return rawConnection !== null && drizzleDb !== null;
 }
 
-/** Close the connection. Idempotent; safe to call when already closed. */
+/**
+ * Close both connections. Idempotent; safe to call when already closed.
+ *
+ * The READ connection first, and synchronously. It has to be gone before the
+ * write connection closes, so that the write connection is the last one on the
+ * file — the one that checkpoints the WAL and removes `-wal`/`-shm` — and gone
+ * before an erase deletes the file or a restore moves another into its place.
+ */
 export async function closeDatabase(): Promise<void> {
+  closeReadConnection();
+
   const connection = rawConnection;
   rawConnection = null;
   drizzleDb = null;
+  writeJournalMode = null;
 
   if (!connection) return;
 
@@ -781,7 +1044,11 @@ const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * @throws {BackupUnreadableError} wrong passphrase, or not a database. The two
  *         are indistinguishable; see the error's own comment.
  */
-function openBundle(op: OpSqliteModule, sourcePath: string, passphrase: string): DB {
+async function openBundle(
+  op: OpSqliteModule,
+  sourcePath: string,
+  passphrase: string,
+): Promise<DB> {
   const separator = sourcePath.lastIndexOf('/');
   if (separator <= 0) {
     throw new BackupUnreadableError();
@@ -799,9 +1066,13 @@ function openBundle(op: OpSqliteModule, sourcePath: string, passphrase: string):
 
   // SQLCipher does not check the key at open time — `sqlite3_key()` only
   // stores it. The first statement that must read a page is what fails. Same
-  // probe, and same reason, as `assertKeyUnlocksDatabase()`.
+  // probe, and same reason, as `assertKeyUnlocksDatabase()` — but `execute`,
+  // not `executeSync`: this read is where the passphrase goes through
+  // PBKDF2-HMAC-SHA512 at 256,000 iterations, and on the JS thread that froze
+  // the restore screen for the whole derivation. A bundle is its own
+  // connection with no transaction on it, so nothing can interleave.
   try {
-    bundle.executeSync('SELECT count(*) FROM sqlite_master');
+    await bundle.execute('SELECT count(*) FROM sqlite_master');
   } catch {
     closeQuietly(bundle);
     logFailure('db.import.failed', new Error('unlock'));
@@ -813,8 +1084,8 @@ function openBundle(op: OpSqliteModule, sourcePath: string, passphrase: string):
 }
 
 /** Every base table in an opened database, `sqlite_%` internals excluded. */
-function bundleTableNames(bundle: DB): string[] {
-  const result = bundle.executeSync(
+async function bundleTableNames(bundle: DB): Promise<string[]> {
+  const result = await bundle.execute(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
   );
   return ((result.rows ?? []) as { name?: unknown }[])
@@ -823,9 +1094,9 @@ function bundleTableNames(bundle: DB): string[] {
 }
 
 /** `SELECT count(*)`, returning 0 for anything unreadable rather than throwing. */
-function countRows(bundle: DB, sql: string): number {
+async function countRows(bundle: DB, sql: string): Promise<number> {
   try {
-    const result = bundle.executeSync(sql);
+    const result = await bundle.execute(sql);
     const row = (result.rows ?? [])[0] as { n?: unknown } | undefined;
     const value = Number(row?.n);
     return Number.isFinite(value) ? value : 0;
@@ -853,15 +1124,15 @@ export async function inspectEncryptedCopy(
   const op = await loadOpSqlite();
   assertSQLCipher(op);
 
-  const bundle = openBundle(op, sourcePath, passphrase);
+  const bundle = await openBundle(op, sourcePath, passphrase);
 
   try {
-    const present = new Set(bundleTableNames(bundle));
+    const present = new Set(await bundleTableNames(bundle));
     const known = currentTableNames();
 
     const migrations: { hash: string; createdAt: number }[] = [];
     if (present.has(MIGRATIONS_TABLE)) {
-      const result = bundle.executeSync(
+      const result = await bundle.execute(
         `SELECT hash, created_at FROM \`${MIGRATIONS_TABLE}\` ORDER BY created_at`,
       );
       for (const row of (result.rows ?? []) as { hash?: unknown; created_at?: unknown }[]) {
@@ -875,11 +1146,14 @@ export async function inspectEncryptedCopy(
     const liveRows: Record<string, number> = {};
     for (const name of known) {
       if (!present.has(name)) continue; // Predates the feature. Legitimately none.
-      liveRows[name] = countRows(bundle, `SELECT count(*) AS n FROM "${name}" WHERE deleted_at IS NULL`);
+      liveRows[name] = await countRows(
+        bundle,
+        `SELECT count(*) AS n FROM "${name}" WHERE deleted_at IS NULL`,
+      );
     }
 
     const receiptsWithImage = present.has('receipts')
-      ? countRows(
+      ? await countRows(
           bundle,
           'SELECT count(*) AS n FROM "receipts" WHERE deleted_at IS NULL AND local_image_uri IS NOT NULL',
         )
@@ -888,7 +1162,10 @@ export async function inspectEncryptedCopy(
     const retiredTables: BundleTableRows[] = [];
     for (const name of present) {
       if (known.has(name) || name === MIGRATIONS_TABLE) continue;
-      const rows = countRows(bundle, `SELECT count(*) AS n FROM "${name}" WHERE deleted_at IS NULL`);
+      const rows = await countRows(
+        bundle,
+        `SELECT count(*) AS n FROM "${name}" WHERE deleted_at IS NULL`,
+      );
       if (rows > 0) retiredTables.push({ name, rows });
     }
 
@@ -929,7 +1206,7 @@ export async function stageEncryptedCopy(
   // for the same reason `openDatabase()` does not hold it.
   const encryptionKey = await resolveDatabaseKey(databaseFileExists(directory.uri));
 
-  const bundle = openBundle(op, sourcePath, passphrase);
+  const bundle = await openBundle(op, sourcePath, passphrase);
   let attached = false;
 
   try {

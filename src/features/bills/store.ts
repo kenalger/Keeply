@@ -9,8 +9,9 @@
  * (`tests/helpers/migrated-database.ts`). `@/db` cannot be imported from a
  * module a test loads: its barrel reaches `src/db/client.ts`, which imports
  * `react-native`, `expo-file-system` and op-sqlite. So the SQL is written
- * against this interface, `index.ts` implements it over `getDb()` /
- * `withTransaction()`, and the tests implement it over `node:sqlite`.
+ * against this interface, `index.ts` implements it over `readAll()` (reads,
+ * off the JS thread), `getDb()` (writes) and `withTransaction()`, and the
+ * tests implement it over `node:sqlite`.
  *
  * A separate `BillStore` rather than a reused `SubscriptionStore`: the two are
  * structurally identical today, and `src/features/settings/store.ts` already

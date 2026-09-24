@@ -39,6 +39,12 @@ export type DbOperation =
   | 'db.open'
   | 'db.unlock'
   | 'db.close'
+  // The second, read-only connection every read outside a transaction uses.
+  // `degraded`: it could not be opened, and reads fell back to the write
+  // connection, synchronously — slower, never wrong.
+  | 'db.read.open'
+  | 'db.read.close'
+  | 'db.read.degraded'
   | 'db.erase'
   | 'db.pragma'
   | 'db.migrate.start'

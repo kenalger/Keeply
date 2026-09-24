@@ -37,7 +37,7 @@
  * the transaction's own handle instead — same factory, same statements, same
  * §29 validation, one BEGIN. `receiptsApiFor()` below is how.
  */
-import { getDb, newId, nowMs, withTransaction, type KeeplyDatabase } from '@/db';
+import { getDb, newId, nowMs, readAll, withTransaction, type KeeplyDatabase } from '@/db';
 import { bindStatement } from '@/features/subscriptions';
 import { todayCalendarString } from '@/theme/format';
 
@@ -73,7 +73,11 @@ function storeFor(db: KeeplyDatabase, inTransaction: boolean): ReceiptStore {
 
 /** The live store, resolved lazily so importing this module never opens the db. */
 const liveStore: ReceiptStore = {
-  all: (statement) => storeFor(getDb(), false).all(statement),
+  // Off the JS thread, on the read-only connection (`readAll` in `@/db`).
+  // Writes, and every read INSIDE a transaction — `storeFor(tx, true)` above —
+  // stay on the write connection, because a transaction must read its own
+  // uncommitted rows and the read connection only ever sees committed ones.
+  all: (statement) => readAll(statement.text, statement.params),
   execute: (statement) => storeFor(getDb(), false).execute(statement),
   atomically: (body) => storeFor(getDb(), false).atomically(body),
 };

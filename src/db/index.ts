@@ -7,7 +7,13 @@
  * Boot sequence:
  *
  *   await initDatabase();   // key -> open -> unlock probe -> pragmas -> migrations
+ *                           //   -> the read-only connection `readAll()` uses
  *   const db = getDb();     // drizzle instance, throws until init completes
+ *   await readAll(sql, params);  // one SELECT, off the JS thread
+ *
+ * Writes and transactions use `getDb()` / `withTransaction()`; reads outside a
+ * transaction use `readAll()`, on a second connection. `client.ts`, "THE READ
+ * CONNECTION", says why they are not the same connection.
  *
  * `initDatabase()` is single-flight and idempotent: concurrent callers share one
  * in-flight promise, and a completed init returns immediately. A FAILED init is
@@ -34,6 +40,7 @@ import {
   getDb as getDrizzle,
   isDatabaseOpen,
   openDatabase,
+  openReadConnection,
   rollBackStagedCopy,
   stageEncryptedCopy,
   swapInStagedCopy,
@@ -60,9 +67,10 @@ export {
   eraseLocalDatabase,
   exportEncryptedCopy,
   inspectEncryptedCopy,
+  readAll,
   withTransaction,
 } from './client';
-export type { BundleTableRows, EncryptedCopyReport } from './client';
+export type { BundleTableRows, EncryptedCopyReport, ReadValue } from './client';
 export { nowMs } from './time';
 
 /**
@@ -133,10 +141,16 @@ export async function initDatabase(options: InitDatabaseOptions = {}): Promise<v
     await runMigrations();
     // Development only: prove a real Drizzle round-trip works before any
     // feature code depends on one. See ./selfcheck.ts for why this exists.
+    // On the WRITE connection, like the migrations above.
     if (IS_DEV) {
       const { runDevSelfCheck } = await import('./selfcheck');
       await runDevSelfCheck();
     }
+    // Last: the key is in hand and the schema is current, so the read
+    // connection opens onto the finished file. It does not fail the boot for a
+    // connection that will not open — reads fall back to this one — so the only
+    // throw that reaches here is one the write connection would have raised.
+    await openReadConnection();
     initialized = true;
     logOperation('db.init');
   })();
@@ -250,6 +264,15 @@ export async function restoreFromEncryptedCopy(
     await initDatabase();
   } catch (error) {
     logFailure('db.import.failed', error);
+    // Shut BEFORE the rollback moves files. A failed migration (step 4) or dev
+    // self-check leaves the write connection OPEN on the restored file — only
+    // a failed unlock closes its own handle — and rolling back underneath it
+    // unlinked an open file and its WAL, after which the reopen below returned
+    // early with that stale handle (`openDatabase()` is a no-op while one is
+    // open) and migrated a file that no longer existed. The read connection
+    // opens last in `initDatabase()`, so a failed init never has one; the same
+    // close would cover it if it did.
+    await closeConnection();
     await rollBackStagedCopy();
     const recovered = await reopenAfterFailedRestore();
     throw new RestoreFailedError(
