@@ -144,23 +144,28 @@ export type BundleCompatibility =
 /**
  * Compare what a bundle carries against what this app is.
  *
- * The comparison is on the newest `createdAt` in each, not on row counts: a
- * bundle from a build that squashed migrations has fewer rows and the same
- * schema, and a count would call that a downgrade.
+ * ── BY TAG, NOT BY TIMESTAMP ───────────────────────────────────────────────
+ * The comparison is on the SET of migration tags each side knows. It used to
+ * be on the newest `createdAt` — the journal's `when` — which is the same
+ * assumption that broke the migration runner: regenerating a migration file
+ * gives the same tag a new timestamp, and that was proven on a device, not
+ * reasoned about (`src/db/migration-order.ts`). A bundle whose timestamps had
+ * moved without its schema changing was refused as "newer", in the one code
+ * path a user reaches while rescuing a phone. Tags are what the runner trusts
+ * now, and what this trusts.
  *
- * ⚠ THE SAME ASSUMPTION THAT BROKE THE MIGRATION RUNNER LIVES HERE.
- * `createdAt` is the journal's `when`, and regenerating a migration file gives
- * the same tag a NEW one — see `src/db/migration-order.ts`, where that was
- * proven on a device rather than reasoned about. Two builds at the same commit
- * still agree, so this is correct for every ordinary restore; what it cannot
- * survive is a bundle whose journal timestamps moved without its schema
- * changing, which it would call `bundle-newer` and REFUSE.
+ *   equal sets                      → `same`          restore is a copy
+ *   bundle's tags ⊂ this build's    → `bundle-older`  restore, then migrate
+ *   anything the build cannot name  → `bundle-newer`  refuse
  *
- * Left as it is deliberately. The tag-set comparison that fixed the runner is
- * exact here too, but it calls a squash `bundle-newer` — and trading a proven-
- * narrow failure for a different one, in the code path a user reaches while
- * rescuing a phone, is not a change to make in passing. `HANDOFF.md` carries
- * it as a known risk.
+ * ── THE TRADE, STATED ──────────────────────────────────────────────────────
+ * A build that SQUASHED its migrations carries tags the other side has never
+ * heard of, so a squashed bundle into an unsquashed app — or the reverse — is
+ * refused as newer. That is wrong-but-safe, and this project has never
+ * squashed, whereas the timestamp failure has actually happened. If a squash
+ * is ever shipped it must carry an alias table (old tags → the squashed one)
+ * and this function must consult it; the test named "a squashed history" is
+ * the reminder.
  *
  * `bundle-newer` is the one that must refuse. A newer bundle may contain a
  * table or a column this build has never heard of, and restoring it produces a
@@ -173,15 +178,13 @@ export function compareBundle(
 ): BundleCompatibility {
   if (bundleMigrations.length === 0) return 'not-keeply';
 
-  const bundleLatest = latest(bundleMigrations);
-  const appLatest = latest(appMigrations);
+  const bundleTags = new Set(bundleMigrations.map((row) => row.hash));
+  const appTags = new Set(appMigrations.map((row) => row.hash));
 
-  if (bundleLatest === appLatest) return 'same';
-  return bundleLatest > appLatest ? 'bundle-newer' : 'bundle-older';
-}
-
-function latest(rows: readonly MigrationRow[]): number {
-  return rows.reduce((highest, row) => (row.createdAt > highest ? row.createdAt : highest), 0);
+  for (const tag of bundleTags) {
+    if (!appTags.has(tag)) return 'bundle-newer';
+  }
+  return bundleTags.size === appTags.size ? 'same' : 'bundle-older';
 }
 
 /** What to tell the user about a bundle this app cannot use. */

@@ -9,17 +9,31 @@
  * only reaches the MOST RECENT one. Anything older than that was simply wrong
  * forever.
  *
- * ── WHAT IS EDITABLE, AND WHAT DELIBERATELY IS NOT ─────────────────────────
+ * ── WHAT IS EDITABLE, AND HOW ──────────────────────────────────────────────
  * The three things a person actually gets wrong: what they paid, when they paid
- * it, and how.
+ * it, and how. Those are the fields.
  *
- * `dueDate` is NOT here. Moving a payment to a different period re-anchors the
- * recurrence — the oldest live payment IS the anchor every later due date is
- * computed from — so it is a different operation with a different blast radius,
- * and it belongs behind its own deliberate flow rather than in a correction
- * sheet. `status` is not here either: unpaying is `undoBillPayment`, which also
- * rewinds the due date, and a status toggle that did not would leave the bill
- * rolled forward with a hole in its history.
+ * WHICH PERIOD the payment settles (`dueDate`) is editable too, but behind a
+ * second, deliberate step rather than as a fourth field. Moving a payment can
+ * re-anchor the recurrence: the oldest live payment IS the anchor every later
+ * due date is computed from, so re-dating THAT row changes when the whole
+ * series falls due from then on. The step says so when it applies
+ * (`anchorDate`) and says the narrower truth when it does not. The data layer
+ * refuses a move onto a period the ledger already covers (`already-paid`) —
+ * the double count `payBill()` guards against, arriving through the other
+ * door — and the refusal is shown here, in the sheet, not behind it.
+ *
+ * `status` is not here: unpaying is `undoBillPayment`, which also rewinds the
+ * due date, and a status toggle that did not would leave the bill rolled
+ * forward with a hole in its history.
+ *
+ * ── REMOVING A PAYMENT ─────────────────────────────────────────────────────
+ * `deleteBillPayment()` had no caller either: a period recorded against the
+ * wrong bill could be zeroed but never removed. The button here is the caller.
+ * The data layer refuses the one removal that would silently re-date the
+ * series (`anchor-row`, the oldest live row with others behind it), and
+ * `messages.ts` has the sentence for it: move the row instead, which is the
+ * operation that means "the series started somewhere else" and says so.
  *
  * ── CLEARING THE AMOUNT IS A REAL ANSWER ───────────────────────────────────
  * `null` means "I paid it but I do not know what it cost" — a variable bill
@@ -29,7 +43,7 @@
 import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { AmountField, Button, DateField, Sheet, TextField } from '@/components/ui';
+import { AmountField, Button, DateField, Sheet, Text, TextField } from '@/components/ui';
 import type { MinorUnits } from '@/db';
 import { useThemedStyles, type Theme } from '@/theme';
 
@@ -39,8 +53,17 @@ export interface PaymentEditSheetProps {
   visible: boolean;
   /** `null` while closed, so the fields do not have to be reset by the caller. */
   payment: BillPaymentRecord | null;
+  /**
+   * The bill's recurrence anchor — the oldest live payment's period. The move
+   * step warns differently when the payment being moved IS the anchor.
+   */
+  anchorDate: string | null;
   saving?: boolean;
+  /** The last write's failure, shown inside the sheet while it is open. */
+  error?: string | null;
   onSave: (paymentId: string, patch: BillPaymentPatch) => void;
+  /** Asks the screen to confirm and remove this payment. */
+  onDelete: (paymentId: string) => void;
   onClose: () => void;
   testID?: string;
 }
@@ -48,8 +71,11 @@ export interface PaymentEditSheetProps {
 export function PaymentEditSheet({
   visible,
   payment,
+  anchorDate,
   saving = false,
+  error = null,
   onSave,
+  onDelete,
   onClose,
   testID,
 }: PaymentEditSheetProps) {
@@ -76,8 +102,11 @@ export function PaymentEditSheet({
         <PaymentEditForm
           key={payment.id}
           payment={payment}
+          anchorDate={anchorDate}
           saving={saving}
+          error={error}
           onSave={onSave}
+          onDelete={onDelete}
           onClose={onClose}
         />
       )}
@@ -87,13 +116,19 @@ export function PaymentEditSheet({
 
 function PaymentEditForm({
   payment,
+  anchorDate,
   saving,
+  error,
   onSave,
+  onDelete,
   onClose,
 }: {
   payment: BillPaymentRecord;
+  anchorDate: string | null;
   saving: boolean;
+  error: string | null;
   onSave: (paymentId: string, patch: BillPaymentPatch) => void;
+  onDelete: (paymentId: string) => void;
   onClose: () => void;
 }) {
   const styles = useThemedStyles(makeStyles);
@@ -102,6 +137,13 @@ function PaymentEditForm({
   const [paidDate, setPaidDate] = useState<string | null>(payment.paidDate);
   const [method, setMethod] = useState(payment.paymentMethod ?? '');
 
+  // The second step. Nothing about the period is sent unless the step was
+  // opened AND the date actually changed — reopening it and saving is a no-op.
+  const [moving, setMoving] = useState(false);
+  const [dueDate, setDueDate] = useState<string | null>(payment.dueDate);
+  const isAnchor = anchorDate !== null && payment.dueDate === anchorDate;
+  const moved = moving && dueDate !== null && dueDate !== payment.dueDate;
+
   const save = useCallback(() => {
     if (saving) return;
     onSave(payment.id, {
@@ -109,8 +151,9 @@ function PaymentEditForm({
       paidDate,
       // An empty box means "no method recorded", not an empty string.
       paymentMethod: method.trim() === '' ? null : method.trim(),
+      ...(moved && dueDate !== null ? { dueDate } : {}),
     });
-  }, [payment.id, saving, onSave, amount, paidDate, method]);
+  }, [payment.id, saving, onSave, amount, paidDate, method, moved, dueDate]);
 
   return (
     <>
@@ -138,8 +181,48 @@ function PaymentEditForm({
           placeholder="GCash, bank transfer, cash"
           testID="payment-edit-method"
         />
+
+        {moving ? (
+          <DateField
+            label="Period due on"
+            value={dueDate}
+            onChangeValue={setDueDate}
+            presets={[]}
+            helper={
+              isAnchor
+                ? 'This is the oldest payment on record — the date every later period is counted from. Moving it changes when the whole series falls due from now on.'
+                : 'Only this payment moves. The bill’s own dates do not change.'
+            }
+            testID="payment-edit-due-date"
+          />
+        ) : (
+          <Button
+            title="Move to a different period"
+            variant="ghost"
+            onPress={() => setMoving(true)}
+            accessibilityHint="Shows a date, to record this payment against a different period"
+            testID="payment-edit-move"
+          />
+        )}
+
+        {error === null ? null : (
+          <Text variant="caption" color="danger" testID="payment-edit-error">
+            {error}
+          </Text>
+        )}
       </View>
       <View style={styles.footer}>
+        <Button
+          title="Remove"
+          variant="dangerGhost"
+          icon="trash"
+          disabled={saving}
+          onPress={() => onDelete(payment.id)}
+          accessibilityLabel="Remove this payment"
+          accessibilityHint="Asks you to confirm before removing it from the history"
+          testID="payment-edit-delete"
+        />
+        <View style={styles.spacer} />
         <Button title="Cancel" variant="secondary" onPress={onClose} />
         <Button title="Save" onPress={save} loading={saving} testID="payment-edit-save" />
       </View>
@@ -150,5 +233,8 @@ function PaymentEditForm({
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     body: { gap: theme.space.md },
-    footer: { flexDirection: 'row', gap: theme.space.sm, justifyContent: 'flex-end' },
+    footer: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+    // Remove sits on the left, away from Save — the same separation
+    // `FormActions` keeps between the affirmative and the destructive action.
+    spacer: { flex: 1 },
   });

@@ -1,16 +1,18 @@
 # Keeply — Handoff
 
 **State at the head of `keeply/scale-and-expiry-prompt`, working tree clean.** `tsc --noEmit` 0 ·
-`eslint .` 0 errors, 10 warnings · `npm test` **1604/1604**. Runs on the iOS Simulator; the icon,
+`eslint .` 0 errors, 10 warnings · `npm test` **1613/1613**. Runs on the iOS Simulator; the icon,
 splash, loading screen, save overlay, theme, the rewired screens, lazy tabs and the read connection
 were all exercised there rather than only in the suite. The paging rewrite is proven in the suite
 (real SQLite, every list × every sort × every filter) and rendered on the simulator, not scrolled.
 
-> ⚠ **The branch is seventeen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
+> ⚠ **The branch is nineteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
 > `origin/main` are both still at `d2a8701`. It fast-forwards. Push it, or fast-forward `main`
-> onto it, whichever you prefer. The twelve newest commits are this session's, themed:
+> onto it, whichever you prefer. The fourteen newest commits are this session's, themed:
 >
 > ```
+> Decisions closed: payments move and can be removed, backups compare by tag, the latent trio
+> Bills by amount gets its paging index (drizzle/0007)
 > First run: the wizard is decided before the tree mounts, so Home never paints first
 > Audit findings: T16, T20, and a delete for a document that cannot be read
 > Audit findings: T15, T18, lists that keep their rows, 44pt segments
@@ -144,7 +146,7 @@ A private, offline-first iOS app you can actually use:
 
 ## Start here
 
-**1. Land the branch.** Seventeen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
+**1. Land the branch.** Nineteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
 `main` still at `d2a8701`. It fast-forwards. Do this before anything else — the rest of this list
 assumes the work is on `main`.
 
@@ -185,13 +187,9 @@ of extra page cache; and whether touch and typing actually stay smooth through t
 and a GLOB search — the whole point. If the second handle will not open, reads fall back to the
 write connection exactly as before and `db.read.degraded` is logged, so look for that line.
 
-**5. Two decisions left open on purpose.** Both are written up where they live, not just here:
-  - **Moving a payment to a different PERIOD has no UI.** The correction sheet deliberately omits
-    `dueDate`, because the oldest live payment IS the recurrence anchor every later due date is
-    computed from. It needs its own flow, not a field. `plan/phase3-bills-ui.md`.
-  - **`compareBundle` compares schema versions by timestamp**, and this session proved that
-    assumption breakable. It is not wrong for any ordinary restore; the reasoning and the trade are
-    at the function and under Known gaps.
+**5. The two decisions that were open are closed** (part seven under Recently closed): a payment
+can be moved to another period behind its own step in the correction sheet, and `compareBundle`
+compares migration TAGS. Each carries its trade in its header comment and its plan file.
 
 ---
 
@@ -387,6 +385,30 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 ---
 
 ## Recently closed (do not re-fix)
+
+### This session, part seven · the three decisions, and the latent trio
+
+- **`drizzle/0007_calm_mockingbird`: `bills_page_amount_idx`** on
+  `((amount_minor is null) asc, amount_minor desc, name collate nocase asc, id asc) WHERE deleted_at is null`.
+  Bills by amount sorted on every page for two migrations; both plan tests now hold it to an index
+  seek (`query-plans` 19 cases, `query-plans-keyset` 22, and the drop-all-indexes halves regress
+  it with the rest). Generated with `npm run db:generate`; the runner skips by tag, so an
+  installed database applies exactly this one on its next boot.
+- **A payment can be moved to another period, and removed.** The correction sheet gains a
+  second, deliberate step — "Move to a different period" reveals the date with the anchor warning
+  when the row being moved is the oldest live payment, and the narrower truth when it is not — and
+  a "Remove" action that is `deleteBillPayment()`'s first caller. The data layer already refused a
+  move onto a covered period (`already-paid`) and the removal that would re-date the series
+  (`anchor-row`); both sentences now show INSIDE the sheet (`error` prop), not behind it.
+  `plan/phase3-bills-ui.md` records the flow.
+- **`compareBundle` compares migration TAGS**, the same fix the runner got: a regenerated
+  timestamp no longer makes a same-schema bundle read as newer. The trade (a squash is refused) is
+  stated at the function and under Known gaps, and pinned by two tests.
+- **The latent trio.** `AmountField` re-formats its draft when `currency` changes (a 100× misread
+  waiting for a second currency); an `invalid-currency` error now reaches the form message in all
+  three forms instead of being keyed to a field no form renders; and `AfterBoot` bumps every
+  domain at local midnight and on the first foreground after it (`@/lib/midnight`, pure part
+  `@/lib/local-day` with DST-aware tests), so "due tomorrow" becomes "due today" without a write.
 
 ### This session, part six · a first run that never paints Home
 
@@ -735,26 +757,16 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 
 ## Known gaps, deliberately open
 
-- **Restore compares schema versions by TIMESTAMP, and that assumption has now been proven
-  breakable.** `compareBundle` takes the newest `created_at` from the bundle and from
-  `shippedSchemaVersions()`. Both are the journal's `when` — and regenerating a migration file
-  gives the same tag a new one, which is exactly the bug that stopped `0006` applying on a device
-  (`src/db/migration-order.ts`). Two builds at the same commit still agree, so every ordinary
-  restore is fine; what it cannot survive is a bundle whose timestamps moved without its schema
-  changing, which it would call `bundle-newer` and REFUSE — in the code path a user reaches while
-  rescuing a phone. The tag-set comparison that fixed the runner is exact here too, but it calls a
-  squashed-migration bundle `bundle-newer`, so it is a trade rather than a fix. Left deliberately;
-  the reasoning is written at `compareBundle`.
+- **`compareBundle` refuses a SQUASHED migration history** (as `bundle-newer`), because it now
+  compares migration tags and a squash carries tags the other side cannot name. Wrong-but-safe, and
+  this project has never squashed. If it ever does, the function needs an alias table (old tags →
+  the squashed one); the test named "a squashed history" is the reminder.
 
 - **What is left of the lower-tier audit findings** in `plan/phase2-3-remediation.md`: T17 (no
   caret management in the amount field; needs a device) and, from the latent list: currency errors
   render nowhere, `AmountField` ignores a currency change, `currentMonth()` has no midnight
   re-render trigger. T15, T16, T18, T19 and T20 are closed (this session), as are the two latent
   items about `<List/>` blanking on a failed refresh and 38pt segments.
-- **`deleteBillPayment()` still has no caller.** Its sibling `saveBillPaymentEdit()` now has one
-  (the correction sheet), but removing a recorded period has no UI. The `anchor-row` refusal — the
-  oldest live payment IS the recurrence anchor — already has its sentence in `messages.ts`, so the
-  hard part is done and the flow is not.
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
   budgets, no rollover.
 - **A maintenance item's odometer is not updated by a cost.** Recording a fill-up at 47,810 km leaves
@@ -786,10 +798,6 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
 - **"Checking your settings…" lasts ~1s in a DEV build**, because `LockGate` awaits two lazy
   `import()`s that Metro serves on demand. In a release bundle they are in-bundle; the real cost
   (three native calls plus one settings read) is unmeasured on a release build.
-- **Bills sorted by amount has no paging index**: first page and every continuation sort. The
-  keyset is exact (NULL-amount bucket tested); making it fast needs
-  `bills_page_amount_idx ((amount_minor is null) asc, amount_minor desc, name collate nocase asc, id asc) WHERE deleted_at is null`
-  — a migration nobody has generated.
 - **Bills and documents continuations pin the first page's "today"** in the cursor, so a list left
   open across midnight keeps one day until the next revision bump or filter change. Deliberate — one
   list never mixes two days — and reversible by dropping `d` from the token.
@@ -844,7 +852,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 1604 tests
+npm test                # node --test, 1613 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 

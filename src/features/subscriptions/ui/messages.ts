@@ -93,6 +93,10 @@ export function fieldMessages(errors: readonly SubscriptionError[]): FieldMessag
  * where nothing global should appear at all.
  */
 export function formMessage(errors: readonly SubscriptionError[]): string | null {
-  const orphan = errors.find((error) => error.field === 'id' || error.field === 'patch');
+  // `currency` is an orphan too: the form has no currency control, so a
+  // message keyed on it in `fieldMessages` had nowhere to render and vanished.
+  const orphan = errors.find(
+    (error) => error.field === 'id' || error.field === 'patch' || error.field === 'currency',
+  );
   return orphan === undefined ? null : messageFor(orphan);
 }

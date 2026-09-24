@@ -164,17 +164,35 @@ describe('compatibility', () => {
     assert.match(compatibilityMessage('not-keeply') ?? '', /not a Keeply backup/);
   });
 
-  test('compares the NEWEST entry, not how many there are', () => {
-    // A build that squashed two migrations into one has fewer rows and the
-    // same schema. Counting rows would call that a downgrade and re-run
-    // migrations over a database that does not need them.
+  test('compares TAGS, so a regenerated timestamp changes nothing', () => {
+    // The failure that actually happened: `drizzle-kit generate` re-stamped an
+    // existing tag with a new `when`. By timestamp this bundle read as newer
+    // than the app and was refused; by tag it is the same schema.
+    const restamped: MigrationRow[] = [
+      { hash: v0.hash, createdAt: v2.createdAt + 1 },
+      { hash: v1.hash, createdAt: v2.createdAt + 2 },
+    ];
+    assert.equal(compareBundle(restamped, [v0, v1]), 'same');
+    assert.equal(compareBundle([v0, v1], restamped), 'same');
+  });
+
+  test('a squashed history cannot be vouched for and is refused — the documented trade', () => {
+    // `0000_squashed` is a tag this build has never heard of. Refusing it is
+    // wrong (the schema is the same) but safe, and this project has never
+    // squashed. If it ever does, `compareBundle` needs an alias table and
+    // this test changes with it — see the function's header.
     const squashed: MigrationRow = { hash: '0000_squashed', createdAt: v1.createdAt };
-    assert.equal(compareBundle([squashed], [v0, v1]), 'same');
+    assert.equal(compareBundle([squashed], [v0, v1]), 'bundle-newer');
   });
 
   test('order within the list does not matter', () => {
     assert.equal(compareBundle([v1, v0], [v0, v1]), 'same');
     assert.equal(compareBundle([v0, v1], [v1, v0]), 'same');
+  });
+
+  test('a bundle with a tag this build lacks is newer even if its timestamps are older', () => {
+    const stale: MigrationRow = { hash: '0099_from_the_future', createdAt: 1 };
+    assert.equal(compareBundle([v0, v1, stale], [v0, v1]), 'bundle-newer');
   });
 
   test('an app with no migrations at all still refuses a newer bundle', () => {

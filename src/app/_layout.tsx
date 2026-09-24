@@ -11,6 +11,7 @@ import { AppErrorBoundary } from '@/lib/error-boundary';
 import { toUserMessage } from '@/lib/errors';
 import { FallbackScreen } from '@/lib/fallback-screen';
 import { log } from '@/lib/log';
+import { watchLocalMidnight } from '@/lib/midnight';
 import { syncAllReminders } from '@/lib/reminders';
 import {
   eraseLocalDataAndReboot,
@@ -20,6 +21,7 @@ import {
 } from '@/stores/boot-store';
 import { watchPermissionOnForeground } from '@/stores/notification-store';
 import { useOnboardingStore } from '@/stores/onboarding-store';
+import { bumpRevision } from '@/stores/revision-store';
 import { hydrateSettings } from '@/stores/settings-store';
 import { useThemePreferenceSync } from '@/stores/ui-store';
 import {
@@ -302,6 +304,18 @@ function AfterBoot() {
     });
     return () => subscription.remove();
   }, []);
+
+  // 7. The day changing is a change to the data's MEANING: "due tomorrow" is
+  //    now due today, "this month" is last month. Nothing is written, so no
+  //    revision moves on its own; every domain is bumped so every mounted
+  //    screen re-reads against the new day. See `@/lib/midnight`.
+  useEffect(
+    () =>
+      watchLocalMidnight(() =>
+        bumpRevision('subscriptions', 'receipts', 'bills', 'documents', 'maintenance', 'allowance'),
+      ),
+    [],
+  );
 
   return null;
 }

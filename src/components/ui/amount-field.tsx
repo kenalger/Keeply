@@ -118,6 +118,18 @@ export function AmountField({
   const [problem, setProblem] = useState<AmountProblem | null>(null);
   const [focused, setFocused] = useState(false);
 
+  // A currency change re-formats the draft for the new minor-unit exponent.
+  // Without it the box kept showing the OLD currency's text while `value`
+  // stayed the same integer — a 100× misread waiting for the first currency
+  // with a different exponent. Reset during render, as `allowance/index.tsx`
+  // does, rather than from an effect.
+  const [seenCurrency, setSeenCurrency] = useState(currency);
+  if (seenCurrency !== currency) {
+    setSeenCurrency(currency);
+    setDraft(value === null ? '' : formatAmountDraft(value, currency));
+    setProblem(null);
+  }
+
   /**
    * The last value this field handed out. An incoming `value` that matches it
    * is our own echo coming back through the parent, and must not clobber the

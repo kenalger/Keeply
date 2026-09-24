@@ -189,7 +189,7 @@ npm run test:watch
   timing on fixture rows is a coin flip on CI and says nothing about a hundred
   thousand. It fails when an ORDER BY gains a term and its `*_page_*_idx` in
   `src/db/schema/` does not — widen the index, do not delete the case. Its
-  second half drops all seventeen indexes and asserts every plan regresses,
+  second half drops all eighteen indexes and asserts every plan regresses,
   which proves the guard can fail and that no index in the set is dead weight.
 - `keyset` / `keyset-pages` / `query-plans-keyset` / `paged-list` — keyset paging:
   cursor encoding with NULL sort keys, ties, NOCASE and Unicode; every list × every
@@ -204,6 +204,9 @@ npm run test:watch
   voids the open's ticket), and the statement rule behind `readAll()`: one SELECT or
   WITH with a matching parameter count; writes, `BEGIN`, pragmas, `ATTACH` and a smuggled
   second statement are refused, and all 67 SELECTs the features build are admitted.
+- `midnight` — `msUntilLocalMidnight()` from `@/lib/local-day`: the local day's end by the
+  calendar, across month, year and DST boundaries, never "now + 24h". (The watcher that uses
+  it, `@/lib/midnight`, needs `AppState` and stays out of the suite.)
 - `money-input` — the amount field's edit model: a keystroke regrouped, a backspace that
   landed on a separator, a selection deleted in one go (T15), and a paste judged as written.
   Loadable in Node only because the module imports `@/db/money` and `@/theme/format`, not the

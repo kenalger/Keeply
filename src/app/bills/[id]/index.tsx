@@ -44,6 +44,7 @@ import {
   billStatusKey,
   categoryLabel,
   deleteBill,
+  deleteBillPayment,
   describeRecurrence,
   dueCountdown,
   estimateNote,
@@ -507,6 +508,45 @@ export default function BillDetailScreen() {
     [],
   );
 
+  /**
+   * Remove one recorded period. The data layer refuses the one removal that
+   * would silently re-date the series (`anchor-row`); that sentence, like any
+   * other failure, lands inside the sheet via `failure`.
+   */
+  const confirmDeletePayment = useCallback(
+    (paymentId: string) => {
+      if (busy !== null) return;
+      Alert.alert(
+        "Remove this payment?",
+        "Its period is left with no payment recorded. The bill's own dates do not change. This cannot be undone.",
+        [
+          { text: "Keep", style: "cancel" },
+          {
+            text: "Remove",
+            style: "destructive",
+            onPress: () => {
+              setFailure(null);
+              setBusy("Removing…");
+              void (async () => {
+                try {
+                  const result = await holdBusy(deleteBillPayment(paymentId));
+                  if (result.ok) setEditing(null);
+                  else setFailure(writeFailureMessage(result.errors));
+                } catch (error) {
+                  log.error("bills: removing a payment failed", error);
+                  setFailure("Keeply could not remove that. Nothing was changed.");
+                } finally {
+                  setBusy(null);
+                }
+              })();
+            },
+          },
+        ],
+      );
+    },
+    [busy],
+  );
+
   const missing = record.status === "ready" && value === null;
 
   return (
@@ -640,8 +680,13 @@ export default function BillDetailScreen() {
         <PaymentEditSheet
           visible={editing !== null}
           payment={editing}
+          anchorDate={value?.anchorDate ?? null}
           saving={busy !== null}
+          // While the sheet is open its failures belong in it, not under the
+          // buttons behind it.
+          error={editing === null ? null : failure}
           onSave={savePaymentEdit}
+          onDelete={confirmDeletePayment}
           onClose={() => setEditing(null)}
           testID="bill-payment-edit"
         />

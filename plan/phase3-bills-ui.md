@@ -189,11 +189,19 @@ A settled row is now tappable and opens a correction sheet with the three things
 wrong: what they paid, when they paid it, and how. An unpaid row stays flat — there is nothing
 recorded to correct, and settling it is the screen's primary action.
 
-**`dueDate` is deliberately not editable here.** Moving a payment to a different period re-anchors
-the recurrence — the oldest live payment IS the anchor every later due date is computed from — so it
-has a different blast radius and belongs behind its own flow. `status` is not editable either:
-unpaying is `undoBillPayment`, which also rewinds the due date, and a status toggle that did not
-would leave the bill rolled forward with a hole in its history.
+**`dueDate` is editable, but behind its own step.** Moving a payment to a different period can
+re-anchor the recurrence — the oldest live payment IS the anchor every later due date is computed
+from — so it has a different blast radius than the three fields and is not a fourth one. The sheet
+offers "Move to a different period", which reveals the date with a warning that names the anchor
+when the payment being moved is it, and the narrower truth ("only this payment moves") when it is
+not. Nothing about the period is sent unless the step was opened and the date changed. The data
+layer refuses a move onto a period the ledger already covers (`already-paid`), shown in the sheet.
+`status` is not editable: unpaying is `undoBillPayment`, which also rewinds the due date, and a
+status toggle that did not would leave the bill rolled forward with a hole in its history.
+
+**Removing a payment** is the sheet's destructive action and `deleteBillPayment()`'s first caller.
+The one removal the data layer refuses is the oldest live row with others behind it (`anchor-row`),
+because that would re-date the series silently; the refusal's sentence points at moving it instead.
 
 Clearing the amount is a real answer, not a validation failure: `null` means "I paid it but I do not
 know what it cost", which is a variable bill settled before the invoice arrived (§7). The ledger

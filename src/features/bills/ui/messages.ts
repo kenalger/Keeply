@@ -107,7 +107,9 @@ export function fieldMessages(errors: readonly BillError[]): FieldMessages {
  * Fields that are not controls on the bill form. A message landing on one of
  * these has nowhere to render, so `formMessage()` picks it up instead.
  */
-const ORPHAN_FIELDS: readonly BillField[] = ['id', 'billId', 'patch'];
+// `currency` is an orphan too: the form has no currency control, so a message
+// keyed on it in `fieldMessages` had nowhere to render and vanished.
+const ORPHAN_FIELDS: readonly BillField[] = ['id', 'billId', 'patch', 'currency'];
 
 /**
  * The message for a failure that belongs to the form rather than to a control.
