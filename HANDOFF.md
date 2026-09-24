@@ -1,30 +1,34 @@
 # Keeply — Handoff
 
-**State at `21e610c` PLUS AN UNCOMMITTED WORKING TREE, on the branch `keeply/scale-and-expiry-prompt`.**
-`tsc --noEmit` 0 · `eslint .` 0 errors, 10 warnings · `npm test` **1490/1490**. Runs on the iOS
-Simulator; the icon, splash, loading screen, save overlay, theme and the rewired screens were all
-exercised there rather than only in the suite. The paging rewrite is proven in the suite (real
-SQLite, every list × every sort × every filter) and rendered once on the simulator, not scrolled.
+**State at the head of `keeply/scale-and-expiry-prompt`, working tree clean.** `tsc --noEmit` 0 ·
+`eslint .` 0 errors, 10 warnings · `npm test` **1578/1578**. Runs on the iOS Simulator; the icon,
+splash, loading screen, save overlay, theme, the rewired screens, lazy tabs and the read connection
+were all exercised there rather than only in the suite. The paging rewrite is proven in the suite
+(real SQLite, every list × every sort × every filter) and rendered on the simulator, not scrolled.
 
-> ⚠ **Sixty-odd paths are uncommitted, and the branch is five commits ahead of `main` with
-> NOTHING PUSHED.** `main` and `origin/main` are both still at `d2a8701`. Commit the tree first —
-> it is one coherent piece of work (see "The uncommitted session" under Recently closed) — then
-> push, or fast-forward `main` onto it, whichever you prefer.
+> ⚠ **The branch is thirteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
+> `origin/main` are both still at `d2a8701`. It fast-forwards. Push it, or fast-forward `main`
+> onto it, whichever you prefer. The eight newest commits are this session's, themed:
 >
 > ```
+> Docs …                                          (this file, CLAUDE.md)
+> Reads off the JS thread …                       (second read-only WAL connection)
+> Tabs mount on first focus …                     (LazyTab, idle reminder rebuild)
+> Docs: the save and loading conventions …
+> Paging that seeks, and reminder rebuilds that collapse
+> Saves that are seen, loading that does not flicker, and a lock gate that waits
+> Theme: white canvas, grey islands, and chips that are measured against them
+> Icon and splash: the kingfisher, on every surface, and a plugin order that is load-bearing
 > 21e610c Handoff: state it as it is now, and strike four claims that stopped being true
-> b0cf09d Docs: record what was decided, what it cost, and what is still unverified
-> 6952b7b Documents, bills and shared UI: the expiry prompt, payment corrections, debounce
-> ccf3da9 Maintenance: the odometer regression, mixed currencies, and Home/Money wiring
-> 533f596 Foundations: paging indexes, Unicode search, and a migration runner that skips by tag
 > ```
 
-This session (uncommitted): the **kingfisher icon and splash** (iOS, Android layers, notification
-silhouette, dark splash), a **light theme reversed** to a white canvas with grey islands, **every
+This session: the **kingfisher icon and splash** (iOS, Android layers, notification silhouette,
+dark splash), a **light theme reversed** to a white canvas with grey islands, **every
 create/edit/delete visibly saving** (`BusyOverlay` + `holdBusy`), a **boot loading screen** with
 stage captions that also covers the retry/erase paths, **flicker-free skeletons**, honest
 loading/empty/error states on a dozen screens, **keyset paging** that appends instead of re-reading
-from offset 0, **coalesced reminder rebuilds**, and a **lock-gate race** closed.
+from offset 0, **coalesced reminder rebuilds**, a **lock-gate race** closed, **tabs that mount on
+first focus**, and **every read off the JS thread** on a second, read-only connection.
 
 **The most important thing in it** is the last one: `LockGate` mounted the app tree while the
 settings read and the capability check were still in flight, so on a lost race the app lock was
@@ -136,10 +140,9 @@ A private, offline-first iOS app you can actually use:
 
 ## Start here
 
-**1. Commit the working tree, then land the branch.** This session's work is uncommitted (sixty-odd
-paths, one coherent change — see Recently closed). Five commits on `keeply/scale-and-expiry-prompt`,
-nothing pushed, `main` still at `d2a8701`. It fast-forwards. Do this before anything else — the rest
-of this list assumes the work is on `main`.
+**1. Land the branch.** Thirteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
+`main` still at `d2a8701`. It fast-forwards. Do this before anything else — the rest of this list
+assumes the work is on `main`.
 
 **2. Restore the specialist agents.** `.claude/agents/` holds five mobile specialists
 (`expo-native-engineer`, `mobile-data-engineer`, `mobile-ui-engineer`, `mobile-feature-engineer`,
@@ -169,21 +172,14 @@ outstanding.
     notification channel, SQLCipher's Android build and every safe-area assumption are all
     unexercised.
 
-**4. Two performance decisions are yours, and neither is started.** Both came out of the
-read-only review in this session and both change behaviour, not just speed:
-  - **Every database read runs synchronously on the JS thread.** Drizzle's op-sqlite driver calls
-    `execute` synchronously and `src/db/client.ts` maps it to `executeSync`; every feature port
-    reads through `db.all(bindStatement(…))`, so `readDashboard`'s ~15 statements and every GLOB
-    search block touch handling. Moving reads to op-sqlite's async `execute` — one seam per
-    feature — is the biggest scalability win left and needs care around transaction isolation
-    (a read dispatched to the background thread can execute between the statements of a
-    `withTransaction()` on the same connection). A second, read-only connection in WAL mode is the
-    clean answer; decide that before starting.
-  - **All five tabs mount and query at cold start.** NativeTabs renders every tab's content at
-    once, so Home, Money (which repeats Home's totals), two `AllowanceSummary` instances,
-    Maintenance and Documents all read in the first effect flush, alongside `AfterBoot`'s reminder
-    rebuild. Reading on first focus would roughly halve cold-start work; it changes when each tab
-    first paints.
+**4. Measure the read connection on a real device.** It is proven on the simulator (the boot
+console shows `db.read.open`, Home and the lists render from it, a save re-reads through it) and
+in the suite, but four things only a device can answer: a `readOnly` SQLCipher handle opening on a
+WAL file the write connection holds under `completeUnlessOpen` data protection; the cost of the
+second key derivation at boot (about 80ms on the simulator, PBKDF2 off the JS thread); the ~2MB
+of extra page cache; and whether touch and typing actually stay smooth through the dashboard load
+and a GLOB search — the whole point. If the second handle will not open, reads fall back to the
+write connection exactly as before and `db.read.degraded` is logged, so look for that line.
 
 **5. Two decisions left open on purpose.** Both are written up where they live, not just here:
   - **Moving a payment to a different PERIOD has no UI.** The correction sheet deliberately omits
@@ -388,7 +384,26 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 ## Recently closed (do not re-fix)
 
-### The uncommitted session · icon, theme, saves, loading, paging, reminders
+### This session, part two · lazy tabs, and reads off the JS thread
+
+- **Tabs mount on first focus.** `src/components/lazy-tab.tsx` wraps each tab route's content;
+  `useIsFocused()` seeds the latch synchronously so Home mounts at once, the other four draw the
+  bare canvas until first focus and stay mounted after. Verified against the live React tree: at
+  cold start only `HomeScreenContent` exists. `AfterBoot`'s reminder rebuild runs in
+  `requestIdleCallback` (RN 0.86 deprecates `InteractionManager`).
+- **Every read outside a transaction runs on a second, read-only connection**, off the JS thread:
+  `readAll(sql, params)` from `@/db`, backed by `src/db/read-gate.ts` (pure; open-tickets so a
+  close racing an open cannot leak a handle) and `openReadConnection()` in `client.ts`. It opens
+  LAST at boot (after migrations and the dev self-check) and closes FIRST; erase and restore go
+  through `closeDatabase()` so both handles are down before files move. It must pass an async
+  `sqlite_master` probe, `PRAGMA cipher_version` and `journal_mode = wal` or reads degrade to the
+  write connection with `db.read.degraded` logged. The statement rule admits one SELECT/WITH with a
+  matching parameter count and refuses writes, `BEGIN`, pragmas and `ATTACH`. Every feature port's
+  live store `all` goes through it; reads INSIDE `withTransaction()` still use the transaction, so
+  they see their own uncommitted rows. Found and fixed on the way: a failed restore rolled the
+  staged copy back under a still-open write handle and then reused it (`db/index.ts`).
+
+### This session, part one · icon, theme, saves, loading, paging, reminders
 
 - **Icon and splash.** `assets/images/*` are all generated from the kingfisher mark (the source
   PNG had its checkerboard baked in; it was unmixed against the reconstructed 25.6px grid, not
@@ -722,6 +737,12 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   brief); the same one-step-darker treatment applies.
 - **`runOnJS` is deprecated in Reanimated 4.5** in favour of `scheduleOnRN`; `sheet.tsx` still
   uses it three times. Works today.
+- **The write connection's own unlock probe at boot is still synchronous** (deliberately left:
+  migrations and the self-check need that connection first). `exportEncryptedCopy` stays on the
+  write connection because it writes the bundle; it already ran async `execute`.
+- **A read already in flight when `closeDatabase()` runs** is interrupted natively
+  (`sqlite3_interrupt`) and rejects; screens treat that like the "not initialized" they saw
+  before. Not exercised on a device.
 - **First run still paints Home, then replaces it with the wizard**, which itself paints nothing
   until `begin()` resolves. The onboarding check runs after the navigator mounts; deciding it in
   `LockGate`'s pending promise (one settings read) would remove both flashes.
@@ -770,7 +791,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 1490 tests
+npm test                # node --test, 1578 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 

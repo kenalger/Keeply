@@ -65,6 +65,11 @@ plan/           Product spec and phase plan
   `FormScreen` / `Sheet` / `Screen`, which mount the `BusyOverlay`. `holdBusy` keeps the outcome
   back for at least 400ms so the overlay registers and never flickers. No form owns its own
   spinner, and nothing is disabled-only (a 40% button reads as broken, not busy).
+- **Reads go through `readAll()`, writes through `withTransaction()`.** A read outside a
+  transaction runs on a second, read-only SQLCipher connection and never blocks the JS thread; a
+  feature's live store `all` is `readAll(text, params)`. A read INSIDE `withTransaction()` uses the
+  transaction, so it sees its own uncommitted rows. Never call `executeSync` for a read from
+  feature code, and never `BEGIN` on the read connection — `readAll` refuses both.
 - **Loading indicators are delayed, never immediate.** Reads here finish inside a frame or two, so
   a skeleton drawn at once is a one-commit flash. Every `Skeleton` reserves its box on mount and
   paints 150ms later (`useDelayedTrue`), so anything built from `Skeleton*` — `List loading`, a
@@ -195,6 +200,10 @@ npm run test:watch
 - `coalesce` / `at-least` / `theme-contrast` — one reminder rebuild in flight plus one
   trailing; the ≥400ms hold behind `holdBusy()`; every text, chip, outline and fill pair
   in both themes measured against WCAG, and fills against the island they sit on.
+- `read-gate` — the read connection's open/close state machine (a close racing an open
+  voids the open's ticket), and the statement rule behind `readAll()`: one SELECT or
+  WITH with a matching parameter count; writes, `BEGIN`, pragmas, `ATTACH` and a smuggled
+  second statement are refused, and all 67 SELECTs the features build are admitted.
 
 `tests/hooks/resolve-ts.mjs` teaches Node the `@/` alias and extensionless
 imports; `tests/node-types.d.ts` requests `@types/node` for the program.
