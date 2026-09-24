@@ -204,6 +204,10 @@ npm run test:watch
   voids the open's ticket), and the statement rule behind `readAll()`: one SELECT or
   WITH with a matching parameter count; writes, `BEGIN`, pragmas, `ATTACH` and a smuggled
   second statement are refused, and all 67 SELECTs the features build are admitted.
+- `money-input` — the amount field's edit model: a keystroke regrouped, a backspace that
+  landed on a separator, a selection deleted in one go (T15), and a paste judged as written.
+  Loadable in Node only because the module imports `@/db/money` and `@/theme/format`, not the
+  barrels — keep it that way.
 
 `tests/hooks/resolve-ts.mjs` teaches Node the `@/` alias and extensionless
 imports; `tests/node-types.d.ts` requests `@types/node` for the program.

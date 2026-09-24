@@ -18,7 +18,12 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { minorUnits } from '@/db/money';
-import { DRAFT_FIELDS, isDraftDirty, pickDraft } from '@/features/bills/ui/draft';
+import {
+  DRAFT_FIELDS,
+  isDraftDirty,
+  pickDraft,
+  refreshUntouchedDueDate,
+} from '@/features/bills/ui/draft';
 import type { BillDraft } from '@/stores/bill-draft-store';
 
 function draft(overrides: Partial<BillDraft> = {}): BillDraft {
@@ -127,5 +132,29 @@ describe('has the user changed anything', () => {
     // teaches the user to dismiss the one that matters.
     assert.equal(isDraftDirty(draft({ basedOnUpdatedAt: 9999 }), draft()), false);
     assert.equal(isDraftDirty(draft({ dateTouched: false }), draft()), false);
+  });
+});
+
+describe('refreshUntouchedDueDate — a suggestion is only right for the day it is made (T18)', () => {
+  test('an untouched date on a NEW draft is brought up to today’s suggestion', () => {
+    const stale = draft({ dateTouched: false, basedOnUpdatedAt: null, dueDate: '2026-01-15' });
+    const fresh = refreshUntouchedDueDate(stale, '2026-10-24');
+    assert.equal(fresh.dueDate, '2026-10-24');
+    assert.equal(fresh.name, stale.name, 'nothing else moves');
+  });
+
+  test('a date the user chose is never re-derived', () => {
+    const chosen = draft({ dateTouched: true, basedOnUpdatedAt: null, dueDate: '2026-01-15' });
+    assert.equal(refreshUntouchedDueDate(chosen, '2026-10-24'), chosen);
+  });
+
+  test('a draft derived from a record keeps the record’s date, touched or not', () => {
+    const fromRecord = draft({ dateTouched: false, basedOnUpdatedAt: 1_700_000_000_000, dueDate: '2026-01-15' });
+    assert.equal(refreshUntouchedDueDate(fromRecord, '2026-10-24'), fromRecord);
+  });
+
+  test('a current suggestion returns the SAME object, so a render allocates nothing', () => {
+    const current = draft({ dateTouched: false, basedOnUpdatedAt: null, dueDate: '2026-10-24' });
+    assert.equal(refreshUntouchedDueDate(current, '2026-10-24'), current);
   });
 });

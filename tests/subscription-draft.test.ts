@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { minorUnits, type MinorUnits } from '@/db/money';
 import type { SubscriptionDraft } from '@/stores/subscription-draft-store';
 
-import { pickDraft } from '@/features/subscriptions/ui/draft';
+import { pickDraft, refreshUntouchedRenewal } from '@/features/subscriptions/ui/draft';
 
 function draft(overrides: Partial<SubscriptionDraft> = {}): SubscriptionDraft {
   return {
@@ -75,5 +75,29 @@ describe('pickDraft — a draft may not outrank a newer record', () => {
     const initial = draft({ name: '', basedOnUpdatedAt: null });
     const stored = draft({ name: 'Half-typed name', basedOnUpdatedAt: null });
     assert.equal(pickDraft(stored, initial), stored);
+  });
+});
+
+describe('refreshUntouchedRenewal — a suggestion is only right for the day it is made (T18)', () => {
+  test('an untouched date on a NEW draft is brought up to today’s suggestion', () => {
+    const stale = draft({ dateTouched: false, basedOnUpdatedAt: null, nextBillingDate: '2026-01-15' });
+    const fresh = refreshUntouchedRenewal(stale, '2026-10-24');
+    assert.equal(fresh.nextBillingDate, '2026-10-24');
+    assert.equal(fresh.name, stale.name, 'nothing else moves');
+  });
+
+  test('a date the user chose is never re-derived', () => {
+    const chosen = draft({ dateTouched: true, basedOnUpdatedAt: null, nextBillingDate: '2026-01-15' });
+    assert.equal(refreshUntouchedRenewal(chosen, '2026-10-24'), chosen);
+  });
+
+  test('a draft derived from a record keeps the record’s date, touched or not', () => {
+    const fromRecord = draft({ dateTouched: false, basedOnUpdatedAt: 1_700_000_000_000, nextBillingDate: '2026-01-15' });
+    assert.equal(refreshUntouchedRenewal(fromRecord, '2026-10-24'), fromRecord);
+  });
+
+  test('a current suggestion returns the SAME object, so a render allocates nothing', () => {
+    const current = draft({ dateTouched: false, basedOnUpdatedAt: null, nextBillingDate: '2026-10-24' });
+    assert.equal(refreshUntouchedRenewal(current, '2026-10-24'), current);
   });
 });

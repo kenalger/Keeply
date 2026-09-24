@@ -369,7 +369,9 @@ export default function BillListScreen() {
         header={header}
         loading={list.status === 'loading'}
         error={
-          list.status === 'error' ? (
+          // Only with nothing to show: a failed refresh keeps the rows it had
+          // (`usePagedList`), and the error card must not replace them.
+          list.status === 'error' && list.rows.length === 0 ? (
             <EmptyState
               icon="errorCircle"
               title="Keeply could not read your bills"

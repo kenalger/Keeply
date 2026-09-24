@@ -1,16 +1,17 @@
 # Keeply — Handoff
 
 **State at the head of `keeply/scale-and-expiry-prompt`, working tree clean.** `tsc --noEmit` 0 ·
-`eslint .` 0 errors, 10 warnings · `npm test` **1580/1580**. Runs on the iOS Simulator; the icon,
+`eslint .` 0 errors, 10 warnings · `npm test` **1604/1604**. Runs on the iOS Simulator; the icon,
 splash, loading screen, save overlay, theme, the rewired screens, lazy tabs and the read connection
 were all exercised there rather than only in the suite. The paging rewrite is proven in the suite
 (real SQLite, every list × every sort × every filter) and rendered on the simulator, not scrolled.
 
-> ⚠ **The branch is fourteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
+> ⚠ **The branch is fifteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
 > `origin/main` are both still at `d2a8701`. It fast-forwards. Push it, or fast-forward `main`
-> onto it, whichever you prefer. The nine newest commits are this session's, themed:
+> onto it, whichever you prefer. The ten newest commits are this session's, themed:
 >
 > ```
+> Audit findings: T15, T18, lists that keep their rows, 44pt segments
 > Polish: six gaps the review left …              (allowance, tabs on error, dark fills, paging)
 > Docs …                                          (this file, CLAUDE.md)
 > Reads off the JS thread …                       (second read-only WAL connection)
@@ -141,7 +142,7 @@ A private, offline-first iOS app you can actually use:
 
 ## Start here
 
-**1. Land the branch.** Fourteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
+**1. Land the branch.** Fifteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
 `main` still at `d2a8701`. It fast-forwards. Do this before anything else — the rest of this list
 assumes the work is on `main`.
 
@@ -384,6 +385,24 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 ---
 
 ## Recently closed (do not re-fix)
+
+### This session, part four · three audit findings and two latent ones
+
+- **T15 — a selection deleted in the amount field cleared the committed amount.**
+  `applyAmountEdit` knew single-character edits and treated anything else as a paste, so
+  `'1,234,567' → '1,2367'` read as `ambiguous-separators` and emitted `null`. A contiguous deletion
+  is now typing: separators are dropped and the parser regroups. `money-input.ts` imports the leaf
+  modules (`@/db/money`, `@/theme/format`) instead of the barrels, which is what made
+  `tests/money-input.test.ts` — the parser's first direct tests — loadable in Node.
+- **T18 — a resumed `'new'` draft could save a renewal (or due) date already in the past.** The
+  date was seeded once, at the mount that created the draft. `refreshUntouchedRenewal` /
+  `refreshUntouchedDueDate` (pure, in each feature's `draft.ts`) re-derive an UNTOUCHED date to
+  today's suggestion on every render; a touched date or a record's date is never re-derived.
+- **Lists keep their rows through a failed refresh.** Subscriptions, Bills, Expenses and the
+  Maintenance tab showed the error card whenever `status === 'error'`, replacing rows
+  `usePagedList` had deliberately kept; they now show it only with nothing to show, like Documents.
+- **Boxed segmented options are 44pt to the touch** (`hitSlop` into the track padding; they were
+  drawn 38pt tall). The underline variant already was.
 
 ### This session, part three · six gaps the review left
 
@@ -696,9 +715,13 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   squashed-migration bundle `bundle-newer`, so it is a trade rather than a fix. Left deliberately;
   the reasoning is written at `compareBundle`.
 
-- **13 lower-tier audit findings** in `plan/phase2-3-remediation.md` (Tier 4 form-layer items and the
-  latent list): amount-field selection-delete clearing a committed value, pagination re-fetching from
-  offset 0, no caret management, `+N more` undercounting past 24.
+- **What is left of the lower-tier audit findings** in `plan/phase2-3-remediation.md`: T16 (Save
+  replaces an accurate parse error with "Enter an amount greater than zero" — the field's problem
+  never reaches the form), T17 (no caret management in the amount field; needs a device), T20
+  ("+N more" on Home undercounts past the 24-row read and has no route to the full list), and from
+  the latent list: currency errors render nowhere, `AmountField` ignores a currency change,
+  `currentMonth()` has no midnight re-render trigger. T15, T18 and T19 are closed (this session),
+  as are the two latent items about `<List/>` blanking on a failed refresh and 38pt segments.
 - **`deleteBillPayment()` still has no caller.** Its sibling `saveBillPaymentEdit()` now has one
   (the correction sheet), but removing a recorded period has no UI. The `anchor-row` refusal — the
   oldest live payment IS the recurrence anchor — already has its sentence in `messages.ts`, so the
@@ -797,7 +820,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 1580 tests
+npm test                # node --test, 1604 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 

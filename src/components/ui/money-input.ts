@@ -29,8 +29,10 @@
  * is the only caller in the app, but the logic is separable so it can be
  * exercised directly.
  */
-import { minorUnits, type MinorUnits } from '@/db';
-import { DEFAULT_CURRENCY, minorUnitExponent } from '@/theme';
+// The leaf modules, not the barrels: `@/db` pulls op-sqlite and `@/theme` pulls
+// react-native, and this parser is pure logic `node --test` should reach.
+import { minorUnits, type MinorUnits } from '@/db/money';
+import { DEFAULT_CURRENCY, minorUnitExponent } from '@/theme/format';
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -221,6 +223,30 @@ function singleDeletionIndex(prev: string, next: string): number {
   return -1;
 }
 
+/**
+ * Whether `next` is `prev` with ONE contiguous run of characters removed and
+ * nothing added — a selection followed by Delete, or a long-press backspace.
+ *
+ * `'1,234,567' → '1,2367'` removes `4,5`. Judged as a paste (the only other
+ * thing a multi-character change used to be) it read as `ambiguous-separators`
+ * and cleared the committed amount; and because `'1,234,567' → '1,567'`
+ * happened to survive, it failed intermittently (T15). A deletion cannot
+ * introduce an ambiguity the previous draft did not have, so it is typing.
+ */
+function isContiguousDeletion(prev: string, next: string): boolean {
+  if (next.length >= prev.length) return false;
+  let prefix = 0;
+  while (prefix < next.length && prev[prefix] === next[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < next.length - prefix &&
+    prev[prev.length - 1 - suffix] === next[next.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  return prefix + suffix === next.length;
+}
+
 function fractionLength(text: string): number {
   const dot = text.indexOf('.');
   return dot === -1 ? 0 : text.length - dot - 1;
@@ -253,7 +279,10 @@ export function applyAmountEdit(
 
   const inserted = isSingleInsertion(previousDisplay, nextDisplay);
   const deleted = singleDeletionIndex(previousDisplay, nextDisplay);
-  const typed = inserted || deleted >= 0;
+  // One character either way, or any run deleted: the user is editing, not
+  // pasting. Only a multi-character INSERTION is judged as pasted text.
+  const typed =
+    inserted || deleted >= 0 || isContiguousDeletion(previousDisplay, nextDisplay);
 
   if (inserted) {
     const bare = nextDisplay.replace(/,/g, '');

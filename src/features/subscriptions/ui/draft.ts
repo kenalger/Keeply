@@ -35,6 +35,28 @@ export function pickDraft(
 }
 
 /**
+ * Bring an UNTOUCHED renewal date up to today's suggestion.
+ *
+ * A new record's draft is seeded with "one cycle from today", once, at the
+ * mount that created it. Resume that draft a week later and it still holds
+ * the date from that day — so a form nobody corrected could save a renewal
+ * already in the past (T18). An untouched date is the app's suggestion, not
+ * the user's choice, and a suggestion is only right for the day it is made.
+ *
+ * A touched date, or any date on a draft derived from a record, is somebody's
+ * decision and is never re-derived. Returns the same object when nothing
+ * changes, so a render with a current date allocates nothing.
+ */
+export function refreshUntouchedRenewal(
+  draft: SubscriptionDraft,
+  suggestedDate: string,
+): SubscriptionDraft {
+  if (draft.dateTouched || draft.basedOnUpdatedAt !== null) return draft;
+  if (draft.nextBillingDate === suggestedDate) return draft;
+  return { ...draft, nextBillingDate: suggestedDate };
+}
+
+/**
  * The draft fields a user can actually change, for the dirty check on Cancel.
  *
  * `basedOnUpdatedAt` is provenance, not input: comparing it would make every

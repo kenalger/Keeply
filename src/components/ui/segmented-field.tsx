@@ -201,6 +201,10 @@ export function SegmentedField<T extends string>({
           return (
             <Pressable
               key={option.value}
+              // The boxed segment is drawn 38pt tall inside a 44pt track; the
+              // track's padding is dead to touch without this. 44pt is the
+              // minimum, not the target (HIG), and an audit measured 38.
+              hitSlop={underline ? undefined : TRACK_PADDING}
               accessible
               accessibilityRole="radio"
               accessibilityLabel={option.label}

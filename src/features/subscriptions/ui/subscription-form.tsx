@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { isDraftDirty, pickDraft } from './draft';
+import { isDraftDirty, pickDraft, refreshUntouchedRenewal } from './draft';
 
 import {
   AmountField,
@@ -217,7 +217,14 @@ export function SubscriptionForm({ record, onSaved, onCancel }: SubscriptionForm
    * that whole stale picture back. When the record has moved on, the draft is
    * dropped and the form re-seeds from the record.
    */
-  const draft = pickDraft(stored, initial);
+  const picked = pickDraft(stored, initial);
+  // An untouched renewal date is the app's suggestion, re-derived for TODAY on
+  // every render. A 'new' draft resumed days after it was seeded used to keep
+  // the date from that day and could save a renewal already in the past (T18).
+  const draft = refreshUntouchedRenewal(
+    picked,
+    defaultRenewalDate(picked.billingCycle, parsedCustomDays(picked)),
+  );
 
   const [errors, setErrors] = useState<FieldMessages>({});
   const [formError, setFormError] = useState<string | null>(null);

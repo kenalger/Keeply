@@ -33,7 +33,7 @@ import { nextOccurrence, type BillingCycle } from '@/lib/recurrence';
 import { useBillDraftStore, type BillDraft } from '@/stores/bill-draft-store';
 import { todayCalendarString, useThemedStyles, type Theme } from '@/theme';
 
-import { isDraftDirty, pickDraft } from './draft';
+import { isDraftDirty, pickDraft, refreshUntouchedDueDate } from './draft';
 import { BILL_CATEGORIES_ORDERED, CYCLE_LABELS, categoryLabel } from './labels';
 import { fieldMessages, formMessage, type FieldMessages } from './messages';
 import { saveBillEdit, saveNewBill } from './mutations';
@@ -206,7 +206,14 @@ export function BillForm({ record, onSaved, onCancel }: BillFormProps) {
    * See `./draft.ts` — for a bill this is not a corner case, because
    * `payBill()` moves the record without the user editing it.
    */
-  const draft = pickDraft(stored, initial);
+  const picked = pickDraft(stored, initial);
+  // An untouched due date is the app's suggestion, re-derived for TODAY on
+  // every render — a 'new' draft resumed days later must not save a bill that
+  // is already overdue (the subscription form's T18, ported).
+  const draft = refreshUntouchedDueDate(
+    picked,
+    defaultDueDate(picked.billingCycle, parsedCustomDays(picked)),
+  );
 
   const [errors, setErrors] = useState<FieldMessages>({});
   const [formError, setFormError] = useState<string | null>(null);

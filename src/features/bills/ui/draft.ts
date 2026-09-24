@@ -40,6 +40,22 @@ export function pickDraft(stored: BillDraft | undefined, initial: BillDraft): Bi
 }
 
 /**
+ * Bring an UNTOUCHED due date up to today's suggestion.
+ *
+ * The subscription form's T18, ported: a new bill's draft is seeded with "one
+ * cycle from today" at the mount that created it, and a draft resumed days
+ * later still holds that day's date — a bill nobody corrected could be saved
+ * already overdue. An untouched date is the app's suggestion; a touched one,
+ * or any date on a draft derived from a record, is somebody's decision and is
+ * never re-derived. Same object back when nothing changes.
+ */
+export function refreshUntouchedDueDate(draft: BillDraft, suggestedDate: string): BillDraft {
+  if (draft.dateTouched || draft.basedOnUpdatedAt !== null) return draft;
+  if (draft.dueDate === suggestedDate) return draft;
+  return { ...draft, dueDate: suggestedDate };
+}
+
+/**
  * The draft fields a user can actually change, for the dirty check on Cancel.
  *
  * `basedOnUpdatedAt` is provenance and `dateTouched` is bookkeeping — neither
