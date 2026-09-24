@@ -15,12 +15,11 @@
  * its own `sql.ts`, wrapped by `continuationStatement()` with the spec its
  * `queries.ts` pages it by.
  *
- * NOT HERE: bills sorted by amount. It has no paging index in the committed
- * migrations, so its first page already sorts (it is absent from
- * `tests/query-plans.test.ts` for the same reason) and its continuation does
- * too. Its keyset is still exact — `tests/keyset-pages.test.ts` walks it,
- * NULL bucket and all. Making it fast is a migration, which is a separate
- * decision.
+ * Bills sorted by amount is here since `drizzle/0007` gave it
+ * `bills_page_amount_idx`. Before that it had no paging index, so its first
+ * page and every continuation sorted; its keyset was exact all along —
+ * `tests/keyset-pages.test.ts` walks it, NULL bucket and all — and the index
+ * only makes it fast.
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -81,6 +80,7 @@ const CONTINUATIONS: readonly (readonly [string, KeysetStatement, string])[] = [
   ['receipts · searched', after(receipts.selectReceipts({ search: 'jollibee' }), RECEIPT_KEYSETS['purchase-date']), 'receipts_page_date_idx'],
   ['bills · by due date', after(bills.selectBills({}, BILL_DATES), BILL_KEYSETS['due-date']), 'bills_page_due_idx'],
   ['bills · by name', after(bills.selectBills({ sort: 'name' }, BILL_DATES), BILL_KEYSETS.name), 'bills_page_name_idx'],
+  ['bills · by amount', after(bills.selectBills({ sort: 'amount' }, BILL_DATES), BILL_KEYSETS.amount), 'bills_page_amount_idx'],
   ['subscriptions · by billing date', after(subscriptions.selectSubscriptions({}), SUBSCRIPTION_KEYSETS['next-billing']), 'subscriptions_page_billing_idx'],
   ['subscriptions · by name', after(subscriptions.selectSubscriptions({ sort: 'name' }), SUBSCRIPTION_KEYSETS.name), 'subscriptions_page_name_idx'],
   ['subscriptions · by amount', after(subscriptions.selectSubscriptions({ sort: 'amount' }), SUBSCRIPTION_KEYSETS.amount), 'subscriptions_page_amount_idx'],

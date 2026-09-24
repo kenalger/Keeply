@@ -8,6 +8,7 @@ import m0003 from './0003_panoramic_hedge_knight.sql';
 import m0004 from './0004_smooth_midnight.sql';
 import m0005 from './0005_mighty_gressill.sql';
 import m0006 from './0006_lazy_star_brand.sql';
+import m0007 from './0007_calm_mockingbird.sql';
 
   export default {
     journal,
@@ -18,7 +19,8 @@ m0002,
 m0003,
 m0004,
 m0005,
-m0006
+m0006,
+m0007
     }
   }
   

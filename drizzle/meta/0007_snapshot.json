@@ -1,0 +1,3425 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "ad568f77-057a-46f0-9d1a-02de8abe9c16",
+  "prevId": "2794778e-cd1a-4b4a-af44-27924903b812",
+  "tables": {
+    "subscriptions": {
+      "name": "subscriptions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "billing_cycle": {
+          "name": "billing_cycle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "custom_cycle_days": {
+          "name": "custom_cycle_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_billing_date": {
+          "name": "next_billing_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "subscriptions_next_billing_date_idx": {
+          "name": "subscriptions_next_billing_date_idx",
+          "columns": [
+            "next_billing_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "subscriptions_category_idx": {
+          "name": "subscriptions_category_idx",
+          "columns": [
+            "category"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "subscriptions_page_billing_idx": {
+          "name": "subscriptions_page_billing_idx",
+          "columns": [
+            "\"next_billing_date\" asc",
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "subscriptions_page_name_idx": {
+          "name": "subscriptions_page_name_idx",
+          "columns": [
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "subscriptions_page_amount_idx": {
+          "name": "subscriptions_page_amount_idx",
+          "columns": [
+            "\"amount_minor\" desc",
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "subscriptions_active_next_billing_idx": {
+          "name": "subscriptions_active_next_billing_idx",
+          "columns": [
+            "is_active",
+            "next_billing_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "subscriptions_category_check": {
+          "name": "subscriptions_category_check",
+          "value": "\"category\" IN ('entertainment', 'music', 'video', 'software', 'cloud', 'fitness', 'education', 'news', 'gaming', 'utilities', 'membership', 'other')"
+        },
+        "subscriptions_billing_cycle_check": {
+          "name": "subscriptions_billing_cycle_check",
+          "value": "\"billing_cycle\" IN ('weekly', 'monthly', 'quarterly', 'yearly', 'custom')"
+        },
+        "subscriptions_currency_check": {
+          "name": "subscriptions_currency_check",
+          "value": "\"currency\" GLOB '[A-Z][A-Z][A-Z]'"
+        },
+        "subscriptions_amount_minor_check": {
+          "name": "subscriptions_amount_minor_check",
+          "value": "\"amount_minor\" IS NULL OR \"amount_minor\" > 0"
+        },
+        "subscriptions_next_billing_date_check": {
+          "name": "subscriptions_next_billing_date_check",
+          "value": "\"next_billing_date\" IS NULL OR date(\"next_billing_date\") IS \"next_billing_date\""
+        }
+      }
+    },
+    "bill_payments": {
+      "name": "bill_payments",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bill_id": {
+          "name": "bill_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "due_date": {
+          "name": "due_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "paid_date": {
+          "name": "paid_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unpaid'"
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "bill_payments_bill_id_idx": {
+          "name": "bill_payments_bill_id_idx",
+          "columns": [
+            "bill_id"
+          ],
+          "isUnique": false
+        },
+        "bill_payments_paid_date_idx": {
+          "name": "bill_payments_paid_date_idx",
+          "columns": [
+            "paid_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "bill_payments_bill_id_due_date_idx": {
+          "name": "bill_payments_bill_id_due_date_idx",
+          "columns": [
+            "bill_id",
+            "due_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "bill_payments_page_latest_idx": {
+          "name": "bill_payments_page_latest_idx",
+          "columns": [
+            "\"bill_id\" asc",
+            "\"due_date\" desc",
+            "\"id\" desc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {
+        "bill_payments_bill_id_bills_id_fk": {
+          "name": "bill_payments_bill_id_bills_id_fk",
+          "tableFrom": "bill_payments",
+          "tableTo": "bills",
+          "columnsFrom": [
+            "bill_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "bill_payments_status_check": {
+          "name": "bill_payments_status_check",
+          "value": "\"status\" IN ('unpaid', 'paid')"
+        },
+        "bill_payments_currency_check": {
+          "name": "bill_payments_currency_check",
+          "value": "\"currency\" GLOB '[A-Z][A-Z][A-Z]'"
+        },
+        "bill_payments_amount_minor_check": {
+          "name": "bill_payments_amount_minor_check",
+          "value": "\"amount_minor\" IS NULL OR \"amount_minor\" > 0"
+        },
+        "bill_payments_due_date_check": {
+          "name": "bill_payments_due_date_check",
+          "value": "\"due_date\" IS NULL OR date(\"due_date\") IS \"due_date\""
+        },
+        "bill_payments_paid_date_check": {
+          "name": "bill_payments_paid_date_check",
+          "value": "\"paid_date\" IS NULL OR date(\"paid_date\") IS \"paid_date\""
+        }
+      }
+    },
+    "bills": {
+      "name": "bills",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "is_variable": {
+          "name": "is_variable",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "due_date": {
+          "name": "due_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "billing_cycle": {
+          "name": "billing_cycle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "custom_cycle_days": {
+          "name": "custom_cycle_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_recurring": {
+          "name": "is_recurring",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "autopay": {
+          "name": "autopay",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unpaid'"
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "bills_status_due_date_idx": {
+          "name": "bills_status_due_date_idx",
+          "columns": [
+            "status",
+            "due_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "bills_active_due_date_idx": {
+          "name": "bills_active_due_date_idx",
+          "columns": [
+            "is_active",
+            "due_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "bills_category_idx": {
+          "name": "bills_category_idx",
+          "columns": [
+            "category"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "bills_page_due_idx": {
+          "name": "bills_page_due_idx",
+          "columns": [
+            "\"due_date\" asc",
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "bills_page_name_idx": {
+          "name": "bills_page_name_idx",
+          "columns": [
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "bills_page_amount_idx": {
+          "name": "bills_page_amount_idx",
+          "columns": [
+            "(\"amount_minor\" is null) asc",
+            "\"amount_minor\" desc",
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "bills_category_check": {
+          "name": "bills_category_check",
+          "value": "\"category\" IN ('electricity', 'water', 'internet', 'rent', 'phone', 'insurance', 'credit_card', 'loan', 'subscription', 'other')"
+        },
+        "bills_billing_cycle_check": {
+          "name": "bills_billing_cycle_check",
+          "value": "\"billing_cycle\" IN ('weekly', 'monthly', 'quarterly', 'yearly', 'custom')"
+        },
+        "bills_status_check": {
+          "name": "bills_status_check",
+          "value": "\"status\" IN ('unpaid', 'paid')"
+        },
+        "bills_currency_check": {
+          "name": "bills_currency_check",
+          "value": "\"currency\" GLOB '[A-Z][A-Z][A-Z]'"
+        },
+        "bills_amount_minor_check": {
+          "name": "bills_amount_minor_check",
+          "value": "\"amount_minor\" IS NULL OR \"amount_minor\" > 0"
+        },
+        "bills_due_date_check": {
+          "name": "bills_due_date_check",
+          "value": "\"due_date\" IS NULL OR date(\"due_date\") IS \"due_date\""
+        }
+      }
+    },
+    "receipts": {
+      "name": "receipts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "merchant": {
+          "name": "merchant",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "purchase_date": {
+          "name": "purchase_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "local_image_uri": {
+          "name": "local_image_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "local_thumbnail_uri": {
+          "name": "local_thumbnail_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "receipts_purchase_date_idx": {
+          "name": "receipts_purchase_date_idx",
+          "columns": [
+            "purchase_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "receipts_merchant_idx": {
+          "name": "receipts_merchant_idx",
+          "columns": [
+            "merchant"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "receipts_category_purchase_date_idx": {
+          "name": "receipts_category_purchase_date_idx",
+          "columns": [
+            "category",
+            "purchase_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "receipts_page_date_idx": {
+          "name": "receipts_page_date_idx",
+          "columns": [
+            "\"purchase_date\" desc",
+            "\"created_at\" desc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "receipts_page_merchant_idx": {
+          "name": "receipts_page_merchant_idx",
+          "columns": [
+            "\"merchant\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "receipts_page_amount_idx": {
+          "name": "receipts_page_amount_idx",
+          "columns": [
+            "\"amount_minor\" desc",
+            "\"purchase_date\" desc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "receipts_page_category_idx": {
+          "name": "receipts_page_category_idx",
+          "columns": [
+            "\"category\" asc",
+            "\"purchase_date\" desc",
+            "\"created_at\" desc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "receipts_category_check": {
+          "name": "receipts_category_check",
+          "value": "\"category\" IN ('food', 'grocery', 'transportation', 'shopping', 'electronics', 'healthcare', 'entertainment', 'household', 'vehicle', 'other')"
+        },
+        "receipts_currency_check": {
+          "name": "receipts_currency_check",
+          "value": "\"currency\" GLOB '[A-Z][A-Z][A-Z]'"
+        },
+        "receipts_amount_minor_check": {
+          "name": "receipts_amount_minor_check",
+          "value": "\"amount_minor\" IS NULL OR \"amount_minor\" > 0"
+        },
+        "receipts_purchase_date_check": {
+          "name": "receipts_purchase_date_check",
+          "value": "\"purchase_date\" IS NULL OR date(\"purchase_date\") IS \"purchase_date\""
+        }
+      }
+    },
+    "documents": {
+      "name": "documents",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "document_number": {
+          "name": "document_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "issue_date": {
+          "name": "issue_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expiry_date": {
+          "name": "expiry_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "local_file_uri": {
+          "name": "local_file_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "file_mime_type": {
+          "name": "file_mime_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "renewal_state": {
+          "name": "renewal_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'none'"
+        },
+        "renewal_remind_after": {
+          "name": "renewal_remind_after",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "renewal_prompted_for": {
+          "name": "renewal_prompted_for",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "documents_expiry_date_idx": {
+          "name": "documents_expiry_date_idx",
+          "columns": [
+            "expiry_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "documents_type_idx": {
+          "name": "documents_type_idx",
+          "columns": [
+            "type"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "documents_page_name_idx": {
+          "name": "documents_page_name_idx",
+          "columns": [
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "documents_page_recent_idx": {
+          "name": "documents_page_recent_idx",
+          "columns": [
+            "\"created_at\" desc",
+            "\"id\" desc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "documents_page_expiry_idx": {
+          "name": "documents_page_expiry_idx",
+          "columns": [
+            "(\"expiry_date\" is null) asc",
+            "\"expiry_date\" asc",
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "documents_type_check": {
+          "name": "documents_type_check",
+          "value": "\"type\" IN ('passport', 'drivers_license', 'government_id', 'insurance', 'vehicle_registration', 'certification', 'membership', 'other')"
+        },
+        "documents_issue_date_check": {
+          "name": "documents_issue_date_check",
+          "value": "\"issue_date\" IS NULL OR date(\"issue_date\") IS \"issue_date\""
+        },
+        "documents_expiry_date_check": {
+          "name": "documents_expiry_date_check",
+          "value": "\"expiry_date\" IS NULL OR date(\"expiry_date\") IS \"expiry_date\""
+        },
+        "documents_renewal_state_check": {
+          "name": "documents_renewal_state_check",
+          "value": "\"renewal_state\" IN ('none', 'in_progress', 'retired')"
+        },
+        "documents_renewal_remind_after_check": {
+          "name": "documents_renewal_remind_after_check",
+          "value": "\"renewal_remind_after\" IS NULL OR date(\"renewal_remind_after\") IS \"renewal_remind_after\""
+        },
+        "documents_renewal_prompted_for_check": {
+          "name": "documents_renewal_prompted_for_check",
+          "value": "\"renewal_prompted_for\" IS NULL OR date(\"renewal_prompted_for\") IS \"renewal_prompted_for\""
+        },
+        "documents_expiry_after_issue_check": {
+          "name": "documents_expiry_after_issue_check",
+          "value": "\"issue_date\" IS NULL OR \"expiry_date\" IS NULL OR \"expiry_date\" >= \"issue_date\""
+        }
+      }
+    },
+    "app_settings": {
+      "name": "app_settings",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "value_type": {
+          "name": "value_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "app_settings_key_unq": {
+          "name": "app_settings_key_unq",
+          "columns": [
+            "key"
+          ],
+          "isUnique": true,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "app_settings_value_type_check": {
+          "name": "app_settings_value_type_check",
+          "value": "\"value_type\" IS NULL OR \"value_type\" IN ('string', 'number', 'boolean', 'json')"
+        }
+      }
+    },
+    "notification_settings": {
+      "name": "notification_settings",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "days_before": {
+          "name": "days_before",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "time_of_day": {
+          "name": "time_of_day",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "notification_settings_entity_offset_unq": {
+          "name": "notification_settings_entity_offset_unq",
+          "columns": [
+            "entity_type",
+            "entity_id",
+            "days_before"
+          ],
+          "isUnique": true,
+          "where": "\"deleted_at\" is null"
+        },
+        "notification_settings_entity_id_idx": {
+          "name": "notification_settings_entity_id_idx",
+          "columns": [
+            "entity_id"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "notification_settings_entity_type_check": {
+          "name": "notification_settings_entity_type_check",
+          "value": "\"entity_type\" IN ('global', 'subscription', 'bill', 'document', 'maintenance_service', 'maintenance_renewal')"
+        }
+      }
+    },
+    "maintenance_costs": {
+      "name": "maintenance_costs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "cost_date": {
+          "name": "cost_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "odometer": {
+          "name": "odometer",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "vendor": {
+          "name": "vendor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fuel_liters_milli": {
+          "name": "fuel_liters_milli",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fuel_price_per_liter_minor": {
+          "name": "fuel_price_per_liter_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_full_tank": {
+          "name": "is_full_tank",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "maintenance_costs_item_id_idx": {
+          "name": "maintenance_costs_item_id_idx",
+          "columns": [
+            "item_id"
+          ],
+          "isUnique": false
+        },
+        "maintenance_costs_item_date_idx": {
+          "name": "maintenance_costs_item_date_idx",
+          "columns": [
+            "item_id",
+            "cost_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "maintenance_costs_item_type_idx": {
+          "name": "maintenance_costs_item_type_idx",
+          "columns": [
+            "item_id",
+            "type"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "maintenance_costs_cost_date_idx": {
+          "name": "maintenance_costs_cost_date_idx",
+          "columns": [
+            "cost_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "maintenance_costs_page_idx": {
+          "name": "maintenance_costs_page_idx",
+          "columns": [
+            "\"item_id\" asc",
+            "\"cost_date\" desc",
+            "\"id\" desc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {
+        "maintenance_costs_item_id_maintenance_items_id_fk": {
+          "name": "maintenance_costs_item_id_maintenance_items_id_fk",
+          "tableFrom": "maintenance_costs",
+          "tableTo": "maintenance_items",
+          "columnsFrom": [
+            "item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "maintenance_costs_type_check": {
+          "name": "maintenance_costs_type_check",
+          "value": "\"type\" IN ('fuel', 'service', 'repair', 'parts', 'insurance', 'registration', 'other')"
+        },
+        "maintenance_costs_currency_check": {
+          "name": "maintenance_costs_currency_check",
+          "value": "\"currency\" GLOB '[A-Z][A-Z][A-Z]'"
+        },
+        "maintenance_costs_amount_minor_check": {
+          "name": "maintenance_costs_amount_minor_check",
+          "value": "\"amount_minor\" IS NULL OR \"amount_minor\" > 0"
+        },
+        "maintenance_costs_fuel_price_per_liter_check": {
+          "name": "maintenance_costs_fuel_price_per_liter_check",
+          "value": "\"fuel_price_per_liter_minor\" IS NULL OR \"fuel_price_per_liter_minor\" > 0"
+        },
+        "maintenance_costs_odometer_check": {
+          "name": "maintenance_costs_odometer_check",
+          "value": "\"odometer\" IS NULL OR \"odometer\" >= 0"
+        },
+        "maintenance_costs_fuel_liters_check": {
+          "name": "maintenance_costs_fuel_liters_check",
+          "value": "\"fuel_liters_milli\" IS NULL OR \"fuel_liters_milli\" > 0"
+        },
+        "maintenance_costs_cost_date_check": {
+          "name": "maintenance_costs_cost_date_check",
+          "value": "\"cost_date\" IS NULL OR date(\"cost_date\") IS \"cost_date\""
+        }
+      }
+    },
+    "maintenance_items": {
+      "name": "maintenance_items",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "vehicle_type": {
+          "name": "vehicle_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "identifier": {
+          "name": "identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "purchase_date": {
+          "name": "purchase_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "current_mileage": {
+          "name": "current_mileage",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "maintenance_items_kind_idx": {
+          "name": "maintenance_items_kind_idx",
+          "columns": [
+            "kind"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "maintenance_items_page_idx": {
+          "name": "maintenance_items_page_idx",
+          "columns": [
+            "\"is_active\" desc",
+            "\"name\" collate nocase asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "maintenance_items_kind_check": {
+          "name": "maintenance_items_kind_check",
+          "value": "\"kind\" IN ('vehicle', 'appliance', 'home', 'electronics', 'other')"
+        },
+        "maintenance_items_vehicle_type_check": {
+          "name": "maintenance_items_vehicle_type_check",
+          "value": "\"vehicle_type\" IS NULL OR \"vehicle_type\" IN ('car', 'motorcycle', 'bicycle', 'other')"
+        },
+        "maintenance_items_current_mileage_check": {
+          "name": "maintenance_items_current_mileage_check",
+          "value": "\"current_mileage\" IS NULL OR \"current_mileage\" >= 0"
+        },
+        "maintenance_items_purchase_date_check": {
+          "name": "maintenance_items_purchase_date_check",
+          "value": "\"purchase_date\" IS NULL OR date(\"purchase_date\") IS \"purchase_date\""
+        }
+      }
+    },
+    "maintenance_renewals": {
+      "name": "maintenance_renewals",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cost_id": {
+          "name": "cost_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reference_number": {
+          "name": "reference_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expiry_date": {
+          "name": "expiry_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "maintenance_renewals_item_id_idx": {
+          "name": "maintenance_renewals_item_id_idx",
+          "columns": [
+            "item_id"
+          ],
+          "isUnique": false
+        },
+        "maintenance_renewals_cost_id_idx": {
+          "name": "maintenance_renewals_cost_id_idx",
+          "columns": [
+            "cost_id"
+          ],
+          "isUnique": false
+        },
+        "maintenance_renewals_expiry_date_idx": {
+          "name": "maintenance_renewals_expiry_date_idx",
+          "columns": [
+            "expiry_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "maintenance_renewals_kind_expiry_idx": {
+          "name": "maintenance_renewals_kind_expiry_idx",
+          "columns": [
+            "kind",
+            "expiry_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "maintenance_renewals_page_idx": {
+          "name": "maintenance_renewals_page_idx",
+          "columns": [
+            "\"item_id\" asc",
+            "(\"expiry_date\" is null) asc",
+            "\"expiry_date\" asc",
+            "\"id\" asc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {
+        "maintenance_renewals_item_id_maintenance_items_id_fk": {
+          "name": "maintenance_renewals_item_id_maintenance_items_id_fk",
+          "tableFrom": "maintenance_renewals",
+          "tableTo": "maintenance_items",
+          "columnsFrom": [
+            "item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        },
+        "maintenance_renewals_cost_id_maintenance_costs_id_fk": {
+          "name": "maintenance_renewals_cost_id_maintenance_costs_id_fk",
+          "tableFrom": "maintenance_renewals",
+          "tableTo": "maintenance_costs",
+          "columnsFrom": [
+            "cost_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "maintenance_renewals_kind_check": {
+          "name": "maintenance_renewals_kind_check",
+          "value": "\"kind\" IN ('insurance', 'registration', 'warranty')"
+        },
+        "maintenance_renewals_start_date_check": {
+          "name": "maintenance_renewals_start_date_check",
+          "value": "\"start_date\" IS NULL OR date(\"start_date\") IS \"start_date\""
+        },
+        "maintenance_renewals_expiry_date_check": {
+          "name": "maintenance_renewals_expiry_date_check",
+          "value": "\"expiry_date\" IS NULL OR date(\"expiry_date\") IS \"expiry_date\""
+        },
+        "maintenance_renewals_expiry_after_start_check": {
+          "name": "maintenance_renewals_expiry_after_start_check",
+          "value": "\"start_date\" IS NULL OR \"expiry_date\" IS NULL OR \"expiry_date\" >= \"start_date\""
+        }
+      }
+    },
+    "maintenance_services": {
+      "name": "maintenance_services",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cost_id": {
+          "name": "cost_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "service_type": {
+          "name": "service_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "service_date": {
+          "name": "service_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "odometer": {
+          "name": "odometer",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_service_date": {
+          "name": "next_service_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_service_mileage": {
+          "name": "next_service_mileage",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "shop": {
+          "name": "shop",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "maintenance_services_item_id_idx": {
+          "name": "maintenance_services_item_id_idx",
+          "columns": [
+            "item_id"
+          ],
+          "isUnique": false
+        },
+        "maintenance_services_cost_id_idx": {
+          "name": "maintenance_services_cost_id_idx",
+          "columns": [
+            "cost_id"
+          ],
+          "isUnique": false
+        },
+        "maintenance_services_service_date_idx": {
+          "name": "maintenance_services_service_date_idx",
+          "columns": [
+            "service_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "maintenance_services_next_service_date_idx": {
+          "name": "maintenance_services_next_service_date_idx",
+          "columns": [
+            "next_service_date"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        },
+        "maintenance_services_page_idx": {
+          "name": "maintenance_services_page_idx",
+          "columns": [
+            "\"item_id\" asc",
+            "\"service_date\" desc",
+            "\"id\" desc"
+          ],
+          "isUnique": false,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {
+        "maintenance_services_item_id_maintenance_items_id_fk": {
+          "name": "maintenance_services_item_id_maintenance_items_id_fk",
+          "tableFrom": "maintenance_services",
+          "tableTo": "maintenance_items",
+          "columnsFrom": [
+            "item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        },
+        "maintenance_services_cost_id_maintenance_costs_id_fk": {
+          "name": "maintenance_services_cost_id_maintenance_costs_id_fk",
+          "tableFrom": "maintenance_services",
+          "tableTo": "maintenance_costs",
+          "columnsFrom": [
+            "cost_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "maintenance_services_odometer_check": {
+          "name": "maintenance_services_odometer_check",
+          "value": "\"odometer\" IS NULL OR \"odometer\" >= 0"
+        },
+        "maintenance_services_next_service_mileage_check": {
+          "name": "maintenance_services_next_service_mileage_check",
+          "value": "\"next_service_mileage\" IS NULL OR \"next_service_mileage\" >= 0"
+        },
+        "maintenance_services_service_date_check": {
+          "name": "maintenance_services_service_date_check",
+          "value": "\"service_date\" IS NULL OR date(\"service_date\") IS \"service_date\""
+        },
+        "maintenance_services_next_service_date_check": {
+          "name": "maintenance_services_next_service_date_check",
+          "value": "\"next_service_date\" IS NULL OR date(\"next_service_date\") IS \"next_service_date\""
+        },
+        "maintenance_services_next_after_service_check": {
+          "name": "maintenance_services_next_after_service_check",
+          "value": "\"service_date\" IS NULL OR \"next_service_date\" IS NULL OR \"next_service_date\" >= \"service_date\""
+        }
+      }
+    },
+    "allowances": {
+      "name": "allowances",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "period": {
+          "name": "period",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "effective_from": {
+          "name": "effective_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "allowances_period_effective_from_unq": {
+          "name": "allowances_period_effective_from_unq",
+          "columns": [
+            "period",
+            "effective_from"
+          ],
+          "isUnique": true,
+          "where": "\"deleted_at\" is null"
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "allowances_period_check": {
+          "name": "allowances_period_check",
+          "value": "\"period\" IN ('daily', 'weekly', 'monthly')"
+        },
+        "allowances_currency_check": {
+          "name": "allowances_currency_check",
+          "value": "\"currency\" GLOB '[A-Z][A-Z][A-Z]'"
+        },
+        "allowances_amount_minor_check": {
+          "name": "allowances_amount_minor_check",
+          "value": "\"amount_minor\" IS NULL OR \"amount_minor\" > 0"
+        },
+        "allowances_effective_from_check": {
+          "name": "allowances_effective_from_check",
+          "value": "\"effective_from\" IS NULL OR date(\"effective_from\") IS \"effective_from\""
+        }
+      }
+    }
+  },
+  "views": {
+    "allowances_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "period": {
+          "name": "period",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "effective_from": {
+          "name": "effective_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "allowances_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"period\", \"amount_minor\", \"currency\", \"effective_from\", \"created_at\", \"updated_at\", \"deleted_at\" from \"allowances\" where \"allowances\".\"deleted_at\" is null"
+    },
+    "app_settings_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "value_type": {
+          "name": "value_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "app_settings_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"key\", \"value\", \"value_type\", \"created_at\", \"updated_at\", \"deleted_at\" from \"app_settings\" where \"app_settings\".\"deleted_at\" is null"
+    },
+    "bill_payments_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bill_id": {
+          "name": "bill_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "due_date": {
+          "name": "due_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "paid_date": {
+          "name": "paid_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unpaid'"
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "bill_payments_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"bill_id\", \"due_date\", \"paid_date\", \"amount_minor\", \"currency\", \"status\", \"payment_method\", \"notes\", \"created_at\", \"updated_at\", \"deleted_at\" from \"bill_payments\" where (\"bill_payments\".\"deleted_at\" is null and exists (select 1 from \"bills\" where (\"bills\".\"id\" = \"bill_payments\".\"bill_id\" and \"bills\".\"deleted_at\" is null)))"
+    },
+    "bills_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "is_variable": {
+          "name": "is_variable",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "due_date": {
+          "name": "due_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "billing_cycle": {
+          "name": "billing_cycle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "custom_cycle_days": {
+          "name": "custom_cycle_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_recurring": {
+          "name": "is_recurring",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "autopay": {
+          "name": "autopay",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unpaid'"
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "bills_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"name\", \"category\", \"amount_minor\", \"currency\", \"is_variable\", \"due_date\", \"billing_cycle\", \"custom_cycle_days\", \"is_recurring\", \"autopay\", \"status\", \"payment_method\", \"notes\", \"is_active\", \"created_at\", \"updated_at\", \"deleted_at\" from \"bills\" where \"bills\".\"deleted_at\" is null"
+    },
+    "documents_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "document_number": {
+          "name": "document_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "issue_date": {
+          "name": "issue_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expiry_date": {
+          "name": "expiry_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "local_file_uri": {
+          "name": "local_file_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "file_mime_type": {
+          "name": "file_mime_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "renewal_state": {
+          "name": "renewal_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'none'"
+        },
+        "renewal_remind_after": {
+          "name": "renewal_remind_after",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "renewal_prompted_for": {
+          "name": "renewal_prompted_for",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "documents_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"name\", \"type\", \"document_number\", \"issue_date\", \"expiry_date\", \"notes\", \"local_file_uri\", \"file_mime_type\", \"created_at\", \"updated_at\", \"deleted_at\", \"renewal_state\", \"renewal_remind_after\", \"renewal_prompted_for\" from \"documents\" where \"documents\".\"deleted_at\" is null"
+    },
+    "maintenance_costs_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "cost_date": {
+          "name": "cost_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "odometer": {
+          "name": "odometer",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "vendor": {
+          "name": "vendor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fuel_liters_milli": {
+          "name": "fuel_liters_milli",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fuel_price_per_liter_minor": {
+          "name": "fuel_price_per_liter_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_full_tank": {
+          "name": "is_full_tank",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "maintenance_costs_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"item_id\", \"type\", \"amount_minor\", \"currency\", \"cost_date\", \"odometer\", \"description\", \"vendor\", \"notes\", \"fuel_liters_milli\", \"fuel_price_per_liter_minor\", \"is_full_tank\", \"created_at\", \"updated_at\", \"deleted_at\" from \"maintenance_costs\" where (\"maintenance_costs\".\"deleted_at\" is null and exists (select 1 from \"maintenance_items\" where (\"maintenance_items\".\"id\" = \"maintenance_costs\".\"item_id\" and \"maintenance_items\".\"deleted_at\" is null)))"
+    },
+    "maintenance_items_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "vehicle_type": {
+          "name": "vehicle_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "identifier": {
+          "name": "identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "purchase_date": {
+          "name": "purchase_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "current_mileage": {
+          "name": "current_mileage",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "maintenance_items_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"name\", \"kind\", \"vehicle_type\", \"brand\", \"model\", \"year\", \"identifier\", \"purchase_date\", \"current_mileage\", \"notes\", \"is_active\", \"created_at\", \"updated_at\", \"deleted_at\" from \"maintenance_items\" where \"maintenance_items\".\"deleted_at\" is null"
+    },
+    "maintenance_renewals_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cost_id": {
+          "name": "cost_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reference_number": {
+          "name": "reference_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "start_date": {
+          "name": "start_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expiry_date": {
+          "name": "expiry_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "maintenance_renewals_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"item_id\", \"cost_id\", \"kind\", \"provider\", \"reference_number\", \"start_date\", \"expiry_date\", \"notes\", \"created_at\", \"updated_at\", \"deleted_at\" from \"maintenance_renewals\" where (\"maintenance_renewals\".\"deleted_at\" is null and exists (select 1 from \"maintenance_items\" where (\"maintenance_items\".\"id\" = \"maintenance_renewals\".\"item_id\" and \"maintenance_items\".\"deleted_at\" is null)))"
+    },
+    "maintenance_services_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "cost_id": {
+          "name": "cost_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "service_type": {
+          "name": "service_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "service_date": {
+          "name": "service_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "odometer": {
+          "name": "odometer",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_service_date": {
+          "name": "next_service_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_service_mileage": {
+          "name": "next_service_mileage",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "shop": {
+          "name": "shop",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "maintenance_services_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"item_id\", \"cost_id\", \"service_type\", \"service_date\", \"odometer\", \"next_service_date\", \"next_service_mileage\", \"shop\", \"notes\", \"created_at\", \"updated_at\", \"deleted_at\" from \"maintenance_services\" where (\"maintenance_services\".\"deleted_at\" is null and exists (select 1 from \"maintenance_items\" where (\"maintenance_items\".\"id\" = \"maintenance_services\".\"item_id\" and \"maintenance_items\".\"deleted_at\" is null)))"
+    },
+    "notification_settings_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "days_before": {
+          "name": "days_before",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "time_of_day": {
+          "name": "time_of_day",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "notification_settings_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"entity_type\", \"entity_id\", \"days_before\", \"enabled\", \"time_of_day\", \"created_at\", \"updated_at\", \"deleted_at\" from \"notification_settings\" where \"notification_settings\".\"deleted_at\" is null"
+    },
+    "receipts_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "merchant": {
+          "name": "merchant",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "purchase_date": {
+          "name": "purchase_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "local_image_uri": {
+          "name": "local_image_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "local_thumbnail_uri": {
+          "name": "local_thumbnail_uri",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "receipts_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"merchant\", \"amount_minor\", \"currency\", \"category\", \"purchase_date\", \"payment_method\", \"notes\", \"local_image_uri\", \"local_thumbnail_uri\", \"created_at\", \"updated_at\", \"deleted_at\" from \"receipts\" where \"receipts\".\"deleted_at\" is null"
+    },
+    "subscriptions_live": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'other'"
+        },
+        "amount_minor": {
+          "name": "amount_minor",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PHP'"
+        },
+        "billing_cycle": {
+          "name": "billing_cycle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "custom_cycle_days": {
+          "name": "custom_cycle_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_billing_date": {
+          "name": "next_billing_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "name": "subscriptions_live",
+      "isExisting": false,
+      "definition": "select \"id\", \"name\", \"category\", \"amount_minor\", \"currency\", \"billing_cycle\", \"custom_cycle_days\", \"next_billing_date\", \"payment_method\", \"notes\", \"is_active\", \"created_at\", \"updated_at\", \"deleted_at\" from \"subscriptions\" where \"subscriptions\".\"deleted_at\" is null"
+    }
+  },
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {
+      "subscriptions_page_billing_idx": {
+        "columns": {
+          "\"next_billing_date\" asc": {
+            "isExpression": true
+          },
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "subscriptions_page_name_idx": {
+        "columns": {
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "subscriptions_page_amount_idx": {
+        "columns": {
+          "\"amount_minor\" desc": {
+            "isExpression": true
+          },
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "bill_payments_page_latest_idx": {
+        "columns": {
+          "\"bill_id\" asc": {
+            "isExpression": true
+          },
+          "\"due_date\" desc": {
+            "isExpression": true
+          },
+          "\"id\" desc": {
+            "isExpression": true
+          }
+        }
+      },
+      "bills_page_due_idx": {
+        "columns": {
+          "\"due_date\" asc": {
+            "isExpression": true
+          },
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "bills_page_name_idx": {
+        "columns": {
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "bills_page_amount_idx": {
+        "columns": {
+          "(\"amount_minor\" is null) asc": {
+            "isExpression": true
+          },
+          "\"amount_minor\" desc": {
+            "isExpression": true
+          },
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "receipts_page_date_idx": {
+        "columns": {
+          "\"purchase_date\" desc": {
+            "isExpression": true
+          },
+          "\"created_at\" desc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "receipts_page_merchant_idx": {
+        "columns": {
+          "\"merchant\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "receipts_page_amount_idx": {
+        "columns": {
+          "\"amount_minor\" desc": {
+            "isExpression": true
+          },
+          "\"purchase_date\" desc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "receipts_page_category_idx": {
+        "columns": {
+          "\"category\" asc": {
+            "isExpression": true
+          },
+          "\"purchase_date\" desc": {
+            "isExpression": true
+          },
+          "\"created_at\" desc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "documents_page_name_idx": {
+        "columns": {
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "documents_page_recent_idx": {
+        "columns": {
+          "\"created_at\" desc": {
+            "isExpression": true
+          },
+          "\"id\" desc": {
+            "isExpression": true
+          }
+        }
+      },
+      "documents_page_expiry_idx": {
+        "columns": {
+          "(\"expiry_date\" is null) asc": {
+            "isExpression": true
+          },
+          "\"expiry_date\" asc": {
+            "isExpression": true
+          },
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "maintenance_costs_page_idx": {
+        "columns": {
+          "\"item_id\" asc": {
+            "isExpression": true
+          },
+          "\"cost_date\" desc": {
+            "isExpression": true
+          },
+          "\"id\" desc": {
+            "isExpression": true
+          }
+        }
+      },
+      "maintenance_items_page_idx": {
+        "columns": {
+          "\"is_active\" desc": {
+            "isExpression": true
+          },
+          "\"name\" collate nocase asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "maintenance_renewals_page_idx": {
+        "columns": {
+          "\"item_id\" asc": {
+            "isExpression": true
+          },
+          "(\"expiry_date\" is null) asc": {
+            "isExpression": true
+          },
+          "\"expiry_date\" asc": {
+            "isExpression": true
+          },
+          "\"id\" asc": {
+            "isExpression": true
+          }
+        }
+      },
+      "maintenance_services_page_idx": {
+        "columns": {
+          "\"item_id\" asc": {
+            "isExpression": true
+          },
+          "\"service_date\" desc": {
+            "isExpression": true
+          },
+          "\"id\" desc": {
+            "isExpression": true
+          }
+        }
+      }
+    }
+  }
+}

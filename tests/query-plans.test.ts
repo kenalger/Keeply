@@ -61,6 +61,8 @@ const PAGES: readonly (readonly [string, Statement])[] = [
   ['receipts · filtered by category', receipts.selectReceipts({ category: 'food' })],
   ['bills · by due date (default)', bills.selectBills({}, BILL_DATES)],
   ['bills · by name', bills.selectBills({ sort: 'name' as BillSort }, BILL_DATES)],
+  // Indexed since `drizzle/0007`; it sorted for two migrations before that.
+  ['bills · by amount', bills.selectBills({ sort: 'amount' as BillSort }, BILL_DATES)],
   ['subscriptions · by billing date', subscriptions.selectSubscriptions({})],
   ['subscriptions · by name', subscriptions.selectSubscriptions({ sort: 'name' as SubscriptionSort })],
   ['subscriptions · by amount', subscriptions.selectSubscriptions({ sort: 'amount' as SubscriptionSort })],
@@ -114,6 +116,7 @@ describe('query plans / the guard is not vacuous', () => {
     'bill_payments_page_latest_idx',
     'bills_page_due_idx',
     'bills_page_name_idx',
+    'bills_page_amount_idx',
     'documents_page_name_idx',
     'documents_page_recent_idx',
     'documents_page_expiry_idx',

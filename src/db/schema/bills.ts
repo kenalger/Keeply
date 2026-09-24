@@ -119,6 +119,19 @@ export const bills = sqliteTable(
     index('bills_page_name_idx')
       .on(sql`"name" collate nocase asc`, sql`"id" asc`)
       .where(liveRows()),
+    // The third sort the list offers. It went without an index for two
+    // migrations — both the first page and every keyset continuation sorted —
+    // because a NULL expected amount sorts LAST (`sql.ts`, `orderBy`), and an
+    // ORDER BY that starts with `amount_minor IS NULL` needs an index that
+    // starts with the same expression. `drizzle/0007`.
+    index('bills_page_amount_idx')
+      .on(
+        sql`("amount_minor" is null) asc`,
+        sql`"amount_minor" desc`,
+        sql`"name" collate nocase asc`,
+        sql`"id" asc`,
+      )
+      .where(liveRows()),
   ],
 );
 

@@ -1,0 +1,1 @@
+CREATE INDEX `bills_page_amount_idx` ON `bills` (("amount_minor" is null) asc,"amount_minor" desc,"name" collate nocase asc,"id" asc) WHERE "deleted_at" is null;
