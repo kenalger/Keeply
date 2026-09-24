@@ -30,14 +30,20 @@
 import type { ThemeColor, ThemeStatus } from './tokens';
 
 export const lightColor: ThemeColor = {
-  // The canvas sits a clear step below `surface`, because the step IS the
-  // separation: a card gets no outline and no shadow, so if these two were
-  // close the grouping would disappear.
-  bg: '#F1F1F1',
+  // A white canvas with grey islands — the reverse of the grouped-list
+  // convention, by product decision. The step between the two IS the
+  // separation: a card gets no outline and no shadow, so if these were close
+  // the grouping would disappear. `surfaceAlt` (inputs, wells) sits a further
+  // step down so it still reads as recessed when it lands ON an island.
+  bg: '#FFFFFF',
   bgElevated: '#FFFFFF',
   bgSunken: '#E6E6E6',
-  surface: '#FFFFFF',
-  surfaceAlt: '#EBEBEB',
+  surface: '#F1F1F1',
+  // The fills below were tuned against WHITE islands and sat four to six
+  // shades off a grey one — a "Paused" chip with no visible pill. Each is one
+  // step darker than it was; every text pair on them is still measured ≥ 4.5:1
+  // (`tests/theme-contrast.test.ts`), and each fill now clears the island.
+  surfaceAlt: '#E8E8E8',
   border: '#DCDCDC',
   borderStrong: '#878787',
   text: '#171717',
@@ -57,14 +63,16 @@ export const lightColor: ThemeColor = {
   // it is pure black, one step past `accent`, so a destructive control and an
   // error message outrank everything else on the screen by value alone.
   success: '#2E2E2E',
-  successBg: '#EDEDED',
+  successBg: '#E4E4E4',
   warning: '#2E2E2E',
-  warningBg: '#E6E6E6',
+  warningBg: '#DEDEDE',
   danger: '#000000',
-  dangerBg: '#DCDCDC',
+  dangerBg: '#D4D4D4',
   info: '#2E2E2E',
-  infoBg: '#EAEAEA',
-  pressed: '#E4E4E4',
+  infoBg: '#E1E1E1',
+  // A pressed row on an island and a pressed input on `surfaceAlt` both have
+  // to read: this clears the island by 19 and the input by 10.
+  pressed: '#DEDEDE',
   scrim: 'rgba(0, 0, 0, 0.45)',
   skeleton: '#E2E2E2',
   skeletonHighlight: '#EFEFEF',
@@ -74,12 +82,15 @@ export const lightStatus: ThemeStatus = {
   overdue: { fg: '#FFFFFF', bg: '#171717', label: 'Overdue' },
   expired: { fg: '#FFFFFF', bg: '#171717', label: 'Expired' },
   dueToday: { fg: '#101010', bg: '#B0B0B0', label: 'Due today' },
-  dueSoon: { fg: '#1F1F1F', bg: '#EDEDED', border: '#575757', label: 'Due soon' },
-  expiringSoon: { fg: '#1F1F1F', bg: '#EDEDED', border: '#575757', label: 'Expiring soon' },
+  dueSoon: { fg: '#1F1F1F', bg: '#E4E4E4', border: '#575757', label: 'Due soon' },
+  expiringSoon: { fg: '#1F1F1F', bg: '#E4E4E4', border: '#575757', label: 'Expiring soon' },
   upcoming: { fg: '#2E2E2E', bg: '#DCDCDC', label: 'Upcoming' },
   paid: { fg: '#4A4A4A', bg: 'transparent', border: '#878787', label: 'Paid' },
   valid: { fg: '#4A4A4A', bg: 'transparent', border: '#878787', label: 'Valid' },
-  inactive: { fg: '#676767', bg: '#EDEDED', label: 'Inactive' },
+  // 4.53:1 — the tightest pair in the palette, and the faintest fill that still
+  // reads as a fill on a `#F1F1F1` island. Darker text would stop it being the
+  // tertiary ink, which is the point of `inactive`.
+  inactive: { fg: '#676767', bg: '#E6E6E6', label: 'Inactive' },
 };
 
 export const darkColor: ThemeColor = {
@@ -125,5 +136,8 @@ export const darkStatus: ThemeStatus = {
   upcoming: { fg: '#E0E0E0', bg: '#3A3A3A', label: 'Upcoming' },
   paid: { fg: '#A8A8A8', bg: 'transparent', border: '#727272', label: 'Paid' },
   valid: { fg: '#A8A8A8', bg: 'transparent', border: '#727272', label: 'Valid' },
-  inactive: { fg: '#8E8E8E', bg: '#1E1E1E', label: 'Inactive' },
+  // Was `#1E1E1E`: 1.03:1 against the `#1B1B1B` island, i.e. no visible pill —
+  // the same defect the light theme grew when its islands went grey, caught by
+  // the same test. 4.62:1 for the label.
+  inactive: { fg: '#8E8E8E', bg: '#262626', label: 'Inactive' },
 };

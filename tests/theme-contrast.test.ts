@@ -21,7 +21,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { darkColor, lightColor } from '@/theme/palette';
+import { darkColor, darkStatus, lightColor, lightStatus } from '@/theme/palette';
 
 /** WCAG 2.1 relative luminance. */
 function luminance(hex: string): number {
@@ -44,10 +44,17 @@ function contrast(a: string, b: string): number {
 
 const AA_TEXT = 4.5;
 const AA_UI = 3;
+/**
+ * NOT a WCAG number — the project's own floor. A status pill with no outline
+ * carries its weight in its fill (`tokens.ts`, "FILL WEIGHT"), and below about
+ * 1.08:1 against the card it sits on that fill is not there: the light theme's
+ * `inactive` sat at 1.04:1 once the islands went grey and read as bare text.
+ */
+const FILL_FLOOR = 1.08;
 
 const THEMES = [
-  { name: 'light', color: lightColor },
-  { name: 'dark', color: darkColor },
+  { name: 'light', color: lightColor, status: lightStatus },
+  { name: 'dark', color: darkColor, status: darkStatus },
 ] as const;
 
 /* -------------------------------------------------------------------------- */
@@ -100,6 +107,42 @@ describe('body text is readable on every surface it lands on', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+
+describe('status chips stay legible on an island', () => {
+  for (const { name, color, status } of THEMES) {
+    test(`${name}: every label is readable on its fill`, () => {
+      for (const [key, token] of Object.entries(status)) {
+        // An outlined chip has no fill of its own; its label sits on the card.
+        const fill = token.bg === 'transparent' ? color.surface : token.bg;
+        assert.ok(
+          contrast(token.fg, fill) >= AA_TEXT,
+          `${key}: ${token.fg} on ${fill} = ${contrast(token.fg, fill).toFixed(2)}`,
+        );
+      }
+    });
+
+    test(`${name}: every outline clears what it is drawn on`, () => {
+      for (const [key, token] of Object.entries(status)) {
+        if (token.border === undefined) continue;
+        const fill = token.bg === 'transparent' ? color.surface : token.bg;
+        assert.ok(
+          contrast(token.border, fill) >= AA_UI,
+          `${key}: border ${token.border} on ${fill} = ${contrast(token.border, fill).toFixed(2)}`,
+        );
+      }
+    });
+
+    test(`${name}: a fill with no outline is visible against the island`, () => {
+      for (const [key, token] of Object.entries(status)) {
+        if (token.border !== undefined || token.bg === 'transparent') continue;
+        assert.ok(
+          contrast(token.bg, color.surface) >= FILL_FLOOR,
+          `${key}: fill ${token.bg} on island ${color.surface} = ${contrast(token.bg, color.surface).toFixed(3)}`,
+        );
+      }
+    });
+  }
+});
 
 describe('the accent', () => {
   for (const { name, color } of THEMES) {

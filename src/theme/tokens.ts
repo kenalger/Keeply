@@ -33,12 +33,13 @@
  *
  * ── PURE BLACK ON PURE WHITE IS NOT USED ───────────────────────────────────
  * `#000` on `#FFF` at 16pt vibrates: the 21:1 edge is beyond what the eye
- * wants for continuous reading, and on OLED it smears on scroll. Body text is
- * `#171717` on a `#F5F5F5` canvas (16.4:1) and `#F2F2F2` on `#0E0E0E` (17.2:1)
- * — still far past AAA, without the glare. Pure black and pure white are held
- * back for the two places an absolute IS wanted: `danger`, which must outrank
- * every other ink on the screen, and the white a solid `overdue` chip prints
- * on.
+ * wants for continuous reading, and on OLED it smears on scroll. The light
+ * canvas IS white (a product decision — see `palette.ts`), so the ink is what
+ * gives: body text is `#171717` on it (17.9:1) and on a `#F1F1F1` island
+ * (15.9:1); dark is `#F2F2F2` on `#0A0A0A` (18.4:1) — all far past AAA
+ * without the pure-black edge. Pure black and pure white are held back for
+ * the two places an absolute IS wanted: `danger`, which must outrank every
+ * other ink on the screen, and the white a solid `overdue` chip prints on.
  *
  * ── CONTRAST ───────────────────────────────────────────────────────────────
  * Every pair below is measured against WCAG 2.1 — 4.5:1 for text, 3:1 for
