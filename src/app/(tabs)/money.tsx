@@ -261,7 +261,13 @@ function MoneyScreenContent() {
         }
         skeletonLeading={false}
         error={
-          totals.status === 'error' || bills.status === 'error' || receipts.status === 'error' ? (
+          // Only when a FAILED read has nothing to show. `useAsyncRead` keeps
+          // the last good value through a failed refresh, and blanking a tab
+          // that still holds the user's figures over one hiccup loses the thing
+          // they were reading. The Documents tab already draws this line.
+          (totals.status === 'error' && totals.value === null) ||
+          (bills.status === 'error' && bills.value === null) ||
+          (receipts.status === 'error' && receipts.value === null) ? (
             <EmptyState
               icon="errorCircle"
               title="Keeply could not read your totals"

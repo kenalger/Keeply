@@ -1,16 +1,17 @@
 # Keeply — Handoff
 
 **State at the head of `keeply/scale-and-expiry-prompt`, working tree clean.** `tsc --noEmit` 0 ·
-`eslint .` 0 errors, 10 warnings · `npm test` **1578/1578**. Runs on the iOS Simulator; the icon,
+`eslint .` 0 errors, 10 warnings · `npm test` **1580/1580**. Runs on the iOS Simulator; the icon,
 splash, loading screen, save overlay, theme, the rewired screens, lazy tabs and the read connection
 were all exercised there rather than only in the suite. The paging rewrite is proven in the suite
 (real SQLite, every list × every sort × every filter) and rendered on the simulator, not scrolled.
 
-> ⚠ **The branch is thirteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
+> ⚠ **The branch is fourteen commits ahead of `main` and NOTHING IS PUSHED.** `main` and
 > `origin/main` are both still at `d2a8701`. It fast-forwards. Push it, or fast-forward `main`
-> onto it, whichever you prefer. The eight newest commits are this session's, themed:
+> onto it, whichever you prefer. The nine newest commits are this session's, themed:
 >
 > ```
+> Polish: six gaps the review left …              (allowance, tabs on error, dark fills, paging)
 > Docs …                                          (this file, CLAUDE.md)
 > Reads off the JS thread …                       (second read-only WAL connection)
 > Tabs mount on first focus …                     (LazyTab, idle reminder rebuild)
@@ -140,7 +141,7 @@ A private, offline-first iOS app you can actually use:
 
 ## Start here
 
-**1. Land the branch.** Thirteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
+**1. Land the branch.** Fourteen commits on `keeply/scale-and-expiry-prompt`, nothing pushed,
 `main` still at `d2a8701`. It fast-forwards. Do this before anything else — the rest of this list
 assumes the work is on `main`.
 
@@ -383,6 +384,26 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 ---
 
 ## Recently closed (do not re-fix)
+
+### This session, part three · six gaps the review left
+
+- **The allowance card follows the cadence** everywhere it is mounted: `useAllowanceCadence`
+  re-reads the preference on the `allowance` revision, and `setCadence` bumps AFTER the write
+  lands (a bump before it handed other instances the old value).
+- **Removing a past allowance asks first** — "Remove the allowance from {date}?", destructive
+  style, no amount in the copy.
+- **Home and Money keep their figures through a failed refresh.** `DashboardSnapshot.landed`
+  says whether `data` is a read that landed; Home shows the error card only for a failed FIRST
+  read, and Money only when a failing read has no value — the line Documents already drew.
+- **Dark `successBg` `#262626` and `infoBg` `#272727`** (were 1.03–1.06:1 against the island);
+  `tests/theme-contrast.test.ts` now holds the semantic fills and `surfaceAlt` to the same
+  1.08:1 floor in both themes.
+- **The Maintenance tab pages** through `usePagedList` like every other list, with the
+  "Showing X of Y" footer and `onEndReached`; it used to read 40 and stop while the header
+  counted all of them.
+- **`sheet.tsx` uses `scheduleOnRN`** from `react-native-worklets`; `runOnJS` is deprecated in
+  Reanimated 4.5. The stale "documents have no data layer" header in `reminders/[kind].tsx` is
+  corrected.
 
 ### This session, part two · lazy tabs, and reads off the JS thread
 
@@ -717,26 +738,11 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   keyset is exact (NULL-amount bucket tested); making it fast needs
   `bills_page_amount_idx ((amount_minor is null) asc, amount_minor desc, name collate nocase asc, id asc) WHERE deleted_at is null`
   — a migration nobody has generated.
-- **The Maintenance tab list is not paged**: it reads 40 items while the header shows the full
-  count. The data layer already accepts `after` for items; the screen needs a footer and
-  `onEndReached`.
 - **Bills and documents continuations pin the first page's "today"** in the cursor, so a list left
   open across midnight keeps one day until the next revision bump or filter change. Deliberate — one
   list never mixes two days — and reversible by dropping `d` from the token.
-- **The Home/Money allowance card keeps its old cadence** after the cadence is changed in the
-  allowance editor: `useAllowanceCadence` reads the preference once per mount. Pre-existing; the
-  fix is in `features/allowance/ui/hooks.ts`.
-- **Removing a past allowance has no confirmation** — one tap on the row, no undo. It is now
-  guarded and held, but the interaction is unchanged.
-- **Home and Money blank the whole tab on a failed refresh** even when older rows are available;
-  the Documents tab only errors when it has nothing to show. Left as it was.
 - **A damaged document cannot be deleted from its own screens**: detail and edit say "could not
   open" with a retry and offer no delete. The maintenance child screens do offer one for this case.
-- **Two dark-theme semantic fills are near-invisible on their island**: `successBg` `#1E1E1E` and
-  `infoBg` `#202020` sit at 1.03–1.06:1 against `#1B1B1B`. Untouched (the light theme was the
-  brief); the same one-step-darker treatment applies.
-- **`runOnJS` is deprecated in Reanimated 4.5** in favour of `scheduleOnRN`; `sheet.tsx` still
-  uses it three times. Works today.
 - **The write connection's own unlock probe at boot is still synchronous** (deliberately left:
   migrations and the self-check need that connection first). `exportEncryptedCopy` stays on the
   write connection because it writes the bundle; it already ran async `execute`.
@@ -791,7 +797,7 @@ npm start               # Metro against the installed dev build
 npx expo run:ios        # full native build — needed only for native/config changes
 npm run typecheck       # tsc --noEmit
 npm run lint
-npm test                # node --test, 1578 tests
+npm test                # node --test, 1580 tests
 npm run db:generate     # drizzle-kit generate, after editing src/db/schema
 ```
 

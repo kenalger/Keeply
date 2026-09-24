@@ -27,7 +27,7 @@ import {
 import { ALLOWANCE_PERIOD, getSetting, setSetting } from '@/features/settings';
 import { log } from '@/lib/log';
 import { useAsyncRead, type AsyncStatus, type AsyncValue } from '@/lib/use-async-read';
-import { useRevisionStore } from '@/stores/revision-store';
+import { useRevision, useRevisionStore } from '@/stores/revision-store';
 
 /** Loading is the first read only. After that a refresh keeps the old value. */
 /**
@@ -84,7 +84,12 @@ export function useAllowanceCadence(): {
   const [cadence, setCadenceState] = useState<AllowancePeriod>(DEFAULT_CADENCE);
   const [ready, setReady] = useState(false);
   const bump = useRevisionStore((state) => state.bump);
+  const revision = useRevision('allowance');
 
+  // Keyed on the domain's revision, not read once: the card on Home and the one
+  // on Money are OTHER instances of this hook, and when the editor changed the
+  // cadence they kept re-reading the status for the old one until remounted.
+  // A bump now re-reads the preference everywhere it is mounted.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -103,7 +108,7 @@ export function useAllowanceCadence(): {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [revision]);
 
   const setCadence = useCallback(
     (next: AllowancePeriod) => {
@@ -111,11 +116,16 @@ export function useAllowanceCadence(): {
       // Optimistic, and safe to be: the value is one of three strings, the
       // write cannot conflict with anything, and making the segmented control
       // wait on SQLite would make it feel broken (§25 — no spinner on a write).
+      // The screen's own status re-reads off `cadence` at once; the BUMP waits
+      // for the write, because it now makes every other instance re-read the
+      // stored preference, and a bump before the write landed would hand them
+      // the old value.
       setCadenceState(next);
-      bump('allowance');
-      void setSetting(ALLOWANCE_PERIOD, next).catch((error: unknown) => {
-        log.error('allowance: saving the cadence preference failed', error);
-      });
+      void setSetting(ALLOWANCE_PERIOD, next)
+        .then(() => bump('allowance'))
+        .catch((error: unknown) => {
+          log.error('allowance: saving the cadence preference failed', error);
+        });
     },
     [bump],
   );

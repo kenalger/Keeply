@@ -47,11 +47,12 @@ import Animated, {
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
-  runOnJS,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+// `runOnJS` is deprecated in Reanimated 4.5; this is its named replacement.
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { useTheme, useThemedStyles, type Theme } from '@/theme';
 
@@ -224,7 +225,7 @@ export function Sheet({
     () => progress.value === 0,
     (isDown, wasDown) => {
       if (wasDown === null || isDown === wasDown) return;
-      runOnJS(setClosed)(isDown);
+      scheduleOnRN(setClosed, isDown);
     },
   );
 
@@ -249,7 +250,7 @@ export function Sheet({
         // Hand the drag back as the slide-out takes over, so the two do not
         // add up into an overshoot.
         drag.value = withTiming(0, { duration: CLOSE_DURATION });
-        runOnJS(requestClose)();
+        scheduleOnRN(requestClose);
         return;
       }
       drag.value = withSpring(0, { damping: 30, stiffness: 320, mass: 0.6 });

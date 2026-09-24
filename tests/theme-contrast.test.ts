@@ -144,6 +144,23 @@ describe('status chips stay legible on an island', () => {
   }
 });
 
+describe('semantic fills are visible against the island', () => {
+  // The badge tones and the recessed well have no outline either; like an
+  // un-outlined status fill, if they cannot be told from the card they sit on
+  // they have stopped carrying anything.
+  const FILLS = ['successBg', 'warningBg', 'infoBg', 'dangerBg', 'surfaceAlt'] as const;
+  for (const { name, color } of THEMES) {
+    test(`${name}: each fill clears the island`, () => {
+      for (const key of FILLS) {
+        assert.ok(
+          contrast(color[key], color.surface) >= FILL_FLOOR,
+          `${key}: ${color[key]} on island ${color.surface} = ${contrast(color[key], color.surface).toFixed(3)}`,
+        );
+      }
+    });
+  }
+});
+
 describe('the accent', () => {
   for (const { name, color } of THEMES) {
     test(`${name}: its label is readable on it`, () => {

@@ -113,14 +113,17 @@ export const darkColor: ThemeColor = {
   accent: '#8AB4F8',
   accentMuted: '#1B2740',
   onAccent: '#0E0E0E',
+  // `successBg` was `#1E1E1E` and `infoBg` `#202020`: 1.03:1 and 1.06:1 against
+  // the `#1B1B1B` island, i.e. a badge with no visible fill. Both now clear the
+  // same 1.08:1 floor the status chips are held to; the labels stay >= 7:1.
   success: '#DCDCDC',
-  successBg: '#1E1E1E',
+  successBg: '#262626',
   warning: '#DCDCDC',
   warningBg: '#242424',
   danger: '#FFFFFF',
   dangerBg: '#333333',
   info: '#DCDCDC',
-  infoBg: '#202020',
+  infoBg: '#272727',
   pressed: '#2C2C2C',
   scrim: 'rgba(0, 0, 0, 0.6)',
   skeleton: '#262626',

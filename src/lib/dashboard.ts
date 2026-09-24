@@ -94,6 +94,14 @@ export interface DashboardSnapshot {
   /** Always renderable. Before the first read resolves, it is the zero state. */
   data: DashboardData;
   status: DashboardStatus;
+  /**
+   * Whether `data` is a read that landed, as opposed to the zero state. A
+   * failed REFRESH is `status: 'error'` with `landed: true` — the figures on
+   * screen are still the user's — and Home must not replace them with an error
+   * card over one hiccup. A failed FIRST read is the same status with
+   * `landed: false`, and then the card is the whole truth.
+   */
+  landed: boolean;
   error: unknown;
   reload: () => void;
 }
@@ -190,12 +198,13 @@ export function useDashboardData(): DashboardSnapshot {
   const zero = useMemo(() => emptyDashboard(month), [month]);
 
   if (sample !== 'off') {
-    return { data: fixture, status: 'ready', error: null, reload };
+    return { data: fixture, status: 'ready', landed: true, error: null, reload };
   }
 
   return {
     data: state.data ?? zero,
     status: state.status,
+    landed: state.data !== null,
     error: state.error,
     reload,
   };

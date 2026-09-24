@@ -147,18 +147,35 @@ export default function AllowanceScreen() {
   const remove = useCallback(
     (record: AllowanceRecord) => {
       if (busy !== null) return;
-      setBusy('Removing…');
-      void (async () => {
-        try {
-          await holdBusy(deleteAllowance(record.id));
-        } catch (caught) {
-          log.error('allowance: removing failed', caught);
-          // Said on screen as well as logged — and without the amount (§10).
-          Alert.alert('Not removed', 'Keeply could not remove that allowance. Try again.');
-        } finally {
-          setBusy(null);
-        }
-      })();
+      // Confirmed first. This row is a tap away in a scrolling list, the
+      // record rewrites what "over your allowance" meant for every period it
+      // covered, and there is no undo — the same three reasons every other
+      // delete in the app asks. The amount is not in the copy (§10).
+      Alert.alert(
+        `Remove the allowance from ${formatDate(record.effectiveFrom)}?`,
+        'The periods it covered go back to whichever allowance came before it. This cannot be undone.',
+        [
+          { text: 'Keep', style: 'cancel' },
+          {
+            text: 'Remove',
+            style: 'destructive',
+            onPress: () => {
+              setBusy('Removing…');
+              void (async () => {
+                try {
+                  await holdBusy(deleteAllowance(record.id));
+                } catch (caught) {
+                  log.error('allowance: removing failed', caught);
+                  // Said on screen as well as logged — and without the amount (§10).
+                  Alert.alert('Not removed', 'Keeply could not remove that allowance. Try again.');
+                } finally {
+                  setBusy(null);
+                }
+              })();
+            },
+          },
+        ],
+      );
     },
     [busy],
   );

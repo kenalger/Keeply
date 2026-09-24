@@ -306,7 +306,10 @@ function HomeScreenContent() {
           loading={snapshot.status === 'loading'}
           skeletonLeading={false}
           error={
-            snapshot.status === 'error' ? (
+            // Only a failed FIRST read is the whole truth. A failed refresh
+            // keeps the figures that landed before it (`landed`), and blanking
+            // the dashboard over one hiccup loses what the user was reading.
+            snapshot.status === 'error' && !snapshot.landed ? (
               <EmptyState
                 icon="errorCircle"
                 title="Keeply could not read your records"

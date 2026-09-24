@@ -241,6 +241,12 @@ function MaintenanceScreenContent() {
             />
           </ScreenHeader>
         }
+        footer={
+          list.hasMore ? (
+            <ListNote>{`Showing ${list.rows.length} of ${list.total}. Scroll for more.`}</ListNote>
+          ) : undefined
+        }
+        onEndReached={list.hasMore ? list.loadMore : undefined}
         contentContainerStyle={contentStyle}
         accessibilityLabel="Maintenance items"
         testID="maintenance-list"

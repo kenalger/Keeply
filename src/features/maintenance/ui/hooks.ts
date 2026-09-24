@@ -62,38 +62,54 @@ export interface MaintenanceListView {
    * makes in return is that the screen says so out loud.
    */
   damagedCount: number;
+  /** Whether the database holds rows beyond the window on screen. */
+  hasMore: boolean;
   error: unknown;
   reload: () => void;
+  /** Read the next page. Harmless to call when there is nothing more. */
+  loadMore: () => void;
 }
 
-const NO_ROWS: readonly MaintenanceItemRecord[] = [];
+/** Items per page — the same 40 every other list in the app pages by. */
+const ITEM_PAGE_SIZE = 40;
 
-/** The item list, filtered. */
+/**
+ * The page reader for one filter. Built from the KEY so a screen that rebuilds
+ * its filter object every render re-runs nothing; the key is
+ * `JSON.stringify` of the filter's defined fields, so it IS the filter.
+ */
+function itemReaderFor(key: string): PageReader<MaintenanceItemRecord> {
+  const filter = JSON.parse(key) as MaintenanceItemFilter;
+  return ({ limit, after }) =>
+    listItems(after === undefined ? { ...filter, limit } : { ...filter, limit, after });
+}
+
+/**
+ * The item list, filtered and paged.
+ *
+ * Until this it read the first 40 items and stopped — while the header counted
+ * all of them. It now pages like every other list: keyset continuations, one
+ * count per filter, the loaded window re-read on a revision bump. A new filter
+ * is a new list; the old rows stay on screen until its first page lands.
+ */
 export function useMaintenanceList(filter: MaintenanceItemFilter): MaintenanceListView {
   const revision = useRevision('maintenance');
   const { search, kind, isActive } = filter;
+  const key = JSON.stringify({
+    ...(search === undefined || search.length === 0 ? {} : { search }),
+    ...(kind === undefined ? {} : { kind }),
+    ...(isActive === undefined ? {} : { isActive }),
+  });
+  const read = useMemo(() => itemReaderFor(key), [key]);
 
-  // Memoised on the primitives, so a screen holding three pieces of state still
-  // hands a stable object down.
-  const stable = useMemo<MaintenanceItemFilter>(
-    () => ({
-      ...(search === undefined || search.length === 0 ? {} : { search }),
-      ...(kind === undefined ? {} : { kind }),
-      ...(isActive === undefined ? {} : { isActive }),
-    }),
-    [search, kind, isActive],
-  );
-
-  const read = useAsyncRead(() => listItems(stable), [stable, revision], 'maintenance');
-
-  return {
-    status: read.status,
-    rows: read.value?.rows ?? NO_ROWS,
-    total: read.value?.total ?? 0,
-    damagedCount: read.value?.damagedCount ?? 0,
-    error: read.error,
-    reload: read.reload,
-  };
+  return usePagedList({
+    key,
+    revision,
+    read,
+    pageSize: ITEM_PAGE_SIZE,
+    maxRead: MAX_PAGE_SIZE,
+    label: 'maintenance',
+  });
 }
 
 /** One item. `null` while loading, and on the error path. */

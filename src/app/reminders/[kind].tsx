@@ -74,15 +74,14 @@ import { useThemedStyles, type Theme } from '@/theme';
  * arithmetic — including the DST handling `reminderFireTime()` exists for —
  * free to drift, and drifting silently.
  *
- * ── WHY THE SCREEN READS TWO FEATURES ──────────────────────────────────────
- * A settings screen importing `@/features/bills` and `@/features/subscriptions`
+ * ── WHY THE SCREEN READS FOUR FEATURES ─────────────────────────────────────
+ * A settings screen importing bills, subscriptions, documents and maintenance
  * is a screen composing features, which is what screens are for (`money.tsx`
- * reads three). Both hooks run on every render of this screen regardless of
- * kind, because hooks cannot be conditional; both are bounded, indexed, local
- * reads, and the one whose kind is not on screen is simply not used.
- *
- * Documents have no data layer yet (Phase 6), so that kind shows the honest
- * version: the settings work and will apply to the first document added.
+ * reads three). All four hooks run on every render of this screen regardless
+ * of kind, because hooks cannot be conditional; each is a bounded, indexed,
+ * local read, and the three whose kind is not on screen are simply not used.
+ * (Documents joined in Phase 6 and maintenance in 5e; an older version of this
+ * comment said documents had no data layer yet, which stopped being true.)
  */
 export default function ReminderKindScreen() {
   const { kind: slug } = useLocalSearchParams<{ kind: string }>();
