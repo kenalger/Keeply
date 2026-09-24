@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { memo, useCallback, useMemo } from 'react';
 import type { ListRenderItemInfo } from 'react-native';
 
+import { LazyTab } from '@/components/lazy-tab';
 import {
   EmptyState,
   IconButton,
@@ -190,7 +191,16 @@ function buildMoneyRows(
 /* Screen                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/** Mounted on first focus — `LazyTab` — so its reads do not run at cold start. */
 export default function MoneyScreen() {
+  return (
+    <LazyTab>
+      <MoneyScreenContent />
+    </LazyTab>
+  );
+}
+
+function MoneyScreenContent() {
   const contentStyle = useTabScreenContentStyle();
   const router = useRouter();
   const totals = useSubscriptionTotals();

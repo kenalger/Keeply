@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import type { ListRenderItemInfo } from 'react-native';
 
+import { LazyTab } from '@/components/lazy-tab';
 import {
   Badge,
   List,
@@ -353,7 +354,16 @@ function buildMoreRows(input: MoreRowInput): readonly MoreRow[] {
 /** `expoConfig` is null only in contexts this app cannot run in; be tidy anyway. */
 const APP_VERSION = Constants.expoConfig?.version ?? '—';
 
+/** Mounted on first focus — `LazyTab`, like the other four tabs. */
 export default function MoreScreen() {
+  return (
+    <LazyTab>
+      <MoreScreenContent />
+    </LazyTab>
+  );
+}
+
+function MoreScreenContent() {
   const router = useRouter();
   const contentStyle = useTabScreenContentStyle();
 

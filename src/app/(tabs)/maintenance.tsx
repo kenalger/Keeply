@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { memo, useCallback, useMemo, useState } from 'react';
 import type { ListRenderItemInfo } from 'react-native';
 
+import { LazyTab } from '@/components/lazy-tab';
 import {
   EmptyState,
   IconButton,
@@ -112,7 +113,16 @@ function buildRows(
   return rows;
 }
 
+/** Mounted on first focus — `LazyTab` — so its reads do not run at cold start. */
 export default function MaintenanceScreen() {
+  return (
+    <LazyTab>
+      <MaintenanceScreenContent />
+    </LazyTab>
+  );
+}
+
+function MaintenanceScreenContent() {
   const router = useRouter();
   const contentStyle = useTabScreenContentStyle();
 

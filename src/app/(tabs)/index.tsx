@@ -3,6 +3,7 @@ import { createContext, memo, useCallback, useContext, useMemo } from 'react';
 import type { ReactElement } from 'react';
 import type { ListRenderItemInfo } from 'react-native';
 
+import { LazyTab } from '@/components/lazy-tab';
 import {
   Amount,
   EmptyState,
@@ -257,7 +258,16 @@ function buildHomeRows(data: DashboardData): readonly HomeRow[] {
 /* Screen                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/** Mounted on first focus — `LazyTab`. Home is focused at launch, so at once. */
 export default function HomeScreen() {
+  return (
+    <LazyTab>
+      <HomeScreenContent />
+    </LazyTab>
+  );
+}
+
+function HomeScreenContent() {
   const snapshot = useDashboardData();
   const contentStyle = useTabScreenContentStyle();
   const router = useRouter();

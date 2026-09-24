@@ -245,7 +245,16 @@ function AfterBoot() {
     //    denied and came back leaves an EMPTY queue until one runs; and a
     //    changed delivery hour or lead-time set never reaches the OS without
     //    one. Never throws, and nothing gates on it.
-    void syncAllReminders();
+    //
+    //    When the thread is idle, not in this flush: the rebuild is four reads
+    //    and up to sixty scheduling calls, and it used to run in the same
+    //    effect flush as the first tab's first reads. Nothing on screen waits
+    //    for it, so it can wait for the screen. (`requestIdleCallback`, which
+    //    RN 0.86 names as the replacement for the deprecated InteractionManager.)
+    const rebuild = requestIdleCallback(() => {
+      void syncAllReminders();
+    });
+    return () => cancelIdleCallback(rebuild);
   }, []);
 
   // 5. Notification permission, re-checked on every foreground: it can be

@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { memo, useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View, type ListRenderItemInfo } from 'react-native';
 
+import { LazyTab } from '@/components/lazy-tab';
 import {
   EmptyState,
   IconButton,
@@ -160,7 +161,16 @@ const makeStyles = (t: Theme) =>
     controls: { gap: t.space.md },
   });
 
+/** Mounted on first focus — `LazyTab` — so its reads do not run at cold start. */
 export default function DocumentsScreen() {
+  return (
+    <LazyTab>
+      <DocumentsScreenContent />
+    </LazyTab>
+  );
+}
+
+function DocumentsScreenContent() {
   const router = useRouter();
   const styles = useThemedStyles(makeStyles);
   const contentStyle = useTabScreenContentStyle();
