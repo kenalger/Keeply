@@ -13,7 +13,6 @@ import {
   holdBusy,
 } from '@/components/ui';
 import {
-  MaintenanceError,
   MIN_YEAR,
   NAME_MAX_LENGTH,
   isVehicle,
@@ -26,6 +25,7 @@ import { todayCalendarString, useThemedStyles, type Theme } from '@/theme';
 
 import { KIND_OPTIONS, VEHICLE_TYPE_OPTIONS } from './labels';
 import { saveItemPatch, saveNewItem } from './mutations';
+import { placeSaveError } from './field-errors';
 
 /**
  * Add or edit a maintenance item (Phase 5).
@@ -58,6 +58,14 @@ export interface MaintenanceFormProps {
   onCancel: () => void;
 }
 
+/**
+ * The fields this form draws a control for. `errorFor` is typed against it,
+ * so a failure on any other field goes to the form message instead of
+ * vanishing (see `./field-errors`).
+ */
+const RENDERED_FIELDS = ['brand', 'currentMileage', 'identifier', 'kind', 'model', 'name', 'notes', 'purchaseDate', 'vehicleType', 'year'] as const;
+type RenderedField = (typeof RENDERED_FIELDS)[number];
+
 export function MaintenanceForm({ record, onSaved, onCancel }: MaintenanceFormProps) {
   const styles = useThemedStyles(makeStyles);
   const editing = record !== undefined;
@@ -83,7 +91,7 @@ export function MaintenanceForm({ record, onSaved, onCancel }: MaintenanceFormPr
   const today = useMemo(() => todayCalendarString(), []);
 
   const errorFor = useCallback(
-    (field: string) => (fieldError?.field === field ? fieldError.message : null),
+    (field: RenderedField) => (fieldError?.field === field ? fieldError.message : null),
     [fieldError],
   );
 
@@ -122,11 +130,14 @@ export function MaintenanceForm({ record, onSaved, onCancel }: MaintenanceFormPr
       } catch (error) {
         // A validation failure names a FIELD and never a value (§10), so it can
         // be shown under the control that caused it.
-        if (error instanceof MaintenanceError && error.code === 'invalid-field') {
-          setFieldError({ field: error.field ?? '', message: error.message });
-        } else {
+        const placed = placeSaveError(RENDERED_FIELDS, error);
+        if (placed === null) {
           log.error('maintenance: saving an item failed', error);
           setFormError('That could not be saved. Nothing was changed.');
+        } else if (placed.at === 'field') {
+          setFieldError({ field: placed.field, message: placed.message });
+        } else {
+          setFormError(placed.message);
         }
       } finally {
         setSaving(false);

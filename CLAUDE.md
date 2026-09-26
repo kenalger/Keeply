@@ -211,6 +211,9 @@ npm run test:watch
   landed on a separator, a selection deleted in one go (T15), and a paste judged as written.
   Loadable in Node only because the module imports `@/db/money` and `@/theme/format`, not the
   barrels — keep it that way.
+- `maintenance-field-errors` — where a maintenance save failure is shown: under its control when
+  the form draws one, otherwise as the form message with the validator's own sentence, never
+  nowhere. Non-validation errors are left to the generic path.
 
 `tests/hooks/resolve-ts.mjs` teaches Node the `@/` alias and extensionless
 imports; `tests/node-types.d.ts` requests `@types/node` for the program.

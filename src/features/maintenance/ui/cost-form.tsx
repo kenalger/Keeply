@@ -18,7 +18,6 @@ import {
 import type { MinorUnits } from '@/db';
 import {
   DESCRIPTION_MAX_LENGTH,
-  MaintenanceError,
   VENDOR_MAX_LENGTH,
   isVehicle,
   type MaintenanceCostRecord,
@@ -31,6 +30,7 @@ import { todayCalendarString, useThemedStyles, type Theme } from '@/theme';
 import { formatLitresDraft, parseLitres } from '../litres';
 import { COST_TYPE_OPTIONS } from './labels';
 import { saveCostPatch, saveNewCost } from './mutations';
+import { placeSaveError } from './field-errors';
 
 /**
  * Record what something cost (Phase 5c).
@@ -68,6 +68,14 @@ export interface CostFormProps {
   onDelete?: () => void;
 }
 
+/**
+ * The fields this form draws a control for. `errorFor` is typed against it,
+ * so a failure on any other field goes to the form message instead of
+ * vanishing (see `./field-errors`).
+ */
+const RENDERED_FIELDS = ['amountMinor', 'costDate', 'description', 'fuelLitersMilli', 'notes', 'odometer', 'type', 'vendor'] as const;
+type RenderedField = (typeof RENDERED_FIELDS)[number];
+
 export function CostForm({ item, record, onSaved, onCancel, onDelete }: CostFormProps) {
   const styles = useThemedStyles(makeStyles);
   const editing = record !== undefined;
@@ -93,7 +101,7 @@ export function CostForm({ item, record, onSaved, onCancel, onDelete }: CostForm
   const showsFuel = type === 'fuel';
 
   const errorFor = useCallback(
-    (field: string) => (fieldError?.field === field ? fieldError.message : null),
+    (field: RenderedField) => (fieldError?.field === field ? fieldError.message : null),
     [fieldError],
   );
 
@@ -136,11 +144,14 @@ export function CostForm({ item, record, onSaved, onCancel, onDelete }: CostForm
         );
         onSaved(saved);
       } catch (error) {
-        if (error instanceof MaintenanceError && error.code === 'invalid-field') {
-          setFieldError({ field: error.field ?? '', message: error.message });
-        } else {
+        const placed = placeSaveError(RENDERED_FIELDS, error);
+        if (placed === null) {
           log.error('maintenance: saving a cost failed', error);
           setFormError('That could not be saved. Nothing was changed.');
+        } else if (placed.at === 'field') {
+          setFieldError({ field: placed.field, message: placed.message });
+        } else {
+          setFormError(placed.message);
         }
       } finally {
         setSaving(false);

@@ -16,7 +16,6 @@ import {
 } from '@/components/ui';
 import type { MinorUnits } from '@/db';
 import {
-  MaintenanceError,
   PROVIDER_MAX_LENGTH,
   REFERENCE_MAX_LENGTH,
   type MaintenanceItemRecord,
@@ -28,6 +27,7 @@ import { useThemedStyles, type Theme } from '@/theme';
 
 import { RENEWAL_KIND_LABELS, RENEWAL_KIND_OPTIONS } from './labels';
 import { saveNewRenewal, saveRenewalPatch } from './mutations';
+import { placeSaveError } from './field-errors';
 
 /**
  * Record cover that expires (Phase 5c).
@@ -67,6 +67,14 @@ export interface RenewalFormProps {
   onDelete?: () => void;
 }
 
+/**
+ * The fields this form draws a control for. `errorFor` is typed against it,
+ * so a failure on any other field goes to the form message instead of
+ * vanishing (see `./field-errors`).
+ */
+const RENDERED_FIELDS = ['amountMinor', 'expiryDate', 'kind', 'notes', 'provider', 'referenceNumber', 'startDate'] as const;
+type RenderedField = (typeof RENDERED_FIELDS)[number];
+
 export function RenewalForm({
   item,
   record,
@@ -93,7 +101,7 @@ export function RenewalForm({
   const [formError, setFormError] = useState<string | null>(null);
 
   const errorFor = useCallback(
-    (field: string) => (fieldError?.field === field ? fieldError.message : null),
+    (field: RenderedField) => (fieldError?.field === field ? fieldError.message : null),
     [fieldError],
   );
 
@@ -122,11 +130,14 @@ export function RenewalForm({
         );
         onSaved(saved);
       } catch (error) {
-        if (error instanceof MaintenanceError && error.code === 'invalid-field') {
-          setFieldError({ field: error.field ?? '', message: error.message });
-        } else {
+        const placed = placeSaveError(RENDERED_FIELDS, error);
+        if (placed === null) {
           log.error('maintenance: saving a renewal failed', error);
           setFormError('That could not be saved. Nothing was changed.');
+        } else if (placed.at === 'field') {
+          setFieldError({ field: placed.field, message: placed.message });
+        } else {
+          setFormError(placed.message);
         }
       } finally {
         setSaving(false);

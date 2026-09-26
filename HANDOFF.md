@@ -1,7 +1,7 @@
 # Keeply — Handoff
 
 **State at the head of `keeply/scale-and-expiry-prompt`, working tree clean.** `tsc --noEmit` 0 ·
-`eslint .` 0 errors, 10 warnings · `npm test` **1613/1613**. Runs on the iOS Simulator; the icon,
+`eslint .` 0 errors, 10 warnings · `npm test` **1619/1619**. Runs on the iOS Simulator; the icon,
 splash, loading screen, save overlay, theme, the rewired screens, lazy tabs and the read connection
 were all exercised there rather than only in the suite. The paging rewrite is proven in the suite
 (real SQLite, every list × every sort × every filter) and rendered on the simulator, not scrolled.
@@ -386,6 +386,18 @@ Every one of these exists because of a specific bug. `CLAUDE.md` has the full li
 
 ## Recently closed (do not re-fix)
 
+### After the merge · part eight · a maintenance failure that landed nowhere
+
+- **Every maintenance validation failure is now shown.** The four maintenance forms rendered
+  `error.message` under the control `error.field` named, and a failure keyed to a field the form
+  does not draw (`currency`, which no maintenance form exposes) was stored as a field error and
+  rendered nowhere — Save appeared to do nothing. Bills, receipts and subscriptions closed this in
+  part seven with an orphan list in their message modules; the maintenance equivalent is
+  `src/features/maintenance/ui/field-errors.ts`. Each form declares `RENDERED_FIELDS` and types its
+  `errorFor` against it, so the list cannot drift from the controls without a compile error; a
+  failure on any other field becomes the form message with the validator's own sentence.
+  `tests/maintenance-field-errors.test.ts` pins it (6 cases; suite 1619).
+
 ### This session, part seven · the three decisions, and the latent trio
 
 - **`drizzle/0007_calm_mockingbird`: `bills_page_amount_idx`** on
@@ -762,11 +774,12 @@ T1 · T2 · T3 · T4 · T5 · T6 · T7 · T8 · T12 · T13 · T14 in `plan/phase
   this project has never squashed. If it ever does, the function needs an alias table (old tags →
   the squashed one); the test named "a squashed history" is the reminder.
 
-- **What is left of the lower-tier audit findings** in `plan/phase2-3-remediation.md`: T17 (no
-  caret management in the amount field; needs a device) and, from the latent list: currency errors
-  render nowhere, `AmountField` ignores a currency change, `currentMonth()` has no midnight
-  re-render trigger. T15, T16, T18, T19 and T20 are closed (this session), as are the two latent
-  items about `<List/>` blanking on a failed refresh and 38pt segments.
+- **What is left of the lower-tier audit findings** in `plan/phase2-3-remediation.md`: T17 only
+  (no caret management in the amount field; needs a device). T15, T16, T18, T19 and T20 are closed,
+  and so is the whole latent list — `<List/>` blanking on a failed refresh, 38pt segments, and the
+  trio (currency errors rendering nowhere, `AmountField` ignoring a currency change, `currentMonth()`
+  with no midnight trigger) closed in part seven. The maintenance forms had the same orphaned-error
+  hole as the trio's first item and it is closed in part eight.
 - **Phase 9 leftovers**: no spend notification (deliberate — see the phase plan §7), no per-category
   budgets, no rollover.
 - **A maintenance item's odometer is not updated by a cost.** Recording a fill-up at 47,810 km leaves
